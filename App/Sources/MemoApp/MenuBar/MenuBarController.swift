@@ -5,6 +5,7 @@ import MarkdownEngine
 import MemoCore
 import Services
 import StickyWindow
+import UniformTypeIdentifiers
 
 /// 메뉴바 아이콘과 메뉴 (SYS-01, SYS-02).
 ///
@@ -22,6 +23,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var hoverOpaqueItem: NSMenuItem?
     private let syncStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var autoSyncItem: NSMenuItem?
+    private var launchAtLoginItem: NSMenuItem?
     private let syncCoordinator: SyncCoordinator
     private let fontMenu = NSMenu()
     private let fontSizeMenu = NSMenu()
@@ -53,11 +55,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        menu.addItem(item(title: "새 메모", action: #selector(newMemo), key: "n"))
+        menu.addItem(item(title: "새 메모  (어디서든 ⌘⇧N)", action: #selector(newMemo), key: "n"))
         menu.addItem(.separator())
 
-        menu.addItem(item(title: "모든 메모 숨기기", action: #selector(hideAllMemos), key: ""))
-        menu.addItem(item(title: "모든 메모 보이기", action: #selector(showAllMemos), key: ""))
+        menu.addItem(item(title: "모든 메모 보이기/숨기기  (어디서든 ⌘⇧H)", action: #selector(toggleAllMemos), key: ""))
         menu.addItem(item(title: "모든 메모 창 닫기", action: #selector(closeAllMemos), key: ""))
         menu.addItem(.separator())
 
@@ -73,6 +74,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         memoSizeItem.submenu = memoSizeMenu
         menu.addItem(memoSizeItem)
 
+        let loginItem = item(title: "로그인할 때 자동 실행", action: #selector(toggleLaunchAtLogin), key: "")
+        loginItem.toolTip = "메뉴바에 늘 떠 있게 합니다"
+        launchAtLoginItem = loginItem
+        menu.addItem(loginItem)
+
         let hoverItem = item(title: "마우스 올리면 또렷하게", action: #selector(toggleHoverOpaque), key: "")
         hoverItem.toolTip = "투명하게 둔 메모를 읽을 때만 또렷해집니다"
         hoverOpaqueItem = hoverItem
@@ -84,6 +90,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(item(title: "메모 목록…", action: #selector(showList), key: "l"))
+
+        let backupItem = NSMenuItem(title: "백업", action: nil, keyEquivalent: "")
+        backupItem.submenu = buildBackupMenu()
+        menu.addItem(backupItem)
         let syncItem = NSMenuItem(title: "iCloud 동기화", action: nil, keyEquivalent: "")
         syncItem.submenu = buildSyncMenu()
         menu.addItem(syncItem)
@@ -103,6 +113,105 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         buildFontSizeMenu()
         buildMemoSizeMenu()
         return menu
+    }
+
+    // MARK: - 백업과 가져오기 (DAT-04, DAT-05, DAT-07)
+
+    private func buildBackupMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(item(title: "전체 백업 내보내기…", action: #selector(exportBackup), key: ""))
+        menu.addItem(item(title: "백업에서 복원…", action: #selector(importBackup), key: ""))
+        menu.addItem(.separator())
+        menu.addItem(item(title: "파일에서 메모 가져오기…", action: #selector(importFiles), key: ""))
+        return menu
+    }
+
+    private var backupService: BackupService {
+        BackupService(dataRoot: FileMemoRepository.defaultRootDirectory())
+    }
+
+    @objc private func exportBackup() {
+        let panel = NSSavePanel()
+        panel.title = "전체 백업 내보내기"
+        panel.nameFieldStringValue = "MemoApp-백업-\(Self.todayText()).zip"
+        panel.allowedContentTypes = [.zip]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try backupService.exportBackup(to: url)
+            showInfo("백업을 저장했습니다", detail: url.lastPathComponent)
+        } catch {
+            showError("백업에 실패했습니다", error: error)
+        }
+    }
+
+    @objc private func importBackup() {
+        let panel = NSOpenPanel()
+        panel.title = "백업에서 복원"
+        panel.allowedContentTypes = [.zip]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // 되돌릴 수 없는 선택이므로 무엇이 일어나는지 분명히 묻는다.
+        let alert = NSAlert()
+        alert.messageText = "어떻게 복원할까요?"
+        alert.informativeText = "지금 있는 메모를 그대로 두고 백업 내용을 더하거나, 백업 상태로 통째로 되돌릴 수 있습니다."
+        alert.addButton(withTitle: "합치기")
+        alert.addButton(withTitle: "통째로 교체")
+        alert.addButton(withTitle: "취소")
+
+        let choice = alert.runModal()
+        guard choice != .alertThirdButtonReturn else { return }
+        let replace = (choice == .alertSecondButtonReturn)
+
+        do {
+            try backupService.importBackup(from: url, replaceExisting: replace)
+            store.reloadSummaries()
+            store.reloadGroups()
+            windowRegistry.reconcileOpenWindows(with: store)
+            listWindow.refreshIfOpen()
+            showInfo("복원했습니다", detail: "메모 \(store.summaries.count)개")
+        } catch {
+            showError("복원에 실패했습니다", error: error)
+        }
+    }
+
+    @objc private func importFiles() {
+        let panel = NSOpenPanel()
+        panel.title = "메모로 가져올 파일 고르기"
+        panel.allowedContentTypes = [.plainText]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+
+        var imported = 0
+        for url in panel.urls {
+            guard let document = try? backupService.makeDocument(fromImportedFile: url) else { continue }
+            store.importDocument(document)
+            imported += 1
+        }
+        listWindow.refreshIfOpen()
+        showInfo("가져왔습니다", detail: "메모 \(imported)개")
+    }
+
+    private static func todayText() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
+    }
+
+    private func showInfo(_ message: String, detail: String) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.runModal()
+    }
+
+    private func showError(_ message: String, error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     // MARK: - iCloud 동기화 (SYNC-02~05, SYNC-09)
@@ -313,6 +422,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshMemoSizeMenuState()
         hoverOpaqueItem?.state = preferences.hoverOpaque ? .on : .off
         refreshSyncMenuState()
+        launchAtLoginItem?.state = LaunchAtLoginService.isEnabled ? .on : .off
+        if LaunchAtLoginService.isBlockedBySystemSettings {
+            launchAtLoginItem?.title = "로그인할 때 자동 실행  (시스템 설정에서 허용 필요)"
+        }
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        if case .failure(let error) = LaunchAtLoginService.setEnabled(!LaunchAtLoginService.isEnabled) {
+            let alert = NSAlert()
+            alert.messageText = "자동 실행을 설정하지 못했습니다"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
     }
 
     @objc private func toggleHoverOpaque() {
@@ -340,12 +462,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         listWindow.show()
     }
 
-    @objc private func hideAllMemos() {
-        windowRegistry.setAllHidden(true)
-    }
-
-    @objc private func showAllMemos() {
-        windowRegistry.setAllHidden(false)
+    @objc private func toggleAllMemos() {
+        windowRegistry.toggleAllHidden()
     }
 
     @objc private func closeAllMemos() {

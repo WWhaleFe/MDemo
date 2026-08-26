@@ -41,7 +41,10 @@ public final class LiveFormatController {
             self?.handleCheckboxToggle(atCharacterIndex: index) ?? false
         }
         textView.onKeyDown = { [weak self] event in
-            self?.handleSlashKeyDown(event) ?? false
+            guard let self else { return false }
+            // 팝업이 떠 있으면 그쪽이 먼저다. 그다음이 서식 단축키.
+            if handleSlashKeyDown(event) { return true }
+            return handleFormattingKey(event)
         }
         // 메모 영역을 클릭하면 목록 바깥을 누른 것이므로 팝업을 닫는다.
         textView.onEditorClick = { [weak self] in

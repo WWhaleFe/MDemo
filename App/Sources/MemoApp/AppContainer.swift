@@ -18,6 +18,7 @@ final class AppContainer {
     let windowRegistry: WindowRegistry
     let listWindow: MemoListWindowController
     let syncCoordinator: SyncCoordinator
+    let hotkeys = GlobalHotkeyService()
 
     init() {
         let repository: any MemoRepository

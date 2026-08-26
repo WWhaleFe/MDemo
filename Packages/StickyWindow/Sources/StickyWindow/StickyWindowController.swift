@@ -526,6 +526,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     public var currentFrame: NSRect { panel.frame }
 
+    public var isWindowVisible: Bool { panel.isVisible }
+
     /// 이 컨트롤러가 그 창의 주인인지 확인한다.
     public func owns(_ window: NSWindow) -> Bool { window === panel }
 

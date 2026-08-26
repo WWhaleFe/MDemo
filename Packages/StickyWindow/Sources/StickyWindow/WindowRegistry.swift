@@ -235,6 +235,13 @@ public final class WindowRegistry {
         controllers.removeValue(forKey: id)
     }
 
+    /// 한 번에 감췄다 보였다 한다 (SYS-04).
+    /// 화면을 잠깐 치우고 싶을 때 쓰는 기능이라, 상태를 기억했다가 되돌린다.
+    public func toggleAllHidden() {
+        let anyVisible = controllers.values.contains { $0.isWindowVisible }
+        setAllHidden(anyVisible)
+    }
+
     /// 모든 메모 창 숨기기/보이기 (SYS-04). 컨트롤러는 유지된다.
     public func setAllHidden(_ hidden: Bool) {
         for controller in controllers.values {

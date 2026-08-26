@@ -218,4 +218,118 @@ runner.test("불러오기만 하면 내 변경이 올라가지 않는다 (SYNC-0
     }
 }
 
+// MARK: - 백업과 내보내기 (DAT-04 ~ DAT-07)
+
+runner.test("백업을 만들고 되돌리면 메모가 그대로 돌아온다 (DAT-04, DAT-05)") { t in
+    try MainActor.assumeIsolated {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("BackupTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let dataRoot = base.appendingPathComponent("Data", isDirectory: true)
+        let repository = try FileMemoRepository(rootDirectory: dataRoot)
+        let store = MemoStore(repository: repository)
+        let backup = BackupService(dataRoot: dataRoot)
+
+        let meta = store.createMemo(group: "업무")
+        store.saveBody(id: meta.id, body: "# 중요한 메모\n- [ ] 잃어버리면 안 됨")
+
+        let archive = base.appendingPathComponent("backup.zip")
+        try backup.exportBackup(to: archive)
+        t.expect(FileManager.default.fileExists(atPath: archive.path), "백업 파일이 만들어지지 않았다")
+
+        // 실수로 다 지운 상황을 만든다
+        store.moveToTrash(id: meta.id)
+        store.emptyTrash()
+        t.expectEqual(store.summaries.count, 0)
+
+        try backup.importBackup(from: archive, replaceExisting: true)
+        store.reloadSummaries()
+        t.expectEqual(store.summaries.count, 1, "복원되지 않았다")
+        t.expectEqual(store.loadDocument(id: meta.id)?.body, "# 중요한 메모\n- [ ] 잃어버리면 안 됨")
+        t.expectEqual(store.summaries.first?.meta.group, "업무", "그룹까지 돌아와야 한다")
+    }
+}
+
+runner.test("합치기로 복원하면 지금 메모가 지워지지 않는다 (DAT-05)") { t in
+    try MainActor.assumeIsolated {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("BackupMerge-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let dataRoot = base.appendingPathComponent("Data", isDirectory: true)
+        let repository = try FileMemoRepository(rootDirectory: dataRoot)
+        let store = MemoStore(repository: repository)
+        let backup = BackupService(dataRoot: dataRoot)
+
+        let old = store.createMemo()
+        store.saveBody(id: old.id, body: "예전 메모")
+
+        let archive = base.appendingPathComponent("backup.zip")
+        try backup.exportBackup(to: archive)
+
+        let recent = store.createMemo()
+        store.saveBody(id: recent.id, body: "백업 뒤에 쓴 메모")
+
+        try backup.importBackup(from: archive, replaceExisting: false)
+        store.reloadSummaries()
+
+        t.expectEqual(store.summaries.count, 2, "합치기인데 개수가 맞지 않는다")
+        t.expectEqual(store.loadDocument(id: recent.id)?.body, "백업 뒤에 쓴 메모", "나중 메모가 사라졌다")
+    }
+}
+
+runner.test("메모를 마크다운·HTML·텍스트로 내보낸다 (DAT-06)") { t in
+    let base = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("ExportTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: base) }
+
+    let backup = BackupService(dataRoot: base)
+    let document = MemoDocument(
+        meta: MemoMeta(id: .generate()),
+        body: "# 장보기\n- [ ] 우유\n**중요**한 것"
+    )
+
+    let markdown = base.appendingPathComponent("memo.md")
+    try backup.export(document, as: .markdown, to: markdown)
+    t.expectEqual(try String(contentsOf: markdown, encoding: .utf8), document.body, "마크다운은 본문 그대로여야 한다")
+
+    let html = base.appendingPathComponent("memo.html")
+    try backup.export(document, as: .html, to: html)
+    let htmlText = try String(contentsOf: html, encoding: .utf8)
+    t.expect(htmlText.contains("<h1>장보기</h1>"), "제목이 변환되지 않았다")
+    t.expect(htmlText.contains("<strong>중요</strong>"), "굵게가 변환되지 않았다")
+    t.expect(htmlText.contains("☐"), "체크박스가 변환되지 않았다")
+
+    let plain = base.appendingPathComponent("memo.txt")
+    try backup.export(document, as: .plainText, to: plain)
+    let plainText = try String(contentsOf: plain, encoding: .utf8)
+    t.expect(!plainText.contains("#"), "텍스트에 기호가 남았다")
+    t.expect(!plainText.contains("**"), "텍스트에 기호가 남았다")
+    t.expect(plainText.contains("장보기"), "내용이 사라졌다")
+}
+
+runner.test("마크다운 파일을 메모로 가져온다 (DAT-07)") { t in
+    let base = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("ImportTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: base) }
+
+    let backup = BackupService(dataRoot: base)
+
+    // 제목이 없는 파일은 파일 이름을 제목으로 삼는다
+    let plain = base.appendingPathComponent("회의 준비.txt")
+    try Data("안건 정리\n자료 인쇄".utf8).write(to: plain)
+    let fromPlain = try backup.makeDocument(fromImportedFile: plain)
+    t.expect(fromPlain.body.hasPrefix("# 회의 준비"), "파일 이름이 제목이 되지 않았다")
+    t.expectEqual(fromPlain.meta.isOpen, false, "가져온 메모가 곧바로 뜨면 산만하다")
+
+    // 이미 제목이 있으면 그대로 둔다
+    let markdown = base.appendingPathComponent("메모.md")
+    try Data("# 원래 제목\n내용".utf8).write(to: markdown)
+    let fromMarkdown = try backup.makeDocument(fromImportedFile: markdown)
+    t.expectEqual(fromMarkdown.body, "# 원래 제목\n내용")
+}
+
 runner.finish()

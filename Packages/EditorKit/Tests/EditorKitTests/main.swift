@@ -509,6 +509,113 @@ runner.test("서식을 적용한 뒤 저장하면 표준 마크다운이 된다"
     }
 }
 
+// MARK: - 서식 단축키 (KEY-01 ~ KEY-09)
+
+@MainActor
+func makeCommandKey(_ characters: String, shift: Bool = false, keyCode: UInt16 = 0) -> NSEvent? {
+    var flags: NSEvent.ModifierFlags = [.command]
+    if shift { flags.insert(.shift) }
+    return NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+        windowNumber: 0, context: nil,
+        characters: characters, charactersIgnoringModifiers: characters,
+        isARepeat: false, keyCode: keyCode
+    )
+}
+
+runner.test("Cmd+B로 고른 글자를 굵게 만들고 되돌린다 (KEY-01)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor(loading: "보통 글자")
+        textView.setSelectedRange((textView.string as NSString).range(of: "글자"))
+
+        guard let bold = makeCommandKey("b") else { return }
+        textView.keyDown(with: bold)
+        t.expectEqual(textView.currentMarkdown(), "보통 **글자**", "굵게가 적용되지 않았다")
+
+        textView.setSelectedRange((textView.string as NSString).range(of: "글자"))
+        textView.keyDown(with: bold)
+        t.expectEqual(textView.currentMarkdown(), "보통 글자", "다시 누르면 풀려야 한다")
+        _ = controller
+    }
+}
+
+runner.test("기울임·취소선·형광 단축키가 모두 동작한다 (KEY-02, 04, 05)") { t in
+    MainActor.assumeIsolated {
+        let cases: [(String, Bool, String)] = [
+            ("i", false, "*글자*"),
+            ("x", true, "~~글자~~"),
+            ("h", true, "==글자=="),
+        ]
+        for (key, shift, expected) in cases {
+            let (textView, controller, _) = makeWindowedEditor(loading: "글자")
+            textView.setSelectedRange(NSRange(location: 0, length: (textView.string as NSString).length))
+
+            guard let event = makeCommandKey(key, shift: shift) else { return }
+            textView.keyDown(with: event)
+            t.expectEqual(textView.currentMarkdown(), expected, "\(key) 단축키 실패")
+            _ = controller
+        }
+    }
+}
+
+runner.test("Cmd+1/2/3으로 제목을 걸고 되돌린다 (KEY-06)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor(loading: "제목이 될 줄")
+
+        guard let heading1 = makeCommandKey("1"), let heading2 = makeCommandKey("2") else { return }
+        textView.keyDown(with: heading1)
+        t.expectEqual(textView.currentMarkdown(), "# 제목이 될 줄")
+
+        textView.keyDown(with: heading2)
+        t.expectEqual(textView.currentMarkdown(), "## 제목이 될 줄", "다른 단계로 바뀌어야 한다")
+
+        textView.keyDown(with: heading2)
+        t.expectEqual(textView.currentMarkdown(), "제목이 될 줄", "같은 단계를 다시 누르면 본문으로")
+        _ = controller
+    }
+}
+
+runner.test("Cmd+Shift+C로 체크박스를 만들고 되돌린다 (KEY-07)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor(loading: "할 일")
+
+        guard let checkbox = makeCommandKey("c", shift: true) else { return }
+        textView.keyDown(with: checkbox)
+        t.expectEqual(textView.currentMarkdown(), "- [ ] 할 일")
+
+        textView.keyDown(with: checkbox)
+        t.expectEqual(textView.currentMarkdown(), "할 일", "다시 누르면 본문으로 돌아와야 한다")
+        _ = controller
+    }
+}
+
+runner.test("Cmd+Enter로 커서 줄의 체크를 토글한다 (KEY-09)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor(loading: "- [ ] 우유\n- [ ] 계란")
+        let second = (textView.string as NSString).range(of: "계란")
+        textView.setSelectedRange(NSRange(location: second.location, length: 0))
+
+        guard let enter = makeCommandKey("\r", keyCode: 36) else { return }
+        textView.keyDown(with: enter)
+        t.expectEqual(textView.currentMarkdown(), "- [ ] 우유\n- [x] 계란", "커서가 있는 줄만 체크돼야 한다")
+        _ = controller
+    }
+}
+
+runner.test("선택 없이 Cmd+B를 누르면 이어 치는 글자에 적용된다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor(loading: "앞부분 ")
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+
+        guard let bold = makeCommandKey("b") else { return }
+        textView.keyDown(with: bold)
+        textView.insertText("굵게", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+
+        t.expectEqual(textView.currentMarkdown(), "앞부분 **굵게**")
+    }
+}
+
 runner.test("메모 영역을 클릭하면 드롭다운이 닫힌다") { t in
     MainActor.assumeIsolated {
         let (textView, controller) = makeEditor()

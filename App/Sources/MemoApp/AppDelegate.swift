@@ -1,4 +1,5 @@
 import AppKit
+import Services
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -21,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 켤 때 한 번 맞추고, 그 뒤로는 주기적으로 (SYNC-05).
         container.syncCoordinator.start()
+
+        registerGlobalHotkeys(container)
 
         // `open -a MemoApp --args --new-memo` 로 실행하면 곧바로 새 메모를 띄운다.
         // 인자를 반복하면 그 수만큼 만들어지므로 메모리 측정(§4-5 게이트)에도 쓴다.
@@ -57,6 +60,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let report = (container?.windowRegistry.slashPopupDiagnostics ?? "확인 불가") + "\n"
                 FileHandle.standardError.write(Data(report.utf8))
             }
+        }
+    }
+
+    /// 다른 앱을 쓰는 중에도 손이 기억하는 키로 메모를 띄울 수 있어야 한다 (KEY-11, SYS-04).
+    ///
+    /// 다른 앱이 이미 쓰고 있는 조합이면 등록에 실패한다. 그때는 조용히 넘어간다 —
+    /// 메뉴에 같은 기능이 있으므로 앱을 못 쓰게 되지는 않는다.
+    private func registerGlobalHotkeys(_ container: AppContainer) {
+        let newMemoRegistered = container.hotkeys.register(.newMemo) { [weak container] in
+            container?.windowRegistry.createMemo()
+            container?.listWindow.refreshIfOpen()
+        }
+        let toggleRegistered = container.hotkeys.register(.toggleAllMemos) { [weak container] in
+            container?.windowRegistry.toggleAllHidden()
+        }
+
+        // 다른 앱이 같은 조합을 쓰고 있으면 등록이 실패한다.
+        // 조용히 지나가면 "왜 안 되지"로 이어지므로 확인할 수 있게 찍어 둔다.
+        if CommandLine.arguments.contains("--check-hotkeys") {
+            let report = """
+            새 메모 (\(GlobalHotkeyService.Shortcut.newMemo.displayText)): \(newMemoRegistered ? "등록됨" : "실패 — 다른 앱이 쓰는 중")
+            메모 보이기/숨기기 (\(GlobalHotkeyService.Shortcut.toggleAllMemos.displayText)): \(toggleRegistered ? "등록됨" : "실패 — 다른 앱이 쓰는 중")
+
+            """
+            FileHandle.standardError.write(Data(report.utf8))
         }
     }
 

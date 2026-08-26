@@ -15,10 +15,14 @@ APP_DIR="$ROOT/build/$APP_NAME.app"
 
 cd "$ROOT"
 
+# 테스트와 같은 빌드 폴더를 쓴다. 따로 두면 아래 계층에 파일을 추가했을 때
+# 한쪽이 예전 모듈을 붙들어 "방금 만든 타입을 찾을 수 없다"는 오류가 난다.
+SCRATCH="$ROOT/.build-shared"
+
 if [ "$CONFIG" = "release" ]; then
-    BUILD_FLAGS=(-c release --arch arm64 --arch x86_64)
+    BUILD_FLAGS=(-c release --arch arm64 --arch x86_64 --scratch-path "$SCRATCH")
 else
-    BUILD_FLAGS=(-c debug)
+    BUILD_FLAGS=(-c debug --scratch-path "$SCRATCH")
 fi
 
 echo "▸ 빌드 중 ($CONFIG)…"

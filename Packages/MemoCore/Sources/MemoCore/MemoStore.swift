@@ -52,6 +52,15 @@ public final class MemoStore {
         return meta
     }
 
+    /// 밖에서 만든 문서를 그대로 들여온다 (DAT-07).
+    public func importDocument(_ document: MemoDocument) {
+        try? repository.save(document)
+        summaries.insert(
+            MemoSummary(meta: document.meta, preview: String(document.body.prefix(200))),
+            at: 0
+        )
+    }
+
     /// 창을 열 때만 호출한다. 본문 전체를 읽는 유일한 경로다.
     public func loadDocument(id: MemoID) -> MemoDocument? {
         try? repository.load(id: id)
