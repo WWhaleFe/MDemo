@@ -38,11 +38,14 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     /// 지금 보이고 있는 명령들.
     var visibleCommands: [SlashCommand] { isVisible ? commands : [] }
 
-    private static let rowHeight: CGFloat = 40
+    private static let rowHeight: CGFloat = 42
     /// 목록을 한눈에 보여 주려면 스크롤 없이 전부 보이는 편이 낫다.
     /// 명령이 9개라 이 정도면 대부분 한 화면에 들어온다.
     private static let maximumVisibleRows = 9
     private static let width: CGFloat = 320
+    /// 창 안쪽 위아래 여백 + 반올림 오차 여유.
+    /// 이 값이 모자라면 마지막 줄이 몇 픽셀 잘려 스크롤이 생긴다.
+    private static let verticalPadding: CGFloat = 12
 
     // MARK: - 표시
 
@@ -58,7 +61,7 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         parentWindow = window
 
         let visibleRows = min(commands.count, Self.maximumVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight + 8
+        let height = CGFloat(visibleRows) * Self.rowHeight + Self.verticalPadding
         // 커서 아래에 붙이되, 화면 아래로 넘치면 커서 위로 올린다.
         var origin = NSPoint(x: caretRect.minX, y: caretRect.minY - height - 4)
         if let screen = window.screen, origin.y < screen.visibleFrame.minY {
@@ -141,6 +144,9 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         table.headerView = nil
         table.backgroundColor = .clear
         table.rowHeight = Self.rowHeight
+        // 기본 행간 여백(세로 2pt)이 행마다 쌓여 마지막 줄을 밀어내고 스크롤을 만든다.
+        table.intercellSpacing = NSSize(width: 0, height: 0)
+        table.gridStyleMask = []
         table.selectionHighlightStyle = .regular
         table.dataSource = self
         table.delegate = self
@@ -157,6 +163,10 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         scrollView.documentView = table
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = false
+        // 전부 보이는 목록이므로 스크롤로 튕기는 느낌이 없어야 한다.
+        scrollView.verticalScrollElasticity = .none
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         background.addSubview(scrollView)
