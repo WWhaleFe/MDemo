@@ -38,14 +38,36 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     /// 지금 보이고 있는 명령들.
     var visibleCommands: [SlashCommand] { isVisible ? commands : [] }
 
+    /// 실제 치수를 그대로 보고한다. 계산과 화면이 어긋날 때 원인을 찾는 데 쓴다.
+    var diagnostics: String {
+        guard let panel, let table = tableView else { return "팝업이 아직 만들어지지 않음" }
+        let clipHeight = table.enclosingScrollView?.contentView.bounds.height ?? 0
+        let contentHeight = table.numberOfRows > 0 ? table.rect(ofRow: table.numberOfRows - 1).maxY : 0
+        let scrollable = contentHeight > clipHeight + 0.5
+        let scroll = table.enclosingScrollView
+        let clipWidth = scroll?.contentView.bounds.width ?? 0
+        let firstRow = table.numberOfRows > 0 ? table.rect(ofRow: 0) : .zero
+        return """
+        팝업 창 \(panel.frame.width) × \(panel.frame.height)
+        표를 담는 영역 \(clipWidth) × \(clipHeight)
+        표 내용 높이 \(contentHeight)  (행 \(table.numberOfRows)개, 행 높이 \(table.rowHeight))
+        첫 행 위치 y=\(firstRow.origin.y), x=\(firstRow.origin.x), 너비 \(firstRow.width)
+        표 자체 프레임 \(table.frame)
+        행간 여백 \(table.intercellSpacing)
+        스크롤 발생: \(scrollable ? "예 — \(contentHeight - clipHeight)pt 넘침" : "아니오")
+        """
+    }
+
     private static let rowHeight: CGFloat = 42
     /// 목록을 한눈에 보여 주려면 스크롤 없이 전부 보이는 편이 낫다.
     /// 명령이 9개라 이 정도면 대부분 한 화면에 들어온다.
     private static let maximumVisibleRows = 9
     private static let width: CGFloat = 320
-    /// 창 안쪽 위아래 여백 + 반올림 오차 여유.
-    /// 이 값이 모자라면 마지막 줄이 몇 픽셀 잘려 스크롤이 생긴다.
-    private static let verticalPadding: CGFloat = 12
+    /// 창 테두리와 목록 사이 여백. 위아래·좌우를 같은 값으로 두어 대칭을 맞춘다.
+    private static let edgeInset: CGFloat = 4
+    private static let horizontalPadding: CGFloat = 4
+    /// 행 안쪽 좌우 여백. 왼쪽 제목과 오른쪽 단축키가 같은 간격으로 떨어지게 한다.
+    private static let cellInset: CGFloat = 12
 
     // MARK: - 표시
 
@@ -60,16 +82,18 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         let panel = ensurePanel()
         parentWindow = window
 
-        let visibleRows = min(commands.count, Self.maximumVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight + Self.verticalPadding
+        // 내용을 먼저 채운 뒤 실제 높이를 재서 창 크기를 정한다.
+        // 상수로 어림하면 표가 내부에 넣는 여백만큼 어긋나 스크롤이 생긴다.
+        tableView?.reloadData()
+        let height = measuredHeight(rowCount: min(commands.count, Self.maximumVisibleRows))
+
         // 커서 아래에 붙이되, 화면 아래로 넘치면 커서 위로 올린다.
         var origin = NSPoint(x: caretRect.minX, y: caretRect.minY - height - 4)
         if let screen = window.screen, origin.y < screen.visibleFrame.minY {
             origin.y = caretRect.maxY + 4
         }
         panel.setFrame(NSRect(origin: origin, size: NSSize(width: Self.width, height: height)), display: false)
-
-        tableView?.reloadData()
+        panel.contentView?.layoutSubtreeIfNeeded()
         selectRow(0)
 
         // 자식 창(addChildWindow)으로 붙이지 않는다.
@@ -99,6 +123,18 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         panel = nil
         tableView = nil
         parentWindow = nil
+    }
+
+    /// 표가 실제로 차지하는 높이에 창 여백을 더한 값.
+    ///
+    /// 표는 스타일에 따라 위아래로 여백을 더 넣기도 한다.
+    /// 계산으로 어림하지 않고 마지막 행의 아래 끝을 직접 재서 그만큼을 담는다.
+    private func measuredHeight(rowCount: Int) -> CGFloat {
+        guard let table = tableView, rowCount > 0 else { return Self.rowHeight + Self.edgeInset * 2 }
+
+        let lastRowBottom = table.rect(ofRow: min(rowCount, table.numberOfRows) - 1).maxY
+        let contentHeight = max(lastRowBottom, CGFloat(rowCount) * Self.rowHeight)
+        return contentHeight + Self.edgeInset * 2
     }
 
     /// 메모 창이 키 창 자리를 되찾게 한다.
@@ -147,6 +183,9 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // 기본 행간 여백(세로 2pt)이 행마다 쌓여 마지막 줄을 밀어내고 스크롤을 만든다.
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.gridStyleMask = []
+        // 기본 스타일(.automatic)은 표 위쪽에 10pt를 넣고 좌우로도 넓혀 잡는다.
+        // 그 여백이 계산에 없으니 아래가 잘리고 좌우가 어긋났다. 여백 없는 스타일로 고정한다.
+        table.style = .plain
         table.selectionHighlightStyle = .regular
         table.dataSource = self
         table.delegate = self
@@ -155,9 +194,12 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // 표가 포커스를 가져가면 메모에 타자가 들어가지 않는다.
         table.refusesFirstResponder = true
 
+        // 열 너비를 보이는 영역과 똑같이 맞춘다. 넓으면 오른쪽이 잘려 좌우가 어긋나 보인다.
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("command"))
-        column.width = Self.width - 16
+        column.width = Self.width - Self.horizontalPadding * 2
+        column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
 
         let scrollView = NSScrollView()
         scrollView.documentView = table
@@ -173,10 +215,10 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         panel.contentView = background
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: 4),
-            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -4),
-            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 4),
-            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -4),
+            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: Self.edgeInset),
+            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.edgeInset),
+            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Self.horizontalPadding),
+            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -Self.horizontalPadding),
         ])
 
         self.panel = panel
@@ -258,11 +300,13 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
         container.addSubview(title)
         container.addSubview(subtitle)
+        // 글자 묶음을 세로 가운데에 두고, 좌우 여백을 같은 값으로 맞춘다.
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            title.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.cellInset),
+            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
             subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
+            subtitle.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -5),
         ])
 
         // 같은 결과를 내는 마크다운 입력을 오른쪽에 함께 보여 준다.
@@ -275,13 +319,15 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
             shortcut.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(shortcut)
             NSLayoutConstraint.activate([
-                shortcut.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+                shortcut.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Self.cellInset),
                 shortcut.centerYAnchor.constraint(equalTo: container.centerYAnchor),
                 shortcut.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
                 subtitle.trailingAnchor.constraint(lessThanOrEqualTo: shortcut.leadingAnchor, constant: -8),
             ])
         } else {
-            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8).isActive = true
+            subtitle.trailingAnchor
+                .constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -Self.cellInset)
+                .isActive = true
         }
         return container
     }

@@ -30,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 실행한 앱에서 직접 재현할 수 있게 열어 둔다.
         if CommandLine.arguments.contains("--demo-slash") {
             container.windowRegistry.insertTextInFrontmostMemo("/")
+            // 배치가 끝난 뒤의 실제 치수를 찍는다. 계산과 화면이 어긋나는지 눈으로 확인할 수 있다.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak container] in
+                let report = (container?.windowRegistry.slashPopupDiagnostics ?? "확인 불가") + "\n"
+                FileHandle.standardError.write(Data(report.utf8))
+            }
         }
     }
 

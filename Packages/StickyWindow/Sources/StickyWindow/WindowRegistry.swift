@@ -103,6 +103,11 @@ public final class WindowRegistry {
         controllers.values.first?.insertText(text)
     }
 
+    /// 슬래시 팝업의 실제 치수. 계산과 화면이 어긋날 때 확인용.
+    public var slashPopupDiagnostics: String {
+        controllers.values.first?.slashPopupDiagnostics ?? "열린 메모 없음"
+    }
+
     private func frontmostFrame() -> NSRect? {
         if let key = NSApp.keyWindow, controllers.values.contains(where: { $0.owns(key) }) {
             return key.frame

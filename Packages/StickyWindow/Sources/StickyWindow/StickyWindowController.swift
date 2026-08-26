@@ -164,6 +164,11 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         formatController?.textDidChange()
     }
 
+    /// 슬래시 팝업의 실제 치수.
+    public var slashPopupDiagnostics: String {
+        formatController?.slashPopupDiagnostics ?? "편집기 없음"
+    }
+
     // MARK: - 저장
 
     /// 입력이 있을 때마다 서식을 갱신하고, 저장 타이머를 미룬다.

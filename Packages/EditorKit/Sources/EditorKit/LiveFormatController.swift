@@ -72,6 +72,9 @@ public final class LiveFormatController {
     /// 지금 팝업에 보이는 명령 목록.
     public var visibleSlashCommands: [SlashCommand] { slashPopup.visibleCommands }
 
+    /// 팝업의 실제 치수. 계산과 화면이 어긋날 때 확인용.
+    public var slashPopupDiagnostics: String { slashPopup.diagnostics }
+
     public func updateAppearance(theme: EditorTheme, textAlpha: Double) {
         self.currentTheme = theme
         self.currentTextAlpha = textAlpha
