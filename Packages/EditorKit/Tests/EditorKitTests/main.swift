@@ -372,6 +372,88 @@ runner.test("드롭다운은 입력한 키워드를 그대로 기억해 보여 �
     }
 }
 
+@MainActor
+func makeKeyEvent(keyCode: UInt16, characters: String) -> NSEvent? {
+    NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: characters,
+        charactersIgnoringModifiers: characters,
+        isARepeat: false,
+        keyCode: keyCode
+    )
+}
+
+@MainActor
+func makeWindowedEditor(loading markdown: String = "") -> (MemoTextView, LiveFormatController, NSWindow) {
+    let (textView, controller) = makeEditor(loading: markdown)
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+        styleMask: [.titled], backing: .buffered, defer: false
+    )
+    let container = NSView(frame: window.contentLayoutRect)
+    container.addSubview(textView)
+    window.contentView = container
+    window.makeFirstResponder(textView)
+    return (textView, controller, window)
+}
+
+// 사용자가 겪은 문제: `/키워드` 뒤 엔터를 눌러도 서식이 적용되지 않았다.
+runner.test("키워드를 친 뒤 엔터를 누르면 서식이 적용된다 (SL-03)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor()
+
+        textView.insertText("/todo", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        t.expect(controller.isSlashPopupVisible, "팝업이 뜨지 않아 확인할 수 없다")
+
+        guard let enter = makeKeyEvent(keyCode: 36, characters: "\r") else {
+            t.expect(false, "키 이벤트를 만들지 못했다")
+            return
+        }
+        textView.keyDown(with: enter)
+
+        t.expect(textView.string.hasPrefix("☐ "), "체크박스가 적용되지 않았다: '\(textView.string)'")
+        t.expect(!textView.string.contains("/todo"), "입력한 명령 글자가 남아 있다")
+        t.expect(!controller.isSlashPopupVisible, "적용 후에도 팝업이 남아 있다")
+    }
+}
+
+// 한글은 마지막 글자가 조합 중인 상태로 엔터를 누르게 된다.
+// 그대로 두면 엔터가 조합 확정에만 쓰여 명령이 적용되지 않는다.
+runner.test("한글 키워드 조합 중에 엔터를 눌러도 한 번에 적용된다 (NFR-08, SL-03)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor()
+
+        textView.insertText("/", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+
+        // "체크"를 입력하되 마지막 글자가 아직 조합 중인 상태를 만든다.
+        let caret = textView.selectedRange()
+        textView.setMarkedText(
+            "체크",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: caret.location, length: 0)
+        )
+        controller.textDidChange()
+        t.expect(textView.isComposingText, "조합 상태를 만들지 못했다")
+        t.expect(controller.visibleSlashCommands.first?.id == "checkbox", "조합 중 키워드로 걸러지지 않았다")
+
+        guard let enter = makeKeyEvent(keyCode: 36, characters: "\r") else {
+            t.expect(false, "키 이벤트를 만들지 못했다")
+            return
+        }
+        textView.keyDown(with: enter)
+
+        t.expect(!textView.isComposingText, "조합이 확정되지 않았다")
+        t.expect(textView.string.hasPrefix("☐ "), "엔터 한 번에 적용되지 않았다: '\(textView.string)'")
+    }
+}
+
 runner.test("메모 영역을 클릭하면 드롭다운이 닫힌다") { t in
     MainActor.assumeIsolated {
         let (textView, controller) = makeEditor()

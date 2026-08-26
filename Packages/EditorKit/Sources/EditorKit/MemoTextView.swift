@@ -118,10 +118,17 @@ public final class MemoTextView: NSTextView {
     }
 
     public override func keyDown(with event: NSEvent) {
-        // 한글을 조합하는 중에는 입력기가 키를 먼저 써야 한다.
-        // 여기서 엔터나 방향키를 가로채면 조합이 확정되지 못하고 글자가 사라진다 (NFR-08).
-        if !hasMarkedText(), onKeyDown?(event) == true { return }
+        // 조합 중에 어떤 키까지 가져갈지는 팝업 쪽이 판단한다.
+        // 여기서 일률적으로 막으면 "조합 중 엔터"가 조합 확정에만 쓰이고
+        // 명령에는 닿지 않아, 엔터를 두 번 눌러야 하는 상황이 된다 (NFR-08).
+        if onKeyDown?(event) == true { return }
         super.keyDown(with: event)
+    }
+
+    /// 조합 중인 글자를 확정한다. 확정된 글자는 그대로 남는다.
+    public func commitComposition() {
+        guard hasMarkedText() else { return }
+        unmarkText()
     }
 
     public override func insertNewline(_ sender: Any?) {

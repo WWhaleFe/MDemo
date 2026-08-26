@@ -9,8 +9,8 @@ extension LiveFormatController {
     /// 텍스트가 바뀔 때마다 팝업 상태를 갱신한다.
     func updateSlashPopup() {
         guard let textView else { return }
-        // 조합 중에는 팝업을 건드리지 않는다 (NFR-08).
-        guard !textView.isComposingText else { return }
+        // 조합 중에도 갱신한다. 팝업은 글자를 읽기만 하므로 안전하고,
+        // 여기서 멈추면 한글로 키워드를 칠 때 목록이 따라오지 않는다 (NFR-08).
 
         guard let query = slashQuery() else {
             if slashPopup.isVisible { slashPopup.hide() }
@@ -19,7 +19,12 @@ extension LiveFormatController {
 
         let matches = SlashCommandCatalog.filter(query)
         guard !matches.isEmpty else {
-            slashPopup.hide()
+            // 한글은 완성되기 전에 자모("ㅊ") 상태를 거치는데, 이때는 어떤 키워드와도 맞지 않는다.
+            // 그렇다고 목록을 닫으면 글자를 칠 때마다 깜빡이고, 닫는 과정에서 창을 건드려
+            // 조합까지 흔들린다. 조합이 끝날 때까지는 이전 목록을 그대로 둔다.
+            if !textView.isComposingText {
+                slashPopup.hide()
+            }
             return
         }
         guard let window = textView.window else { return }
@@ -34,8 +39,17 @@ extension LiveFormatController {
         guard let textView, let textStorage = textView.textStorage else { return nil }
 
         let text = textStorage.string as NSString
-        let caret = textView.selectedRange()
-        guard caret.length == 0, caret.location <= text.length else { return nil }
+
+        // 조합 중에는 입력기가 조합 구간을 통째로 선택 상태로 두기도 한다.
+        // 그럴 때는 조합 구간의 끝을 커서로 본다. 그러지 않으면 한글로 칠 때만 목록이 사라진다.
+        let caret: NSRange
+        if textView.isComposingText {
+            caret = NSRange(location: NSMaxRange(textView.markedRange()), length: 0)
+        } else {
+            caret = textView.selectedRange()
+            guard caret.length == 0 else { return nil }
+        }
+        guard caret.location <= text.length else { return nil }
 
         let lineRange = text.lineRange(for: NSRange(location: caret.location, length: 0))
         let caretInLine = caret.location - lineRange.location
@@ -65,8 +79,21 @@ extension LiveFormatController {
     }
 
     /// 팝업이 키를 가로챘으면 true.
+    ///
+    /// 한글 조합 중일 때가 까다롭다. 조합 중 엔터는 입력기가 "조합 확정"에 먼저 쓰기 때문에,
+    /// 그대로 두면 명령이 적용되지 않고 사용자는 엔터를 두 번 눌러야 한다.
+    /// 그래서 확정 키에 한해 조합을 먼저 확정한 뒤 명령을 적용한다.
+    /// 방향키 같은 나머지 키는 입력기가 쓸 수 있으니 넘기지 않는다.
     func handleSlashKeyDown(_ event: NSEvent) -> Bool {
-        slashPopup.handleKeyDown(event)
+        guard slashPopup.isVisible else { return false }
+
+        let isConfirmKey = [36, 76, 48].contains(event.keyCode)  // Return, Enter, Tab
+
+        if textView?.isComposingText == true {
+            guard isConfirmKey else { return false }
+            textView?.commitComposition()
+        }
+        return slashPopup.handleKeyDown(event)
     }
 
     /// 명령을 골랐을 때: 입력한 `/명령` 글자를 지우고 그 줄을 해당 블록으로 바꾼다.

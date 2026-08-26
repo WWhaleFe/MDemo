@@ -178,11 +178,19 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     /// 어느 창에도 전달되지 않아, 사용자에게는 앱이 멈춘 것처럼 보인다.
     private func restoreFocusToEditor() {
         guard let window = parentWindow else { return }
+        // 글자를 조합하는 중에 창을 앞으로 끌어오면 조합이 끊긴다.
+        // 이때는 포커스를 건드리지 않는다 — 어차피 입력은 편집기로 흐르고 있다.
+        guard !isEditorComposing else { return }
+
         if !window.isKeyWindow {
             window.makeKeyAndOrderFront(nil)
         }
         onRestoreFocus?()
     }
+
+    /// 편집기가 글자를 조합 중인지 알려 준다. 컨트롤러가 채워 준다.
+    var isEditorComposing: Bool { isComposingProvider?() ?? false }
+    var isComposingProvider: (() -> Bool)?
 
     private func ensurePanel() -> NonFocusingPanel {
         if let panel { return panel }
@@ -265,14 +273,10 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     /// 팝업이 처리한 키면 true. 편집기는 그 키를 무시한다.
     func handleKeyDown(_ event: NSEvent) -> Bool {
+        // 이 키는 편집기가 받아서 넘겨준 것이다. 즉 입력은 이미 편집기로 흐르고 있다.
+        // 여기서 창의 키 상태를 다시 따지면, 앱이 비활성일 때 정상 입력까지 막혀
+        // 엔터를 눌러도 명령이 적용되지 않는다.
         guard isVisible else { return false }
-
-        // 메모 창이 키 창이 아닌데 팝업만 떠 있는 상태라면 무언가 어긋난 것이다.
-        // 이때 키를 계속 가로채면 사용자는 입력이 막힌 것으로 느낀다. 정리하고 키를 돌려준다.
-        guard parentWindow?.isKeyWindow == true else {
-            hide()
-            return false
-        }
 
         switch event.keyCode {
         case 126: // ↑

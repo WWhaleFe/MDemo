@@ -51,6 +51,9 @@ public final class LiveFormatController {
         slashPopup.onSelect = { [weak self] command in
             self?.applySlashCommand(command)
         }
+        slashPopup.isComposingProvider = { [weak textView] in
+            textView?.isComposingText ?? false
+        }
         // 팝업이 뜨고 닫히는 어느 순간에도 입력은 편집기가 받아야 한다.
         slashPopup.onRestoreFocus = { [weak textView] in
             guard let textView, let window = textView.window else { return }
