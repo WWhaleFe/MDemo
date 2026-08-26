@@ -10,6 +10,32 @@ private final class NonFocusingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// 선택된 줄을 뚜렷하게 칠한다.
+///
+/// 기본 선택 표시는 반투명 배경 위에서 흐릿해 어느 줄이 골라졌는지 알기 어렵다.
+/// 강조색으로 채우고 왼쪽에 굵은 띠를 둬서 한눈에 들어오게 한다.
+private final class HighlightedRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+
+        let accent = NSColor.controlAccentColor
+        let body = bounds.insetBy(dx: 4, dy: 1)
+        NSBezierPath(roundedRect: body, xRadius: 7, yRadius: 7).setClip()
+        accent.withAlphaComponent(0.28).setFill()
+        body.fill()
+
+        let bar = NSRect(x: body.minX, y: body.minY, width: 3.5, height: body.height)
+        accent.setFill()
+        bar.fill()
+    }
+
+    /// 선택 강조를 직접 그리므로 시스템 기본 강조는 끈다.
+    override var isEmphasized: Bool {
+        get { true }
+        set { }
+    }
+}
+
 /// 슬래시 명령 팝업 (SL-01 ~ SL-03).
 ///
 /// 메모 창이 항상 위에 뜨는 패널이라, 팝업도 자식 창으로 붙여야 메모 뒤로 숨지 않는다.
@@ -19,6 +45,8 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private var tableView: NSTableView?
     private weak var parentWindow: NSWindow?
     private var commands: [SlashCommand] = []
+    /// `/` 뒤에 입력한 글자. 목록에서 어느 키워드가 걸렸는지 보여 주는 데 쓴다.
+    private var query: String = ""
     private var selectedIndex = 0
 
     /// 명령을 골랐을 때 호출된다.
@@ -71,12 +99,17 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     // MARK: - 표시
 
-    func show(commands: [SlashCommand], below caretRect: NSRect, in window: NSWindow) {
+    func show(commands: [SlashCommand], query: String, below caretRect: NSRect, in window: NSWindow) {
         guard !commands.isEmpty else {
             hide()
             return
         }
+        // 이미 떠 있는데 또 창을 앞으로 끌어오면 글자를 칠 때마다 화면이 끊긴다.
+        // 처음 뜨는 순간에만 창을 다루고, 그 뒤로는 내용과 크기만 바꾼다.
+        let wasVisible = panel?.isVisible ?? false
+
         self.commands = commands
+        self.query = query
         self.selectedIndex = 0
 
         let panel = ensurePanel()
@@ -100,6 +133,8 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // 자식 창은 부모와 키 상태를 주고받는데, 그 과정에서 메모 창이 키를 잃으면
         // 키보드 입력이 갈 곳이 없어져 타자도 커서 이동도 죽는다.
         // 레벨만 위로 올려 띄우고, 창이 움직이거나 비활성화되면 직접 정리한다.
+        guard !wasVisible else { return }
+
         // 앱이 비활성 상태여도 반드시 보이게 한다. 일반 orderFront는 비활성 앱에서 무시될 수 있다.
         panel.orderFrontRegardless()
         restoreFocusToEditor()
@@ -284,6 +319,55 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     func numberOfRows(in tableView: NSTableView) -> Int { commands.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        HighlightedRowView()
+    }
+
+    /// 설명 뒤에 검색 키워드를 붙여 보여 준다.
+    ///
+    /// 무엇을 쳐야 이 명령이 나오는지 눈으로 익히게 하려는 것이다.
+    /// 지금 입력한 글자와 맞는 키워드는 진하게 칠해, 왜 이 항목이 걸렸는지도 함께 보인다.
+    private func keywordLine(for command: SlashCommand) -> NSAttributedString {
+        let line = NSMutableAttributedString(
+            string: command.subtitle,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        // 제목과 겹치는 키워드는 빼고, 새로 알 만한 것만 보여 준다.
+        let extras = command.keywords.filter { $0.lowercased() != command.title.lowercased() }
+        guard !extras.isEmpty else { return line }
+
+        line.append(NSAttributedString(
+            string: "   ",
+            attributes: [.font: NSFont.systemFont(ofSize: 11)]
+        ))
+
+        for (index, keyword) in extras.enumerated() {
+            if index > 0 {
+                line.append(NSAttributedString(
+                    string: " · ",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 10),
+                        .foregroundColor: NSColor.quaternaryLabelColor,
+                    ]
+                ))
+            }
+            let isMatch = !needle.isEmpty && keyword.lowercased().hasPrefix(needle)
+            line.append(NSAttributedString(
+                string: keyword,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: isMatch ? .semibold : .regular),
+                    .foregroundColor: isMatch ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor,
+                ]
+            ))
+        }
+        return line
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard commands.indices.contains(row) else { return nil }
         let command = commands[row]
@@ -293,10 +377,9 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let subtitle = NSTextField(labelWithString: command.subtitle)
-        subtitle.font = .systemFont(ofSize: 11)
-        subtitle.textColor = .secondaryLabelColor
+        let subtitle = NSTextField(labelWithAttributedString: keywordLine(for: command))
         subtitle.translatesAutoresizingMaskIntoConstraints = false
+        subtitle.lineBreakMode = .byTruncatingTail
 
         container.addSubview(title)
         container.addSubview(subtitle)

@@ -314,6 +314,64 @@ runner.test("슬래시 하나만 쳐도 전체 명령 목록이 보인다 (SL-01
     }
 }
 
+// 사용자가 겪은 문제: 슬래시 뒤에 한글 키워드를 치면 앱이 잠깐 멈추거나 입력이 안 됐다.
+// 조합 중에도 목록은 따라와야 하고, 글자를 고치는 일은 하지 않아야 한다.
+runner.test("한글 조합 중에도 드롭다운이 따라오되 글자는 건드리지 않는다 (NFR-08)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let container = NSView(frame: window.contentLayoutRect)
+        container.addSubview(textView)
+        window.contentView = container
+        window.makeFirstResponder(textView)
+
+        textView.insertText("/", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        t.expectEqual(controller.visibleSlashCommands.count, SlashCommandCatalog.standard.count)
+
+        // 한글 입력기가 미완성 글자를 올려둔 상태를 만든다.
+        let markedRange = NSRange(location: textView.selectedRange().location, length: 0)
+        textView.setMarkedText("ㅊ", selectedRange: NSRange(location: 0, length: 1), replacementRange: markedRange)
+        t.expect(textView.isComposingText, "조합 상태를 만들지 못했다")
+
+        let before = textView.string
+        controller.textDidChange()
+        t.expectEqual(textView.string, before, "조합 중에 글자가 바뀌었다 — 입력이 깨지는 원인")
+        t.expect(controller.isSlashPopupVisible, "조합 중이라고 목록이 사라지면 한글로 키워드를 칠 수 없다")
+
+        textView.unmarkText()
+        controller.dismissPopups()
+    }
+}
+
+runner.test("드롭다운은 입력한 키워드를 그대로 기억해 보여 준다 (SL-02)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let container = NSView(frame: window.contentLayoutRect)
+        container.addSubview(textView)
+        window.contentView = container
+        window.makeFirstResponder(textView)
+
+        textView.insertText("/todo", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+
+        // 제목에 없는 키워드로도 찾아진다는 것이 핵심이다.
+        t.expect(controller.visibleSlashCommands.first?.id == "checkbox", "키워드로 검색되지 않았다")
+        t.expect(
+            controller.visibleSlashCommands.first?.keywords.contains("todo") == true,
+            "찾은 명령이 그 키워드를 갖고 있어야 목록에 표시할 수 있다"
+        )
+        controller.dismissPopups()
+    }
+}
+
 runner.test("메모 영역을 클릭하면 드롭다운이 닫힌다") { t in
     MainActor.assumeIsolated {
         let (textView, controller) = makeEditor()

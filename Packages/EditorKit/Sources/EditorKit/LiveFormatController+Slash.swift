@@ -23,7 +23,7 @@ extension LiveFormatController {
             return
         }
         guard let window = textView.window else { return }
-        slashPopup.show(commands: matches, below: caretRectOnScreen(), in: window)
+        slashPopup.show(commands: matches, query: query, below: caretRectOnScreen(), in: window)
     }
 
     /// 커서 앞의 `/`부터 지금까지 입력한 글자. 슬래시 상태가 아니면 nil.

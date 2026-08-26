@@ -91,10 +91,13 @@ public final class LiveFormatController {
         guard !isApplyingFormat else { return }
         guard let textView else { return }
 
-        // 조합 중이면 손대지 않는다. 조합이 끝나면 다음 변경 알림에서 다시 검사한다.
-        guard !textView.isComposingText else { return }
+        // 서식 변환은 글자를 고치는 일이라 조합이 끝난 뒤에 한다 (NFR-08).
+        if !textView.isComposingText {
+            applyRulesToCurrentLine()
+        }
 
-        applyRulesToCurrentLine()
+        // 팝업 갱신은 글자를 건드리지 않고 읽기만 하므로 조합 중에도 안전하다.
+        // 오히려 조합 중에 멈추면 한글로 키워드를 칠 때 목록이 따라오지 않는다.
         updateSlashPopup()
     }
 

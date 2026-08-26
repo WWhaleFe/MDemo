@@ -118,7 +118,9 @@ public final class MemoTextView: NSTextView {
     }
 
     public override func keyDown(with event: NSEvent) {
-        if onKeyDown?(event) == true { return }
+        // 한글을 조합하는 중에는 입력기가 키를 먼저 써야 한다.
+        // 여기서 엔터나 방향키를 가로채면 조합이 확정되지 못하고 글자가 사라진다 (NFR-08).
+        if !hasMarkedText(), onKeyDown?(event) == true { return }
         super.keyDown(with: event)
     }
 
