@@ -1,0 +1,18 @@
+# 빌드 산출물
+.build/
+build/
+*.o
+*.dSYM/
+
+# SwiftPM
+Package.resolved
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# 개인 데이터 (앱이 실행 중 만드는 것 — 저장소에 들어가면 안 된다)
+Data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

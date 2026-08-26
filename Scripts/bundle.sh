@@ -1,0 +1,39 @@
+#!/bin/bash
+# SwiftPM 실행 파일을 macOS .app 번들로 조립한다.
+# Xcode 없이 Command Line Tools만으로 동작한다.
+#
+# 사용법: Scripts/bundle.sh [debug|release]
+#   debug   : 현재 아키텍처만 빌드 (개발용, 빠름)
+#   release : arm64 + x86_64 유니버설 빌드 (배포용)
+set -euo pipefail
+
+CONFIG="${1:-debug}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+APP_NAME="MemoApp"
+APP_DIR="$ROOT/build/$APP_NAME.app"
+
+cd "$ROOT"
+
+if [ "$CONFIG" = "release" ]; then
+    BUILD_FLAGS=(-c release --arch arm64 --arch x86_64)
+else
+    BUILD_FLAGS=(-c debug)
+fi
+
+echo "▸ 빌드 중 ($CONFIG)…"
+swift build "${BUILD_FLAGS[@]}"
+BIN_PATH="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path)"
+
+echo "▸ 번들 조립 중…"
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+cp "$BIN_PATH/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
+cp "$ROOT/App/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+
+# 유료 개발자 계정이 없으므로 임시(ad-hoc) 서명을 쓴다.
+# 계정을 확보하면 Developer ID 서명 + 공증으로 이 줄만 바꾸면 된다.
+echo "▸ 서명 중 (ad-hoc)…"
+codesign --force --sign - "$APP_DIR" 2>/dev/null
+
+SIZE="$(du -sh "$APP_DIR" | cut -f1)"
+echo "✓ 완료: $APP_DIR  (번들 크기 $SIZE / 목표 30MB 이하)"
