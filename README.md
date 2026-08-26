@@ -10,9 +10,25 @@ macOS용 개인 메모앱. 바탕화면에 떠 있는 마크다운 스티키 노
 남은 것은 한글 입력 수동 확인([docs/manual-test-ime.md](docs/manual-test-ime.md)) 하나다.
 
 동작하는 것: 메뉴바 상주, 플로팅 스티키 창, 마크다운 파일 자동 저장, 재시작 시 창 복원,
-입력 중 서식 변환(제목·목록·체크박스·굵게·기울임·취소선·형광·코드).
+입력 중 서식 변환(제목·목록·체크박스·굵게·기울임·취소선·형광·코드),
+슬래시 명령(`/`로 서식 고르기), 목록 이어가기와 Tab 들여쓰기, 체크박스 클릭 토글,
+화면 밀도에 맞춘 글자·창 크기 자동 설정.
 
 아직 없는 것: 리스트 창(M3), iCloud 동기화(M4), 전역 단축키·이미지·알람(M5).
+
+## 문제를 확인하는 방법
+
+창 상태나 그리기와 얽힌 문제는 자동 테스트로 잡히지 않는다. 앱을 직접 실행해 확인한다.
+
+```bash
+# 슬래시 팝업이 뜨는지 + 실제 치수 (스크롤·정렬 확인)
+./build/MemoApp.app/Contents/MacOS/MemoApp --new-memo --demo-slash
+
+# 특정 명령을 치고 엔터까지 눌러 본다 (적용·크래시 확인)
+./build/MemoApp.app/Contents/MacOS/MemoApp --new-memo --demo-command=제목
+```
+
+앱이 종료됐다면 `~/Library/Logs/DiagnosticReports/MemoApp-*.ips`에 원인이 남는다.
 
 ## 빌드와 실행
 
