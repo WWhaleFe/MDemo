@@ -122,6 +122,37 @@ runner.test("목록 안에서도 인라인 서식이 걸린다") { t in
     t.expect(PairedDelimiterRule.bold.match(bullet)?.outcome == .inline(.bold))
 }
 
+// MARK: - 슬래시 명령 (SL-02, SL-04, SL-05)
+
+runner.test("슬래시 명령은 한글과 영어 모두로 찾을 수 있다 (SL-05)") { t in
+    let korean = SlashCommandCatalog.filter("체크")
+    t.expect(korean.first?.id == "checkbox", "한글로 체크박스를 찾지 못했다")
+
+    let english = SlashCommandCatalog.filter("check")
+    t.expect(english.first?.id == "checkbox", "영어로 체크박스를 찾지 못했다")
+
+    let todo = SlashCommandCatalog.filter("todo")
+    t.expect(todo.first?.id == "checkbox", "todo로 체크박스를 찾지 못했다")
+}
+
+runner.test("앞에서부터 일치하는 명령이 위에 온다 (SL-02)") { t in
+    let matches = SlashCommandCatalog.filter("제목")
+    t.expect(matches.count >= 3, "제목 1~3이 모두 나와야 한다")
+    t.expect(matches.first?.id.hasPrefix("heading") == true, "제목이 첫 결과가 아니다")
+}
+
+runner.test("빈 입력에는 전체 명령이 나오고, 없는 명령은 빈 목록이다") { t in
+    t.expectEqual(SlashCommandCatalog.filter("").count, SlashCommandCatalog.standard.count)
+    t.expectEqual(SlashCommandCatalog.filter("없는명령어").count, 0)
+}
+
+runner.test("기본 명령 세트에 필요한 항목이 모두 있다 (SL-04)") { t in
+    let ids = Set(SlashCommandCatalog.standard.map(\.id))
+    for required in ["checkbox", "bullet", "ordered", "heading1", "heading2", "heading3", "quote", "divider", "paragraph"] {
+        t.expect(ids.contains(required), "\(required) 명령이 없다")
+    }
+}
+
 // MARK: - 직렬화 (DOC-01, CHK-05)
 
 runner.test("서식은 표준 마크다운 기호로 저장된다") { t in

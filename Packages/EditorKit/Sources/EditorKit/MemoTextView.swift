@@ -70,6 +70,55 @@ public final class MemoTextView: NSTextView {
     /// 조합이 확정된 뒤에 검사한다. 조합 중 속성을 건드리면 글자가 깨진다.
     public var isComposingText: Bool { hasMarkedText() }
 
+    // MARK: - 목록 조작 훅
+    //
+    // 엔터·탭·클릭은 목록 문맥에 따라 동작이 달라진다.
+    // 판단은 전부 LiveFormatController가 하고, 여기서는 그쪽으로 넘기기만 한다.
+
+    /// 엔터. 목록을 이어가거나 빠져나온다. true를 돌려주면 기본 동작을 하지 않는다.
+    public var onNewline: (() -> Bool)?
+    /// Tab / Shift+Tab. 목록 들여쓰기 (KEY-08).
+    public var onIndent: ((_ deeper: Bool) -> Bool)?
+    /// 체크박스 표식 클릭 (CHK-01).
+    public var onToggleCheckbox: ((_ characterIndex: Int) -> Bool)?
+    /// 슬래시 팝업이 떠 있을 때 방향키·엔터를 먼저 가져간다 (SL-03).
+    public var onKeyDown: ((NSEvent) -> Bool)?
+
+    public override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) == true { return }
+        super.keyDown(with: event)
+    }
+
+    public override func insertNewline(_ sender: Any?) {
+        if onNewline?() == true { return }
+        super.insertNewline(sender)
+    }
+
+    public override func insertTab(_ sender: Any?) {
+        if onIndent?(true) == true { return }
+        super.insertTab(sender)
+    }
+
+    public override func insertBacktab(_ sender: Any?) {
+        if onIndent?(false) == true { return }
+        super.insertBacktab(sender)
+    }
+
+    /// 체크박스 표식을 클릭하면 체크가 토글된다.
+    /// 글자를 클릭한 경우에는 평소대로 커서만 옮긴다.
+    public override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        if onToggleCheckbox?(index) == true { return }
+        super.mouseDown(with: event)
+    }
+
+    /// 지정한 위치가 속한 줄의 체크박스를 토글한다. 체크박스 줄이 아니면 false.
+    @discardableResult
+    public func toggleCheckbox(atCharacterIndex index: Int) -> Bool {
+        onToggleCheckbox?(index) ?? false
+    }
+
     // MARK: - 문서 싣고 꺼내기
 
     /// 마크다운을 읽어 화면에 서식으로 표시한다. 창을 열 때 한 번 호출한다.

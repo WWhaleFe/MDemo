@@ -8,15 +8,20 @@ import MarkdownEngine
 ///
 /// 그래서 규칙은 하나다: **조합 중에는 아무것도 하지 않는다.**
 /// 조합이 확정된 뒤에야 그 줄을 검사한다.
+///
+/// 목록을 이어가고 들여쓰는 동작은 `LiveFormatController+Lists.swift`에 있다.
 @MainActor
 public final class LiveFormatController {
-    private weak var textView: MemoTextView?
+    weak var textView: MemoTextView?
     private let rules: InputRuleSet
-    private var theme: EditorTheme
-    private var textAlpha: Double
+    private(set) var currentTheme: EditorTheme
+    private(set) var currentTextAlpha: Double
 
     /// 변환을 스스로 적용하는 동안 다시 호출되는 것을 막는다.
     private var isApplyingFormat = false
+
+    /// 슬래시 명령 팝업 (SL-01). 목록은 팝업이 열릴 때만 만들어진다.
+    let slashPopup = SlashCommandPopup()
 
     public init(
         textView: MemoTextView,
@@ -26,14 +31,35 @@ public final class LiveFormatController {
     ) {
         self.textView = textView
         self.rules = rules
-        self.theme = theme
-        self.textAlpha = textAlpha
+        self.currentTheme = theme
+        self.currentTextAlpha = textAlpha
+
+        // 엔터·탭·클릭은 목록 문맥을 알아야 하므로 이쪽에서 처리한다.
+        textView.onNewline = { [weak self] in self?.handleNewline() ?? false }
+        textView.onIndent = { [weak self] deeper in self?.handleIndent(deeper: deeper) ?? false }
+        textView.onToggleCheckbox = { [weak self] index in
+            self?.handleCheckboxToggle(atCharacterIndex: index) ?? false
+        }
+        textView.onKeyDown = { [weak self] event in
+            self?.handleSlashKeyDown(event) ?? false
+        }
+
+        slashPopup.onSelect = { [weak self] command in
+            self?.applySlashCommand(command)
+        }
+    }
+
+    deinit {
+        // 팝업은 부모 창에 붙은 자식 창이라 명시적으로 떼어 준다.
+        MainActor.assumeIsolated { slashPopup.hide() }
     }
 
     public func updateAppearance(theme: EditorTheme, textAlpha: Double) {
-        self.theme = theme
-        self.textAlpha = textAlpha
+        self.currentTheme = theme
+        self.currentTextAlpha = textAlpha
     }
+
+    // MARK: - 변환 진입점
 
     /// 텍스트가 바뀔 때마다 호출된다.
     public func textDidChange() {
@@ -44,6 +70,7 @@ public final class LiveFormatController {
         guard !textView.isComposingText else { return }
 
         applyRulesToCurrentLine()
+        updateSlashPopup()
     }
 
     /// 커서가 있는 줄에만 규칙을 적용한다. 문서 전체를 훑지 않아 입력이 느려지지 않는다.
@@ -59,12 +86,15 @@ public final class LiveFormatController {
         let line = rawLine.hasSuffix("\n") ? String(rawLine.dropLast()) : rawLine
 
         // 이 줄에 이미 걸린 블록 서식과 화면 표식(`• `, `☐ `)을 분리한다.
-        let block = currentBlock(in: textStorage, at: lineRange.location)
+        let block = blockStyle(in: textStorage, at: lineRange.location)
         let visiblePrefix = AttributedTextBridge.visiblePrefix(for: block)
-        let prefixUTF16Length = (visiblePrefix as NSString).length
 
-        guard line.hasPrefix(visiblePrefix) else { return }
-        let content = String(line.dropFirst(visiblePrefix.count))
+        // 속성이 말하는 블록과 실제 글자가 어긋나면(붙여넣기·되돌리기 등) 문단으로 보고 검사한다.
+        // 여기서 그냥 돌아가 버리면 그 줄에서는 어떤 변환도 다시 일어나지 않는다.
+        let effectiveBlock = line.hasPrefix(visiblePrefix) ? block : .paragraph
+        let effectivePrefix = line.hasPrefix(visiblePrefix) ? visiblePrefix : ""
+        let prefixUTF16Length = (effectivePrefix as NSString).length
+        let content = String(line.dropFirst(effectivePrefix.count))
 
         // 규칙은 Character 단위로 다루므로 UTF-16 위치를 변환해 넘긴다.
         let caretInContentUTF16 = selection.location - lineRange.location - prefixUTF16Length
@@ -72,7 +102,7 @@ public final class LiveFormatController {
               let caretOffset = characterOffset(in: content, utf16Offset: caretInContentUTF16)
         else { return }
 
-        let context = InputRuleContext(content: content, caretOffset: caretOffset, block: block)
+        let context = InputRuleContext(content: content, caretOffset: caretOffset, block: effectiveBlock)
         guard let match = rules.firstMatch(context) else { return }
 
         apply(
@@ -80,7 +110,7 @@ public final class LiveFormatController {
             content: content,
             contentStart: lineRange.location + prefixUTF16Length,
             lineStart: lineRange.location,
-            currentBlock: block
+            currentBlock: effectiveBlock
         )
     }
 
@@ -100,12 +130,8 @@ public final class LiveFormatController {
         let matchedUTF16 = String(characters[match.range]).utf16.count
         let replaceRange = NSRange(location: contentStart + prefixUTF16, length: matchedUTF16)
 
-        isApplyingFormat = true
-        defer { isApplyingFormat = false }
-
-        // Cmd+Z 한 번으로 원문 기호가 돌아오도록 별도 undo 묶음으로 만든다 (MD-13).
-        textView.undoManager?.beginUndoGrouping()
-        defer { textView.undoManager?.endUndoGrouping() }
+        beginFormatting()
+        defer { endFormatting() }
 
         guard textView.shouldChangeText(in: replaceRange, replacementString: match.replacement) else { return }
 
@@ -149,24 +175,56 @@ public final class LiveFormatController {
             textStorage.replaceCharacters(in: oldPrefixRange, with: newPrefix)
         }
 
+        applyBlockAttributes(newBlock, lineStart: lineStart, textStorage: textStorage)
+
+        // 같은 줄에 이어 쓰는 글자도 이 블록 서식을 따르게 한다.
+        // 줄이 바뀔 때는 handleNewline이 다시 정해 주므로 여기서 넘어가지 않는다.
+        textView?.resetTypingAttributes(theme: currentTheme, textAlpha: currentTextAlpha, block: newBlock)
+    }
+
+    /// 줄 전체에 블록 서식과 글꼴을 입힌다.
+    func applyBlockAttributes(_ block: BlockStyle, lineStart: Int, textStorage: NSTextStorage) {
         let text = textStorage.string as NSString
-        let updatedLine = text.lineRange(for: NSRange(location: min(lineStart, text.length), length: 0))
-        let hasNewline = text.substring(with: updatedLine).hasSuffix("\n")
-        let contentLength = updatedLine.length - (hasNewline ? 1 : 0)
+        guard lineStart < text.length else { return }
+
+        let lineRange = text.lineRange(for: NSRange(location: lineStart, length: 0))
+        let hasNewline = text.substring(with: lineRange).hasSuffix("\n")
+        let contentLength = lineRange.length - (hasNewline ? 1 : 0)
         guard contentLength > 0 else { return }
 
         let styleRange = NSRange(location: lineStart, length: contentLength)
-        textStorage.addAttribute(.memoBlockStyle, value: BlockStyleBox(newBlock), range: styleRange)
+        textStorage.addAttribute(.memoBlockStyle, value: BlockStyleBox(block), range: styleRange)
+        textStorage.addAttribute(.font, value: currentTheme.font(for: block), range: styleRange)
+    }
 
-        var font = NSFont.systemFont(ofSize: theme.fontSize(for: newBlock))
-        if case .heading = newBlock {
-            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+    /// 체크된 항목은 취소선과 흐린 색으로 표시한다 (CHK-02).
+    func applyCheckedAppearance(_ block: BlockStyle, lineStart: Int, textStorage: NSTextStorage) {
+        guard case .checkbox(_, let checked) = block else { return }
+
+        let text = textStorage.string as NSString
+        guard lineStart < text.length else { return }
+        let lineRange = text.lineRange(for: NSRange(location: lineStart, length: 0))
+        let hasNewline = text.substring(with: lineRange).hasSuffix("\n")
+        let prefixLength = (AttributedTextBridge.visiblePrefix(for: block) as NSString).length
+        let contentLength = lineRange.length - (hasNewline ? 1 : 0) - prefixLength
+        guard contentLength > 0 else { return }
+
+        let contentRange = NSRange(location: lineStart + prefixLength, length: contentLength)
+        if checked {
+            textStorage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: contentRange)
+            textStorage.addAttribute(
+                .foregroundColor,
+                value: currentTheme.textColor.withAlphaComponent(currentTextAlpha * 0.45),
+                range: contentRange
+            )
+        } else {
+            textStorage.removeAttribute(.strikethroughStyle, range: contentRange)
+            textStorage.addAttribute(
+                .foregroundColor,
+                value: currentTheme.textColor.withAlphaComponent(currentTextAlpha),
+                range: contentRange
+            )
         }
-        textStorage.addAttribute(.font, value: font, range: styleRange)
-
-        // 다음에 입력하는 글자도 같은 블록 서식을 이어받게 한다.
-        textView?.typingAttributes[.memoBlockStyle] = BlockStyleBox(newBlock)
-        textView?.typingAttributes[.font] = font
     }
 
     /// 감싼 기호를 지우고 안쪽 글자에만 서식을 건다.
@@ -183,28 +241,44 @@ public final class LiveFormatController {
 
         let existing = (textStorage.attribute(.memoInlineStyle, at: styledRange.location, effectiveRange: nil) as? Int) ?? 0
         let combined = InlineStyleTag(rawValue: existing).union(tag)
-        let block = currentBlock(in: textStorage, at: styledRange.location)
+        let block = blockStyle(in: textStorage, at: styledRange.location)
 
-        let styled = AttributedTextBridge.attributedString(
-            from: StyledLine(block: block, spans: [StyledSpan(text: replacement, styles: combined)]),
-            theme: theme,
-            textAlpha: textAlpha
-        )
-        // 블록 표식이 앞에 붙지 않는 인라인 변환이므로 내용만 가져다 쓴다.
-        let prefixLength = (AttributedTextBridge.visiblePrefix(for: block) as NSString).length
-        let contentRange = NSRange(location: prefixLength, length: max(0, styled.length - prefixLength))
-        guard contentRange.length == styledRange.length else { return }
-        textStorage.replaceCharacters(in: styledRange, with: styled.attributedSubstring(from: contentRange))
+        textStorage.addAttribute(.font, value: currentTheme.font(for: block, inline: combined), range: styledRange)
+        textStorage.addAttribute(.memoInlineStyle, value: combined.rawValue, range: styledRange)
+
+        if combined.contains(.strikethrough) {
+            textStorage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: styledRange)
+        }
+        if combined.contains(.highlight) {
+            textStorage.addAttribute(
+                .backgroundColor,
+                value: NSColor.systemYellow.withAlphaComponent(0.45),
+                range: styledRange
+            )
+        }
 
         // 닫는 기호 뒤에 이어 쓰는 글자는 서식 없이 돌아가야 한다.
-        textView?.resetTypingAttributes(theme: theme, textAlpha: textAlpha, block: block)
+        textView?.resetTypingAttributes(theme: currentTheme, textAlpha: currentTextAlpha, block: block)
     }
 
-    private func currentBlock(in textStorage: NSTextStorage, at location: Int) -> BlockStyle {
+    // MARK: - 공용 도구
+
+    func blockStyle(in textStorage: NSTextStorage, at location: Int) -> BlockStyle {
         guard location < textStorage.length,
               let box = textStorage.attribute(.memoBlockStyle, at: location, effectiveRange: nil) as? BlockStyleBox
         else { return .paragraph }
         return box.value
+    }
+
+    /// 변환을 적용하는 동안에는 되돌리기를 한 묶음으로 만들고 재진입을 막는다 (MD-13).
+    func beginFormatting() {
+        isApplyingFormat = true
+        textView?.undoManager?.beginUndoGrouping()
+    }
+
+    func endFormatting() {
+        textView?.undoManager?.endUndoGrouping()
+        isApplyingFormat = false
     }
 
     /// UTF-16 위치를 Character 위치로 바꾼다.

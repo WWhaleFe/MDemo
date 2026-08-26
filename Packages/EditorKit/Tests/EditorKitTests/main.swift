@@ -17,6 +17,23 @@ func makeTextView(loading markdown: String) -> MemoTextView {
     return textView
 }
 
+/// 테스트가 끝날 때까지 컨트롤러를 붙잡아 둔다.
+///
+/// 엔터·탭·클릭 훅은 컨트롤러를 약하게 참조하므로, 컨트롤러가 해제되면 조용히 아무 일도 하지 않는다.
+/// 앱에서는 창 컨트롤러가 들고 있지만 테스트에는 그런 주인이 없어 여기서 대신 잡아 준다.
+@MainActor
+enum ControllerKeeper {
+    static var controllers: [LiveFormatController] = []
+}
+
+@MainActor
+func makeEditor(loading markdown: String = "") -> (MemoTextView, LiveFormatController) {
+    let textView = makeTextView(loading: markdown)
+    let controller = LiveFormatController(textView: textView, theme: theme, textAlpha: 1.0)
+    ControllerKeeper.controllers.append(controller)
+    return (textView, controller)
+}
+
 runner.test("마크다운을 열었다가 저장하면 원본 그대로다") { t in
     MainActor.assumeIsolated {
         let samples = [
@@ -113,6 +130,116 @@ runner.test("타이핑 순서대로 체크박스가 만들어진다 (MD-04)") { 
 
         type("우유")
         t.expectEqual(textView.currentMarkdown(), "- [ ] 우유", "저장 형식이 표준 마크다운이 아니다")
+    }
+}
+
+// 사용자가 겪은 문제: 첫 줄에서 한 번 변환된 뒤로는 아무 변환도 일어나지 않는다.
+runner.test("여러 줄을 이어 써도 줄마다 변환이 동작한다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "")
+        let controller = LiveFormatController(textView: textView, theme: theme, textAlpha: 1.0)
+
+        @MainActor func type(_ text: String) {
+            textView.insertText(text, replacementRange: textView.selectedRange())
+            controller.textDidChange()
+        }
+        @MainActor func enter() {
+            textView.insertNewline(nil)
+            controller.textDidChange()
+        }
+
+        type("# 제목")
+        enter()
+        type("- 사과")
+        enter()
+        enter()
+        type("**굵게**")
+
+        t.expectEqual(textView.currentMarkdown(), "# 제목\n- 사과\n\n**굵게**", "둘째 줄부터 변환이 멈췄다")
+    }
+}
+
+runner.test("목록에서 엔터를 치면 다음 항목이 이어진다 (노션 방식)") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "")
+        let controller = LiveFormatController(textView: textView, theme: theme, textAlpha: 1.0)
+
+        @MainActor func type(_ text: String) {
+            textView.insertText(text, replacementRange: textView.selectedRange())
+            controller.textDidChange()
+        }
+        @MainActor func enter() {
+            textView.insertNewline(nil)
+            controller.textDidChange()
+        }
+
+        type("- ")
+        type("[ ] ")
+        type("우유")
+        enter()
+        t.expect(textView.string.hasSuffix("☐ "), "다음 줄에 체크박스가 이어지지 않았다: '\(textView.string)'")
+
+        type("계란")
+        enter()
+        // 빈 항목에서 엔터를 한 번 더 치면 목록을 빠져나온다
+        enter()
+        type("마무리")
+
+        t.expectEqual(textView.currentMarkdown(), "- [ ] 우유\n- [ ] 계란\n마무리")
+    }
+}
+
+runner.test("번호 목록은 엔터마다 번호가 올라간다 (MD-03)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+
+        @MainActor func type(_ text: String) {
+            textView.insertText(text, replacementRange: textView.selectedRange())
+            controller.textDidChange()
+        }
+
+        // 실제 입력처럼 기호를 먼저 치고 내용을 이어 친다.
+        type("1. ")
+        type("첫째")
+        textView.insertNewline(nil); controller.textDidChange()
+        type("둘째")
+
+        t.expectEqual(textView.currentMarkdown(), "1. 첫째\n2. 둘째")
+    }
+}
+
+runner.test("체크박스를 클릭하면 체크가 토글된다 (CHK-01)") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "- [ ] 우유\n- [x] 계란")
+
+        t.expect(textView.toggleCheckbox(atCharacterIndex: 0), "첫 줄 체크박스 토글 실패")
+        t.expectEqual(textView.currentMarkdown(), "- [x] 우유\n- [x] 계란")
+
+        let secondLineStart = (textView.string as NSString).range(of: "계란").location - 2
+        t.expect(textView.toggleCheckbox(atCharacterIndex: secondLineStart), "둘째 줄 체크박스 토글 실패")
+        t.expectEqual(textView.currentMarkdown(), "- [x] 우유\n- [ ] 계란")
+    }
+}
+
+runner.test("글자를 클릭하면 체크가 바뀌지 않는다") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "- [ ] 우유")
+        let textIndex = (textView.string as NSString).range(of: "우유").location + 1
+        t.expect(!textView.toggleCheckbox(atCharacterIndex: textIndex), "글자 클릭인데 체크가 토글됐다")
+        t.expectEqual(textView.currentMarkdown(), "- [ ] 우유")
+    }
+}
+
+runner.test("Tab으로 목록을 들여쓰고 Shift+Tab으로 되돌린다 (KEY-08)") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "- [ ] 우유")
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+
+        textView.insertTab(nil)
+        t.expectEqual(textView.currentMarkdown(), "  - [ ] 우유", "들여쓰기가 되지 않았다")
+
+        textView.insertBacktab(nil)
+        t.expectEqual(textView.currentMarkdown(), "- [ ] 우유", "내어쓰기가 되지 않았다")
     }
 }
 
