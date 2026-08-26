@@ -164,8 +164,15 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     // MARK: - 창 상태
 
+    /// 다른 창으로 넘어가면 떠 있던 팝업을 정리한다.
+    /// 팝업이 남아 있으면 엔터·방향키를 계속 가로채 입력이 먹통처럼 보인다.
+    public func windowDidResignKey(_ notification: Notification) {
+        formatController?.dismissPopups()
+    }
+
     /// 창 위치·크기는 기기별 파일에만 기록한다 (SYNC-07). 동기화 대상 파일은 건드리지 않는다.
     public func windowDidMove(_ notification: Notification) {
+        formatController?.dismissPopups()
         scheduleFrameSave()
     }
 
@@ -204,6 +211,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     /// 창을 닫는다. 메모 파일은 남는다 (WIN-10).
     public func close() {
+        formatController?.dismissPopups()
         saveBodyNow()
         saveFrameNow()
         store?.setOpen(id: memoID, isOpen: false)
@@ -229,6 +237,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     public func setHidden(_ hidden: Bool) {
         if hidden {
+            formatController?.dismissPopups()
             panel.orderOut(nil)
         } else {
             panel.orderFront(nil)

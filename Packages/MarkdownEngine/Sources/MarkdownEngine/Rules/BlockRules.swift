@@ -117,16 +117,23 @@ public struct CheckboxRule: InputRule {
         }
     }
 
+    /// 문단에서 들어오는 두 형태를 모두 받는다.
+    ///
+    /// - `- [ ] ` : 표준 마크다운. 다른 곳에서 붙여넣을 때 이 형태다.
+    /// - `[ ] ` : 대괄호만 치는 형태. 노션·옵시디언에 익숙하면 이렇게 친다.
     private func matchFromParagraph(_ context: InputRuleContext) -> InputRuleMatch? {
         let (level, contentStart) = indentLevel(of: context.content)
         let rest = String(context.content.dropFirst(contentStart))
 
-        for marker in Self.uncheckedMarkers.map({ "- " + $0 }) where rest.hasPrefix(marker) {
+        let unchecked = Self.uncheckedMarkers.flatMap { [$0, "- " + $0] }
+        let checked = Self.checkedMarkers.flatMap { [$0, "- " + $0] }
+
+        for marker in unchecked where rest.hasPrefix(marker) {
             let range = contentStart..<(contentStart + marker.count)
             guard context.caretOffset == range.upperBound else { return nil }
             return InputRuleMatch(range: range, replacement: "", outcome: .block(.checkbox(indent: level, checked: false)))
         }
-        for marker in Self.checkedMarkers.map({ "- " + $0 }) where rest.hasPrefix(marker) {
+        for marker in checked where rest.hasPrefix(marker) {
             let range = contentStart..<(contentStart + marker.count)
             guard context.caretOffset == range.upperBound else { return nil }
             return InputRuleMatch(range: range, replacement: "", outcome: .block(.checkbox(indent: level, checked: true)))

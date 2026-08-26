@@ -47,11 +47,23 @@ public final class LiveFormatController {
         slashPopup.onSelect = { [weak self] command in
             self?.applySlashCommand(command)
         }
+        // 팝업이 뜨고 닫히는 어느 순간에도 입력은 편집기가 받아야 한다.
+        slashPopup.onRestoreFocus = { [weak textView] in
+            guard let textView, let window = textView.window else { return }
+            if window.firstResponder !== textView {
+                window.makeFirstResponder(textView)
+            }
+        }
     }
 
     deinit {
-        // 팝업은 부모 창에 붙은 자식 창이라 명시적으로 떼어 준다.
-        MainActor.assumeIsolated { slashPopup.hide() }
+        // 팝업은 부모 창에 붙은 자식 창이라 명시적으로 떼어 낸다.
+        MainActor.assumeIsolated { slashPopup.release() }
+    }
+
+    /// 창이 닫히거나 숨겨질 때 팝업도 함께 정리한다.
+    public func dismissPopups() {
+        slashPopup.hide()
     }
 
     public func updateAppearance(theme: EditorTheme, textAlpha: Double) {

@@ -243,6 +243,74 @@ runner.test("Tab으로 목록을 들여쓰고 Shift+Tab으로 되돌린다 (KEY-
     }
 }
 
+// 사용자가 겪은 문제: 슬래시 명령을 몇 번 쓰고 나면 타자가 아예 먹히지 않았다.
+// 팝업이 입력 포커스를 가져간 뒤 돌려주지 않는 것이 원인이었다.
+runner.test("슬래시 팝업을 여러 번 써도 편집기가 입력 포커스를 유지한다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+
+        // 실제 창에 넣어야 포커스 이동을 확인할 수 있다.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let container = NSView(frame: window.contentLayoutRect)
+        container.addSubview(textView)
+        window.contentView = container
+        window.makeFirstResponder(textView)
+        t.expect(window.firstResponder === textView, "시작부터 편집기가 포커스를 갖지 못했다")
+
+        @MainActor func type(_ text: String) {
+            textView.insertText(text, replacementRange: textView.selectedRange())
+            controller.textDidChange()
+        }
+
+        // 슬래시 명령을 세 번 반복한다.
+        for round in 1...3 {
+            type("/체크")
+            controller.applySlashCommand(SlashCommandCatalog.filter("체크")[0])
+            type("항목\(round)")
+            textView.insertNewline(nil)
+            controller.textDidChange()
+
+            t.expect(
+                window.firstResponder === textView,
+                "\(round)번째 슬래시 명령 뒤 편집기가 포커스를 잃었다 — 타자가 먹통이 되는 상태"
+            )
+        }
+
+        controller.dismissPopups()
+        t.expect(window.firstResponder === textView, "팝업을 닫은 뒤 포커스가 돌아오지 않았다")
+        t.expect(textView.currentMarkdown().contains("- [ ] 항목1"), "슬래시 명령이 체크박스를 만들지 못했다")
+    }
+}
+
+runner.test("대괄호만 쳐도 체크박스가 만들어진다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+
+        @MainActor func type(_ text: String) {
+            textView.insertText(text, replacementRange: textView.selectedRange())
+            controller.textDidChange()
+        }
+
+        type("[] ")
+        t.expect(textView.string.hasPrefix("☐ "), "[] 로 체크박스가 만들어지지 않았다: '\(textView.string)'")
+
+        type("우유")
+        t.expectEqual(textView.currentMarkdown(), "- [ ] 우유")
+    }
+}
+
+runner.test("대괄호 안에 공백을 넣은 형태도 인식한다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+        textView.insertText("[ ] ", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        t.expect(textView.string.hasPrefix("☐ "), "[ ] 로 체크박스가 만들어지지 않았다: '\(textView.string)'")
+    }
+}
+
 runner.test("글꼴과 크기 설정이 실제로 반영된다 (TXT-02, TXT-03)") { t in
     MainActor.assumeIsolated {
         let large = EditorTheme(fontFamily: FontResolver.defaultFamily(), baseFontSize: 20, textColor: .black)

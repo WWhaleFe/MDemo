@@ -70,7 +70,7 @@ extension LiveFormatController {
     }
 
     /// 명령을 골랐을 때: 입력한 `/명령` 글자를 지우고 그 줄을 해당 블록으로 바꾼다.
-    func applySlashCommand(_ command: SlashCommand) {
+    public func applySlashCommand(_ command: SlashCommand) {
         guard let textView, let textStorage = textView.textStorage else { return }
 
         let text = textStorage.string as NSString

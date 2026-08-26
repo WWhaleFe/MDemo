@@ -1,21 +1,30 @@
 import AppKit
 import MarkdownEngine
 
+/// 절대 입력 포커스를 가져가지 않는 팝업 창.
+///
+/// 팝업이 키 창이 되면 메모 창이 입력을 잃어 타자가 먹통이 된다.
+/// 클릭으로 항목을 고를 때도 포커스는 메모에 남아 있어야 한다.
+private final class NonFocusingPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 /// 슬래시 명령 팝업 (SL-01 ~ SL-03).
 ///
-/// 메모 창이 항상 위에 뜨는 패널이라, 팝업도 같은 수준으로 띄우지 않으면 메모 뒤에 가린다.
-/// 목록은 열 때 만들고 닫을 때 버린다 — 창마다 팝업을 상주시키면 메모리가 창 수만큼 붙는다 (§4-5).
+/// 메모 창이 항상 위에 뜨는 패널이라, 팝업도 자식 창으로 붙여야 메모 뒤로 숨지 않는다.
 @MainActor
 final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    private var panel: NSPanel?
+    private var panel: NonFocusingPanel?
     private var tableView: NSTableView?
+    private weak var parentWindow: NSWindow?
     private var commands: [SlashCommand] = []
     private var selectedIndex = 0
 
     /// 명령을 골랐을 때 호출된다.
     var onSelect: ((SlashCommand) -> Void)?
-    /// 팝업이 닫힐 때 호출된다.
-    var onCancel: (() -> Void)?
+    /// 팝업이 닫힌 뒤 편집기로 포커스를 되돌리기 위해 호출된다.
+    var onRestoreFocus: (() -> Void)?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -25,7 +34,7 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     // MARK: - 표시
 
-    func show(commands: [SlashCommand], below caretRect: NSRect, in parentWindow: NSWindow) {
+    func show(commands: [SlashCommand], below caretRect: NSRect, in window: NSWindow) {
         guard !commands.isEmpty else {
             hide()
             return
@@ -33,39 +42,58 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         self.commands = commands
         self.selectedIndex = 0
 
-        let panel = self.panel ?? makePanel()
-        self.panel = panel
+        let panel = ensurePanel()
+        attach(panel, to: window)
 
         let visibleRows = min(commands.count, Self.maximumVisibleRows)
         let height = CGFloat(visibleRows) * Self.rowHeight + 8
         // 커서 아래에 붙이되, 화면 아래로 넘치면 커서 위로 올린다.
         var origin = NSPoint(x: caretRect.minX, y: caretRect.minY - height - 4)
-        if let screen = parentWindow.screen, origin.y < screen.visibleFrame.minY {
+        if let screen = window.screen, origin.y < screen.visibleFrame.minY {
             origin.y = caretRect.maxY + 4
         }
         panel.setFrame(NSRect(origin: origin, size: NSSize(width: Self.width, height: height)), display: false)
 
         tableView?.reloadData()
         selectRow(0)
-
-        if panel.parent == nil {
-            parentWindow.addChildWindow(panel, ordered: .above)
-        }
         panel.orderFront(nil)
+
+        // 팝업이 떠도 입력은 계속 메모 창이 받아야 한다.
+        if !window.isKeyWindow {
+            window.makeKey()
+        }
+        onRestoreFocus?()
     }
 
+    /// 팝업을 감춘다. 포커스는 반드시 편집기로 돌려준다.
     func hide() {
-        guard let panel else { return }
+        guard let panel, panel.isVisible || panel.parent != nil else { return }
         panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
-        // 목록과 창을 통째로 버려 메모리를 돌려준다.
-        self.panel = nil
-        self.tableView = nil
-        self.commands = []
+        commands = []
+        onRestoreFocus?()
     }
 
-    private func makePanel() -> NSPanel {
-        let panel = NSPanel(
+    /// 창이 닫힐 때 팝업 자원을 완전히 버린다 (§4-5).
+    func release() {
+        hide()
+        panel = nil
+        tableView = nil
+        parentWindow = nil
+    }
+
+    private func attach(_ panel: NonFocusingPanel, to window: NSWindow) {
+        // 같은 부모에 두 번 붙이면 자식 창이 중복 등록돼 창이 남는다.
+        if panel.parent === window { return }
+        panel.parent?.removeChildWindow(panel)
+        window.addChildWindow(panel, ordered: .above)
+        parentWindow = window
+    }
+
+    private func ensurePanel() -> NonFocusingPanel {
+        if let panel { return panel }
+
+        let panel = NonFocusingPanel(
             contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 200),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -75,6 +103,8 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .popUpMenu
+        panel.hidesOnDeactivate = true
+        panel.becomesKeyOnlyIfNeeded = true
 
         let background = NSVisualEffectView()
         background.material = .menu
@@ -93,6 +123,8 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         table.delegate = self
         table.target = self
         table.action = #selector(rowClicked)
+        // 표가 포커스를 가져가면 메모에 타자가 들어가지 않는다.
+        table.refusesFirstResponder = true
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("command"))
         column.width = Self.width - 16
@@ -114,13 +146,14 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
             scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -4),
         ])
 
+        self.panel = panel
         self.tableView = table
         return panel
     }
 
     // MARK: - 키보드 조작 (SL-03)
 
-    /// 팝업이 처리한 키면 true. 에디터는 그 키를 무시한다.
+    /// 팝업이 처리한 키면 true. 편집기는 그 키를 무시한다.
     func handleKeyDown(_ event: NSEvent) -> Bool {
         guard isVisible else { return false }
 
@@ -131,15 +164,11 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         case 125: // ↓
             selectRow(min(commands.count - 1, selectedIndex + 1))
             return true
-        case 36, 76: // Return, Enter
-            confirmSelection()
-            return true
-        case 48: // Tab
+        case 36, 76, 48: // Return, Enter, Tab
             confirmSelection()
             return true
         case 53: // Esc
             hide()
-            onCancel?()
             return true
         default:
             return false
@@ -160,7 +189,10 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     }
 
     private func confirmSelection() {
-        guard commands.indices.contains(selectedIndex) else { return }
+        guard commands.indices.contains(selectedIndex) else {
+            hide()
+            return
+        }
         let command = commands[selectedIndex]
         hide()
         onSelect?(command)
@@ -195,6 +227,4 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         ])
         return container
     }
-
-    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { true }
 }
