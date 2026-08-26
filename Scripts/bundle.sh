@@ -9,6 +9,7 @@ set -euo pipefail
 
 CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/Scripts/toolchain.sh"
 APP_NAME="MemoApp"
 APP_DIR="$ROOT/build/$APP_NAME.app"
 

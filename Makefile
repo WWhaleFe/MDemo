@@ -21,12 +21,9 @@ run: build
 release:
 	@Scripts/bundle.sh release
 
-# Xcode가 없어 swift test를 쓸 수 없으므로 각 패키지의 러너를 실행한다 (Packages/TestKit 참고)
+# Xcode 없이도 돌아가도록 swift test 대신 러너를 실행한다 (Packages/TestKit 참고)
 test:
-	@set -e; for pkg in MemoCore MarkdownEngine Services; do \
-		(cd Packages/$$pkg && swift run -c debug $${pkg}Tests); \
-	done
-	@echo "✓ 전체 테스트 통과"
+	@Scripts/test.sh
 
 check:
 	@Scripts/check-layering.sh

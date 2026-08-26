@@ -1,4 +1,5 @@
 import AppKit
+import MemoCore
 import Services
 import StickyWindow
 
@@ -10,10 +11,12 @@ import StickyWindow
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let windowRegistry: WindowRegistry
+    private let store: MemoStore
     private let memoryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
-    init(windowRegistry: WindowRegistry) {
+    init(windowRegistry: WindowRegistry, store: MemoStore) {
         self.windowRegistry = windowRegistry
+        self.store = store
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -64,7 +67,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     /// 메뉴를 열 때마다 현재 상태를 갱신한다.
     func menuWillOpen(_ menu: NSMenu) {
-        memoryItem.title = "메모리 \(MemoryReporter.formattedFootprint())  ·  열린 메모 \(windowRegistry.openCount)개"
+        memoryItem.title = "메모리 \(MemoryReporter.formattedFootprint())"
+            + "  ·  열린 창 \(windowRegistry.openCount)개"
+            + "  ·  전체 \(store.summaries.count)개"
     }
 
     @objc private func newMemo() {

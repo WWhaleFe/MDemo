@@ -7,7 +7,7 @@ import MemoCore
 /// 메모리 원칙(§4-5): 창이 닫히면 컨트롤러가 통째로 해제되고 본문도 함께 사라진다.
 /// 목록에 남는 것은 메타데이터와 미리보기뿐이다.
 @MainActor
-public final class StickyWindowController {
+public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     public let memoID: MemoID
     public private(set) var meta: MemoMeta
 
@@ -16,21 +16,42 @@ public final class StickyWindowController {
     private let textView: MemoTextView
     private let scrollView: NSScrollView
 
-    /// 사용자가 창을 닫았을 때 호출된다. 레지스트리가 이 신호로 컨트롤러를 해제한다.
+    /// 저장을 맡은 쪽. 컨트롤러는 파일 시스템을 직접 다루지 않는다 (설계서 §4-3).
+    private weak var store: MemoStore?
+    private let deviceState: DeviceStateStore
+
+    /// 입력이 멈춘 뒤에 저장한다 (DAT-03). 타이핑마다 디스크를 두드리지 않기 위한 장치다.
+    private var saveTimer: Timer?
+    private var frameSaveTimer: Timer?
+    private static let saveDebounce: TimeInterval = 0.5
+
     public var onClose: ((MemoID) -> Void)?
 
     private static let headerHeight: CGFloat = 26
 
-    public init(meta: MemoMeta, frame: NSRect) {
+    public init(
+        meta: MemoMeta,
+        body: String,
+        frame: NSRect,
+        store: MemoStore,
+        deviceState: DeviceStateStore
+    ) {
         self.memoID = meta.id
         self.meta = meta
+        self.store = store
+        self.deviceState = deviceState
         self.panel = StickyPanel(contentRect: frame)
         self.rootView = StickyRootView(frame: NSRect(origin: .zero, size: frame.size))
         self.scrollView = NSScrollView()
         self.textView = MemoTextView.makeTextKit1(frame: NSRect(origin: .zero, size: frame.size))
 
+        super.init()
+
         buildViewHierarchy()
         applyAppearance()
+        textView.string = body
+        textView.delegate = self
+        panel.delegate = self
         panel.setAlwaysOnTop(meta.isPinned)
     }
 
@@ -46,7 +67,7 @@ public final class StickyWindowController {
             systemSymbolName: "xmark.circle.fill",
             accessibilityDescription: "메모 닫기"
         )
-        closeButton.contentTintColor = NSColor.labelColor.withAlphaComponent(0.35)
+        closeButton.contentTintColor = NSColor.black.withAlphaComponent(0.3)
         closeButton.toolTip = "닫기 (메모는 삭제되지 않습니다)"
         header.addSubview(closeButton)
 
@@ -100,15 +121,83 @@ public final class StickyWindowController {
         panel.makeFirstResponder(textView)
     }
 
+    // MARK: - 저장
+
+    /// 입력이 있을 때마다 타이머를 미룬다. 멈추고 0.5초 뒤 한 번만 저장한다.
+    public func textDidChange(_ notification: Notification) {
+        scheduleBodySave()
+    }
+
+    private func scheduleBodySave() {
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDebounce, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.saveBodyNow()
+            }
+        }
+    }
+
+    /// 지금 즉시 저장한다. 창을 닫거나 앱이 종료될 때는 디바운스를 기다리지 않는다.
+    public func saveBodyNow() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        store?.saveBody(id: memoID, body: textView.string)
+    }
+
+    // MARK: - 창 상태
+
+    /// 창 위치·크기는 기기별 파일에만 기록한다 (SYNC-07). 동기화 대상 파일은 건드리지 않는다.
+    public func windowDidMove(_ notification: Notification) {
+        scheduleFrameSave()
+    }
+
+    public func windowDidResize(_ notification: Notification) {
+        scheduleFrameSave()
+    }
+
+    private func scheduleFrameSave() {
+        frameSaveTimer?.invalidate()
+        frameSaveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDebounce, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.saveFrameNow()
+            }
+        }
+    }
+
+    public func saveFrameNow() {
+        frameSaveTimer?.invalidate()
+        frameSaveTimer = nil
+
+        let frame = panel.frame
+        let displayID = panel.screen?.displayIdentifier
+        deviceState.setState(
+            DeviceMemoState(
+                frame: [frame.origin.x, frame.origin.y, frame.width, frame.height],
+                displayID: displayID,
+                isCollapsed: false
+            ),
+            for: memoID
+        )
+    }
+
     @objc private func closeButtonTapped() {
         close()
     }
 
     /// 창을 닫는다. 메모 파일은 남는다 (WIN-10).
     public func close() {
-        panel.orderOut(nil)
+        saveBodyNow()
+        saveFrameNow()
+        store?.setOpen(id: memoID, isOpen: false)
         meta.isOpen = false
+        panel.orderOut(nil)
         onClose?(memoID)
+    }
+
+    /// 앱 종료 시 호출. 열림 상태는 유지한 채 내용만 확실히 저장한다 (WIN-06).
+    public func flushBeforeTermination() {
+        saveBodyNow()
+        saveFrameNow()
     }
 
     public func setHidden(_ hidden: Bool) {
@@ -119,6 +208,15 @@ public final class StickyWindowController {
         }
     }
 
-    /// 현재 창 위치와 크기. M2에서 device-state.json에 저장한다 (SYNC-07).
     public var currentFrame: NSRect { panel.frame }
+}
+
+private extension NSScreen {
+    /// 모니터 식별자. 모니터 구성이 바뀌었을 때 창을 화면 안으로 되돌리는 데 쓴다 (SYS-05).
+    var displayIdentifier: String? {
+        guard let number = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return nil
+        }
+        return number.stringValue
+    }
 }
