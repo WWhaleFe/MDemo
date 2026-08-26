@@ -137,9 +137,15 @@ public final class MemoTextView: NSTextView {
         super.insertBacktab(sender)
     }
 
+    /// 편집 영역을 클릭했을 때 알린다. 떠 있는 팝업을 닫는 데 쓴다.
+    public var onEditorClick: (() -> Void)?
+
     /// 체크박스 표식을 클릭하면 체크가 토글된다.
     /// 글자를 클릭한 경우에는 평소대로 커서만 옮긴다.
     public override func mouseDown(with event: NSEvent) {
+        // 목록 바깥을 눌렀다는 뜻이므로 팝업부터 닫는다.
+        onEditorClick?()
+
         let point = convert(event.locationInWindow, from: nil)
         let index = characterIndexForInsertion(at: point)
         if onToggleCheckbox?(index) == true { return }

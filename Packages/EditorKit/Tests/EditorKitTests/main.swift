@@ -314,6 +314,28 @@ runner.test("슬래시 하나만 쳐도 전체 명령 목록이 보인다 (SL-01
     }
 }
 
+runner.test("메모 영역을 클릭하면 드롭다운이 닫힌다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let container = NSView(frame: window.contentLayoutRect)
+        container.addSubview(textView)
+        window.contentView = container
+        window.makeFirstResponder(textView)
+
+        textView.insertText("/", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        t.expect(controller.isSlashPopupVisible, "팝업이 뜨지 않아 확인할 수 없다")
+
+        // 편집 영역 클릭 = 목록 바깥을 누른 것
+        textView.onEditorClick?()
+        t.expect(!controller.isSlashPopupVisible, "메모를 클릭했는데 팝업이 남아 있다")
+    }
+}
+
 runner.test("빈 메모에는 슬래시 안내 문구가 보인다") { t in
     MainActor.assumeIsolated {
         let (textView, _) = makeEditor()

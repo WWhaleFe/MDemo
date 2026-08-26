@@ -153,6 +153,16 @@ runner.test("기본 명령 세트에 필요한 항목이 모두 있다 (SL-04)")
     }
 }
 
+runner.test("명령 순서는 글의 구조를 따라간다") { t in
+    let expected = [
+        "paragraph",
+        "heading1", "heading2", "heading3",
+        "ordered", "bullet", "checkbox",
+        "divider", "quote",
+    ]
+    t.expectEqual(SlashCommandCatalog.standard.map(\.id), expected, "드롭다운 배치 순서가 바뀌었다")
+}
+
 // MARK: - 직렬화 (DOC-01, CHK-05)
 
 runner.test("서식은 표준 마크다운 기호로 저장된다") { t in

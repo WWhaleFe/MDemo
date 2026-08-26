@@ -36,24 +36,14 @@ public struct SlashCommand: Hashable, Sendable, Identifiable {
 
 public enum SlashCommandCatalog {
     /// 기본 명령 세트 (SL-04). 표·이미지·코드 블록은 해당 기능이 들어올 때 함께 추가한다.
+    ///
+    /// 배치 순서는 글의 구조를 따라간다 — 본문에서 제목으로, 목록으로, 마지막에 구분·인용.
+    /// 목록에서 위아래로 훑을 때 이 순서가 눈에 익으면 화살표 횟수가 줄어든다.
     public static let standard: [SlashCommand] = [
         SlashCommand(
-            id: "checkbox", title: "체크박스", subtitle: "클릭해서 체크하는 할 일 목록",
-            keywords: ["체크박스", "할일", "todo", "checkbox", "check"],
-            shortcut: "[] ",
-            block: .checkbox(indent: 0, checked: false)
-        ),
-        SlashCommand(
-            id: "bullet", title: "글머리 목록", subtitle: "점으로 시작하는 목록",
-            keywords: ["글머리", "목록", "리스트", "bullet", "list"],
-            shortcut: "- ",
-            block: .bullet(indent: 0)
-        ),
-        SlashCommand(
-            id: "ordered", title: "번호 목록", subtitle: "1, 2, 3으로 이어지는 목록",
-            keywords: ["번호", "숫자", "목록", "ordered", "number"],
-            shortcut: "1. ",
-            block: .ordered(indent: 0, number: 1)
+            id: "paragraph", title: "본문", subtitle: "서식을 없애고 보통 문단으로",
+            keywords: ["본문", "문단", "text", "paragraph", "normal"],
+            block: .paragraph
         ),
         SlashCommand(
             id: "heading1", title: "제목 1", subtitle: "가장 큰 제목",
@@ -74,10 +64,22 @@ public enum SlashCommandCatalog {
             block: .heading(level: 3)
         ),
         SlashCommand(
-            id: "quote", title: "인용", subtitle: "인용문으로 표시",
-            keywords: ["인용", "따옴", "quote"],
-            shortcut: "> ",
-            block: .quote
+            id: "ordered", title: "번호 목록", subtitle: "1, 2, 3으로 이어지는 목록",
+            keywords: ["번호", "숫자", "목록", "ordered", "number"],
+            shortcut: "1. ",
+            block: .ordered(indent: 0, number: 1)
+        ),
+        SlashCommand(
+            id: "bullet", title: "글머리 목록", subtitle: "점으로 시작하는 목록",
+            keywords: ["글머리", "목록", "리스트", "bullet", "list"],
+            shortcut: "- ",
+            block: .bullet(indent: 0)
+        ),
+        SlashCommand(
+            id: "checkbox", title: "체크박스", subtitle: "클릭해서 체크하는 할 일 목록",
+            keywords: ["체크박스", "할일", "todo", "checkbox", "check"],
+            shortcut: "[] ",
+            block: .checkbox(indent: 0, checked: false)
         ),
         SlashCommand(
             id: "divider", title: "구분선", subtitle: "가로줄로 구역을 나눕니다",
@@ -86,9 +88,10 @@ public enum SlashCommandCatalog {
             block: .divider
         ),
         SlashCommand(
-            id: "paragraph", title: "본문", subtitle: "서식을 없애고 보통 문단으로",
-            keywords: ["본문", "문단", "text", "paragraph", "normal"],
-            block: .paragraph
+            id: "quote", title: "인용", subtitle: "인용문으로 표시",
+            keywords: ["인용", "따옴", "quote"],
+            shortcut: "> ",
+            block: .quote
         ),
     ]
 

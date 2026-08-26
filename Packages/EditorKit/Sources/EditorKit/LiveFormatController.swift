@@ -43,6 +43,10 @@ public final class LiveFormatController {
         textView.onKeyDown = { [weak self] event in
             self?.handleSlashKeyDown(event) ?? false
         }
+        // 메모 영역을 클릭하면 목록 바깥을 누른 것이므로 팝업을 닫는다.
+        textView.onEditorClick = { [weak self] in
+            self?.slashPopup.hide()
+        }
 
         slashPopup.onSelect = { [weak self] command in
             self?.applySlashCommand(command)
