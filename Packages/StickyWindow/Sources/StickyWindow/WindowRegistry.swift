@@ -94,6 +94,15 @@ public final class WindowRegistry {
         return true
     }
 
+    /// 맨 앞 메모에 글자를 넣는다. 실행 인자로 동작을 확인할 때 쓴다.
+    public func insertTextInFrontmostMemo(_ text: String) {
+        if let key = NSApp.keyWindow, let controller = controllers.values.first(where: { $0.owns(key) }) {
+            controller.insertText(text)
+            return
+        }
+        controllers.values.first?.insertText(text)
+    }
+
     private func frontmostFrame() -> NSRect? {
         if let key = NSApp.keyWindow, controllers.values.contains(where: { $0.owns(key) }) {
             return key.frame

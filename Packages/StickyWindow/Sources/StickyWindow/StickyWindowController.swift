@@ -133,6 +133,13 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         panel.makeFirstResponder(textView)
     }
 
+    /// 바깥에서 본문에 글자를 넣는다.
+    /// 지금은 동작 확인용이고, 템플릿 삽입(FUT-04)에서도 같은 경로를 쓴다.
+    public func insertText(_ text: String) {
+        textView.insertText(text, replacementRange: textView.selectedRange())
+        formatController?.textDidChange()
+    }
+
     // MARK: - 저장
 
     /// 입력이 있을 때마다 서식을 갱신하고, 저장 타이머를 미룬다.

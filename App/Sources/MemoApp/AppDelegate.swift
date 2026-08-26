@@ -24,6 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for _ in 0..<requestedMemoCount {
             container.windowRegistry.createMemo()
         }
+
+        // 슬래시 팝업이 실제로 뜨는지 확인하기 위한 경로.
+        // 팝업은 창 상태에 좌우돼 단위 테스트로는 잡히지 않는 문제가 있어,
+        // 실행한 앱에서 직접 재현할 수 있게 열어 둔다.
+        if CommandLine.arguments.contains("--demo-slash") {
+            container.windowRegistry.insertTextInFrontmostMemo("/")
+        }
     }
 
     /// 창을 모두 닫아도 메뉴바에 남아 있어야 한다 (ALM-06, SYS-01).

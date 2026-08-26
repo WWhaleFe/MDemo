@@ -73,7 +73,8 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // 자식 창은 부모와 키 상태를 주고받는데, 그 과정에서 메모 창이 키를 잃으면
         // 키보드 입력이 갈 곳이 없어져 타자도 커서 이동도 죽는다.
         // 레벨만 위로 올려 띄우고, 창이 움직이거나 비활성화되면 직접 정리한다.
-        panel.orderFront(nil)
+        // 앱이 비활성 상태여도 반드시 보이게 한다. 일반 orderFront는 비활성 앱에서 무시될 수 있다.
+        panel.orderFrontRegardless()
         restoreFocusToEditor()
     }
 
@@ -122,7 +123,10 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .popUpMenu
-        panel.hidesOnDeactivate = true
+        // 이 앱은 Dock에 없고(LSUIElement) 메모 창도 클릭해도 앱을 활성화하지 않는다.
+        // 그래서 앱은 대부분 "비활성" 상태인데, hidesOnDeactivate가 켜져 있으면
+        // 팝업이 뜨자마자 숨겨져 사용자에게는 아무것도 나타나지 않는다.
+        panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
 
         let background = NSVisualEffectView()
