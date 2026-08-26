@@ -27,10 +27,14 @@ public final class AppPreferences {
         didSet { store.set(defaultMemoHeight, forKey: Key.defaultMemoHeight) }
     }
 
-    public static let defaultFontSize: Double = 15
-    public static let defaultMemoSize = (width: 320.0, height: 340.0)
+    public static let defaultFontSize: Double = 18
+    public static let defaultMemoSize = (width: 420.0, height: 480.0)
     /// 창이 너무 작아 내용을 볼 수 없게 되는 것을 막는다.
     public static let minimumMemoSize = (width: 180.0, height: 120.0)
+
+    /// 사용자가 직접 고른 값인가. 자동 설정은 한 번도 고르지 않았을 때만 적용한다.
+    @ObservationIgnored public private(set) var hasChosenFontSize: Bool
+    @ObservationIgnored public private(set) var hasChosenMemoSize: Bool
 
     @ObservationIgnored private let store: UserDefaults
 
@@ -44,6 +48,9 @@ public final class AppPreferences {
     public init(store: UserDefaults = .standard) {
         self.store = store
         self.fontFamily = store.string(forKey: Key.fontFamily)
+
+        self.hasChosenFontSize = store.object(forKey: Key.fontSize) != nil
+        self.hasChosenMemoSize = store.object(forKey: Key.defaultMemoWidth) != nil
 
         let savedSize = store.double(forKey: Key.fontSize)
         self.fontSize = savedSize > 0 ? savedSize : Self.defaultFontSize
@@ -59,5 +66,27 @@ public final class AppPreferences {
     public func setDefaultMemoSize(width: Double, height: Double) {
         defaultMemoWidth = max(width, Self.minimumMemoSize.width)
         defaultMemoHeight = max(height, Self.minimumMemoSize.height)
+        hasChosenMemoSize = true
+    }
+
+    public func setFontSize(_ size: Double) {
+        fontSize = size
+        hasChosenFontSize = true
+    }
+
+    /// 화면 밀도에 맞춘 값을 적용한다.
+    ///
+    /// `force`가 false면 사용자가 한 번도 직접 고르지 않은 항목에만 적용한다.
+    /// 첫 실행에서 화면에 맞는 값으로 시작하되, 사용자가 정한 값을 덮어쓰지 않기 위해서다.
+    public func applyRecommended(fontSize newFontSize: Double, memoWidth: Double, memoHeight: Double, force: Bool = false) {
+        if force || !hasChosenFontSize {
+            fontSize = newFontSize
+            hasChosenFontSize = force
+        }
+        if force || !hasChosenMemoSize {
+            defaultMemoWidth = max(memoWidth, Self.minimumMemoSize.width)
+            defaultMemoHeight = max(memoHeight, Self.minimumMemoSize.height)
+            hasChosenMemoSize = force
+        }
     }
 }

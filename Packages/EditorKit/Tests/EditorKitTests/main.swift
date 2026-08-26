@@ -328,6 +328,26 @@ runner.test("글꼴과 크기 설정이 실제로 반영된다 (TXT-02, TXT-03)"
     }
 }
 
+runner.test("화면 밀도에 맞는 크기를 계산한다 (SET-01, TXT-03)") { t in
+    MainActor.assumeIsolated {
+        let recommendation = DisplayMetrics.recommended()
+
+        t.expect(EditorTheme.fontSizeSteps.contains(recommendation.fontSize), "정해진 크기 단계를 벗어났다")
+        t.expect(recommendation.scale >= 1.0 && recommendation.scale <= 2.0, "배율이 제한 범위를 벗어났다")
+
+        // 촘촘한 화면일수록 글자가 커져야 물리적으로 같은 크기로 보인다.
+        if recommendation.pointsPerInch > DisplayMetrics.referencePointsPerInch * 1.3 {
+            t.expect(recommendation.fontSize > 14, "고밀도 화면인데 글자가 커지지 않았다")
+        }
+
+        // 창이 화면을 뒤덮으면 스티키 노트가 아니다.
+        if let visible = NSScreen.main?.visibleFrame {
+            t.expect(recommendation.memoSize.width <= visible.width * 0.4 + 1, "창이 너무 넓다")
+            t.expect(recommendation.memoSize.height <= visible.height * 0.6 + 1, "창이 너무 높다")
+        }
+    }
+}
+
 runner.test("기본 글꼴은 맑은 고딕이거나 그 대체 글꼴이다") { t in
     MainActor.assumeIsolated {
         let family = FontResolver.defaultFamily()

@@ -9,8 +9,9 @@ public struct EditorTheme: Sendable {
     public var textColor: NSColor
 
     /// 본문 글자 크기 7단계 (TXT-03).
-    public static let fontSizeSteps: [CGFloat] = [11, 12, 13, 15, 17, 20, 24]
-    public static let defaultFontSize: CGFloat = 15
+    /// 고해상도 화면에서 13pt 안팎은 너무 작아, 눈에 편한 구간으로 올려 잡았다.
+    public static let fontSizeSteps: [CGFloat] = [14, 16, 18, 20, 24, 28, 32]
+    public static let defaultFontSize: CGFloat = 18
 
     public init(
         fontFamily: String? = nil,

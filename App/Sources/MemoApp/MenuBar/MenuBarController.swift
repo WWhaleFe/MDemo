@@ -124,6 +124,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             menuItem.representedObject = size
             fontSizeMenu.addItem(menuItem)
         }
+        fontSizeMenu.addItem(.separator())
+
+        let auto = item(title: "이 화면에 맞추기", action: #selector(applyDisplayRecommendation), key: "")
+        auto.toolTip = "화면 밀도를 재서 글자 크기와 새 메모 크기를 다시 정합니다"
+        fontSizeMenu.addItem(auto)
     }
 
     private func refreshFontSizeMenuState() {
@@ -139,11 +144,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         memoSizeMenu.removeAllItems()
 
         let presets: [(String, Double, Double)] = [
-            ("작게 (260 × 260)", 260, 260),
-            ("보통 (320 × 340)", 320, 340),
-            ("크게 (400 × 460)", 400, 460),
-            ("길게 (320 × 560)", 320, 560),
-            ("넓게 (520 × 360)", 520, 360),
+            ("작게 (320 × 360)", 320, 360),
+            ("보통 (420 × 480)", 420, 480),
+            ("크게 (520 × 620)", 520, 620),
+            ("길게 (420 × 760)", 420, 760),
+            ("넓게 (680 × 480)", 680, 480),
         ]
         for (title, width, height) in presets {
             let menuItem = item(title: title, action: #selector(selectMemoSize(_:)), key: "")
@@ -232,7 +237,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func selectFontSize(_ sender: NSMenuItem) {
         guard let size = sender.representedObject as? CGFloat else { return }
-        preferences.fontSize = Double(size)
+        preferences.setFontSize(Double(size))
+        windowRegistry.applyPreferencesToOpenWindows()
+    }
+
+    /// 지금 이 화면의 밀도에 맞춰 글자·창 크기를 다시 정한다.
+    /// 모니터를 바꾸거나 화면 해상도를 바꿨을 때 쓴다.
+    @objc private func applyDisplayRecommendation() {
+        let recommendation = DisplayMetrics.recommended()
+        preferences.applyRecommended(
+            fontSize: Double(recommendation.fontSize),
+            memoWidth: Double(recommendation.memoSize.width),
+            memoHeight: Double(recommendation.memoSize.height),
+            force: true
+        )
         windowRegistry.applyPreferencesToOpenWindows()
     }
 

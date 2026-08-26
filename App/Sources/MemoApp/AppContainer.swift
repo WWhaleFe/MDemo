@@ -1,3 +1,4 @@
+import EditorKit
 import Foundation
 import MemoCore
 import Services
@@ -27,6 +28,15 @@ final class AppContainer {
         self.store = MemoStore(repository: repository)
         self.deviceState = DeviceStateStore(fileURL: DeviceStateStore.defaultFileURL())
         self.preferences = AppPreferences()
+
+        // 첫 실행에서는 이 화면에서 읽기 편한 값으로 시작한다.
+        // 화면 밀도가 제각각이라 고정값을 쓰면 어느 화면에서는 반드시 너무 작거나 크다.
+        let recommendation = DisplayMetrics.recommended()
+        preferences.applyRecommended(
+            fontSize: Double(recommendation.fontSize),
+            memoWidth: Double(recommendation.memoSize.width),
+            memoHeight: Double(recommendation.memoSize.height)
+        )
         self.windowRegistry = WindowRegistry(
             store: store,
             deviceState: deviceState,

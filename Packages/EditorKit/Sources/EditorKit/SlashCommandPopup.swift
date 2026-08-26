@@ -26,7 +26,14 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     /// 팝업이 닫힌 뒤 편집기로 포커스를 되돌리기 위해 호출된다.
     var onRestoreFocus: (() -> Void)?
 
-    var isVisible: Bool { panel?.isVisible ?? false }
+    /// 팝업이 실제로 쓸 수 있는 상태인가.
+    ///
+    /// 창은 떠 있는데 목록이 비어 있는 어중간한 상태에서 키를 가로채면
+    /// 사용자 입장에서는 키보드가 죽은 것처럼 보인다. 둘 다 만족할 때만 살아 있다고 본다.
+    var isVisible: Bool {
+        guard let panel, panel.isVisible, !commands.isEmpty else { return false }
+        return true
+    }
 
     private static let rowHeight: CGFloat = 40
     private static let maximumVisibleRows = 6
@@ -43,7 +50,7 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         self.selectedIndex = 0
 
         let panel = ensurePanel()
-        attach(panel, to: window)
+        parentWindow = window
 
         let visibleRows = min(commands.count, Self.maximumVisibleRows)
         let height = CGFloat(visibleRows) * Self.rowHeight + 8
@@ -56,22 +63,25 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
         tableView?.reloadData()
         selectRow(0)
-        panel.orderFront(nil)
 
-        // 팝업이 떠도 입력은 계속 메모 창이 받아야 한다.
-        if !window.isKeyWindow {
-            window.makeKey()
-        }
-        onRestoreFocus?()
+        // 자식 창(addChildWindow)으로 붙이지 않는다.
+        // 자식 창은 부모와 키 상태를 주고받는데, 그 과정에서 메모 창이 키를 잃으면
+        // 키보드 입력이 갈 곳이 없어져 타자도 커서 이동도 죽는다.
+        // 레벨만 위로 올려 띄우고, 창이 움직이거나 비활성화되면 직접 정리한다.
+        panel.orderFront(nil)
+        restoreFocusToEditor()
     }
 
-    /// 팝업을 감춘다. 포커스는 반드시 편집기로 돌려준다.
+    /// 팝업을 감춘다. 입력 포커스는 반드시 편집기로 돌려준다.
     func hide() {
-        guard let panel, panel.isVisible || panel.parent != nil else { return }
+        commands = []
+        guard let panel, panel.isVisible else {
+            restoreFocusToEditor()
+            return
+        }
         panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
-        commands = []
-        onRestoreFocus?()
+        restoreFocusToEditor()
     }
 
     /// 창이 닫힐 때 팝업 자원을 완전히 버린다 (§4-5).
@@ -82,12 +92,16 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         parentWindow = nil
     }
 
-    private func attach(_ panel: NonFocusingPanel, to window: NSWindow) {
-        // 같은 부모에 두 번 붙이면 자식 창이 중복 등록돼 창이 남는다.
-        if panel.parent === window { return }
-        panel.parent?.removeChildWindow(panel)
-        window.addChildWindow(panel, ordered: .above)
-        parentWindow = window
+    /// 메모 창이 키 창 자리를 되찾게 한다.
+    ///
+    /// 첫 응답자만 되돌려서는 부족하다. 키 창이 없으면 키보드 입력 자체가
+    /// 어느 창에도 전달되지 않아, 사용자에게는 앱이 멈춘 것처럼 보인다.
+    private func restoreFocusToEditor() {
+        guard let window = parentWindow else { return }
+        if !window.isKeyWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
+        onRestoreFocus?()
     }
 
     private func ensurePanel() -> NonFocusingPanel {
@@ -156,6 +170,13 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
     /// 팝업이 처리한 키면 true. 편집기는 그 키를 무시한다.
     func handleKeyDown(_ event: NSEvent) -> Bool {
         guard isVisible else { return false }
+
+        // 메모 창이 키 창이 아닌데 팝업만 떠 있는 상태라면 무언가 어긋난 것이다.
+        // 이때 키를 계속 가로채면 사용자는 입력이 막힌 것으로 느낀다. 정리하고 키를 돌려준다.
+        guard parentWindow?.isKeyWindow == true else {
+            hide()
+            return false
+        }
 
         switch event.keyCode {
         case 126: // ↑
