@@ -55,28 +55,50 @@ public final class LiveFormatController {
         guard selection.location <= text.length else { return }
 
         let lineRange = text.lineRange(for: NSRange(location: selection.location, length: 0))
-        let lineText = text.substring(with: lineRange)
-        let trimmedLine = lineText.hasSuffix("\n") ? String(lineText.dropLast()) : lineText
+        let rawLine = text.substring(with: lineRange)
+        let line = rawLine.hasSuffix("\n") ? String(rawLine.dropLast()) : rawLine
+
+        // 이 줄에 이미 걸린 블록 서식과 화면 표식(`• `, `☐ `)을 분리한다.
+        let block = currentBlock(in: textStorage, at: lineRange.location)
+        let visiblePrefix = AttributedTextBridge.visiblePrefix(for: block)
+        let prefixUTF16Length = (visiblePrefix as NSString).length
+
+        guard line.hasPrefix(visiblePrefix) else { return }
+        let content = String(line.dropFirst(visiblePrefix.count))
 
         // 규칙은 Character 단위로 다루므로 UTF-16 위치를 변환해 넘긴다.
-        let caretUTF16Offset = selection.location - lineRange.location
-        guard let caretCharacterOffset = characterOffset(in: trimmedLine, utf16Offset: caretUTF16Offset) else { return }
+        let caretInContentUTF16 = selection.location - lineRange.location - prefixUTF16Length
+        guard caretInContentUTF16 >= 0,
+              let caretOffset = characterOffset(in: content, utf16Offset: caretInContentUTF16)
+        else { return }
 
-        guard let match = rules.firstMatch(line: trimmedLine, caretOffset: caretCharacterOffset) else { return }
+        let context = InputRuleContext(content: content, caretOffset: caretOffset, block: block)
+        guard let match = rules.firstMatch(context) else { return }
 
-        apply(match, in: trimmedLine, lineStart: lineRange.location)
+        apply(
+            match,
+            content: content,
+            contentStart: lineRange.location + prefixUTF16Length,
+            lineStart: lineRange.location,
+            currentBlock: block
+        )
     }
 
-    private func apply(_ match: InputRuleMatch, in line: String, lineStart: Int) {
+    private func apply(
+        _ match: InputRuleMatch,
+        content: String,
+        contentStart: Int,
+        lineStart: Int,
+        currentBlock: BlockStyle
+    ) {
         guard let textView, let textStorage = textView.textStorage else { return }
 
-        let characters = Array(line)
+        let characters = Array(content)
         guard match.range.lowerBound >= 0, match.range.upperBound <= characters.count else { return }
 
-        // 변환 대상 구간을 UTF-16 범위로 바꾼다.
         let prefixUTF16 = String(characters[0..<match.range.lowerBound]).utf16.count
         let matchedUTF16 = String(characters[match.range]).utf16.count
-        let replaceRange = NSRange(location: lineStart + prefixUTF16, length: matchedUTF16)
+        let replaceRange = NSRange(location: contentStart + prefixUTF16, length: matchedUTF16)
 
         isApplyingFormat = true
         defer { isApplyingFormat = false }
@@ -88,118 +110,110 @@ public final class LiveFormatController {
         guard textView.shouldChangeText(in: replaceRange, replacementString: match.replacement) else { return }
 
         textStorage.beginEditing()
-        switch match.style {
-        case .heading, .bulletList, .orderedList, .checkbox, .quote, .divider, .codeBlock:
-            applyBlockStyle(match, replaceRange: replaceRange, lineStart: lineStart, textStorage: textStorage)
-        case .bold, .italic, .strikethrough, .highlight, .inlineCode:
-            applyInlineStyle(match, replaceRange: replaceRange, textStorage: textStorage)
+        switch match.outcome {
+        case .block(let newBlock):
+            applyBlockChange(
+                to: newBlock,
+                from: currentBlock,
+                markerRange: replaceRange,
+                replacement: match.replacement,
+                lineStart: lineStart,
+                textStorage: textStorage
+            )
+        case .inline(let tag):
+            applyInlineStyle(tag, markerRange: replaceRange, replacement: match.replacement, textStorage: textStorage)
         }
         textStorage.endEditing()
 
         textView.didChangeText()
     }
 
-    /// 줄 앞머리 기호를 지우고 그 줄 전체에 블록 서식을 건다.
-    private func applyBlockStyle(
-        _ match: InputRuleMatch,
-        replaceRange: NSRange,
+    /// 입력한 기호를 지우고, 화면 표식을 새 블록의 것으로 갈아 끼운다.
+    ///
+    /// 글머리 목록(`• `)에서 체크박스(`☐ `)로 바뀌는 경우처럼 이미 표식이 있을 수 있으므로,
+    /// 옛 표식을 지운 자리에 새 표식을 넣는다.
+    private func applyBlockChange(
+        to newBlock: BlockStyle,
+        from oldBlock: BlockStyle,
+        markerRange: NSRange,
+        replacement: String,
         lineStart: Int,
         textStorage: NSTextStorage
     ) {
-        let block = blockStyle(for: match.style, line: currentIndent(textStorage: textStorage, lineStart: lineStart))
-        textStorage.replaceCharacters(in: replaceRange, with: match.replacement)
+        textStorage.replaceCharacters(in: markerRange, with: replacement)
 
-        // 화면용 표식(• , ☐ 등)을 넣는다. 마크다운 기호는 저장할 때 되살아난다.
-        let prefix = AttributedTextBridge.visiblePrefix(for: block)
-        if !prefix.isEmpty {
-            textStorage.replaceCharacters(in: NSRange(location: lineStart, length: 0), with: prefix)
+        let oldPrefix = AttributedTextBridge.visiblePrefix(for: oldBlock)
+        let newPrefix = AttributedTextBridge.visiblePrefix(for: newBlock)
+        let oldPrefixRange = NSRange(location: lineStart, length: (oldPrefix as NSString).length)
+        if oldPrefixRange.length > 0 || !newPrefix.isEmpty {
+            textStorage.replaceCharacters(in: oldPrefixRange, with: newPrefix)
         }
 
         let text = textStorage.string as NSString
-        let updatedLine = text.lineRange(for: NSRange(location: lineStart, length: 0))
-        let contentLength = updatedLine.length - (text.substring(with: updatedLine).hasSuffix("\n") ? 1 : 0)
+        let updatedLine = text.lineRange(for: NSRange(location: min(lineStart, text.length), length: 0))
+        let hasNewline = text.substring(with: updatedLine).hasSuffix("\n")
+        let contentLength = updatedLine.length - (hasNewline ? 1 : 0)
         guard contentLength > 0 else { return }
 
         let styleRange = NSRange(location: lineStart, length: contentLength)
-        textStorage.addAttribute(.memoBlockStyle, value: BlockStyleBox(block), range: styleRange)
-        textStorage.addAttribute(.font, value: NSFont.systemFont(ofSize: theme.fontSize(for: block)), range: styleRange)
-        if case .heading = block {
-            let bold = NSFontManager.shared.convert(
-                NSFont.systemFont(ofSize: theme.fontSize(for: block)),
-                toHaveTrait: .boldFontMask
-            )
-            textStorage.addAttribute(.font, value: bold, range: styleRange)
+        textStorage.addAttribute(.memoBlockStyle, value: BlockStyleBox(newBlock), range: styleRange)
+
+        var font = NSFont.systemFont(ofSize: theme.fontSize(for: newBlock))
+        if case .heading = newBlock {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         }
+        textStorage.addAttribute(.font, value: font, range: styleRange)
+
+        // 다음에 입력하는 글자도 같은 블록 서식을 이어받게 한다.
+        textView?.typingAttributes[.memoBlockStyle] = BlockStyleBox(newBlock)
+        textView?.typingAttributes[.font] = font
     }
 
     /// 감싼 기호를 지우고 안쪽 글자에만 서식을 건다.
     private func applyInlineStyle(
-        _ match: InputRuleMatch,
-        replaceRange: NSRange,
+        _ tag: InlineStyleTag,
+        markerRange: NSRange,
+        replacement: String,
         textStorage: NSTextStorage
     ) {
-        textStorage.replaceCharacters(in: replaceRange, with: match.replacement)
+        textStorage.replaceCharacters(in: markerRange, with: replacement)
 
-        let styledRange = NSRange(location: replaceRange.location, length: (match.replacement as NSString).length)
+        let styledRange = NSRange(location: markerRange.location, length: (replacement as NSString).length)
         guard styledRange.length > 0 else { return }
 
         let existing = (textStorage.attribute(.memoInlineStyle, at: styledRange.location, effectiveRange: nil) as? Int) ?? 0
-        let combined = InlineStyleTag(rawValue: existing).union(inlineTag(for: match.style))
+        let combined = InlineStyleTag(rawValue: existing).union(tag)
+        let block = currentBlock(in: textStorage, at: styledRange.location)
 
-        let block = (textStorage.attribute(.memoBlockStyle, at: styledRange.location, effectiveRange: nil) as? BlockStyleBox)?.value ?? .paragraph
         let styled = AttributedTextBridge.attributedString(
-            from: StyledLine(block: block, spans: [StyledSpan(text: match.replacement, styles: combined)]),
+            from: StyledLine(block: block, spans: [StyledSpan(text: replacement, styles: combined)]),
             theme: theme,
             textAlpha: textAlpha
         )
         // 블록 표식이 앞에 붙지 않는 인라인 변환이므로 내용만 가져다 쓴다.
-        let contentOnly = styled.attributedSubstring(
-            from: NSRange(location: 0, length: min(styled.length, styledRange.length))
-        )
-        textStorage.replaceCharacters(in: styledRange, with: contentOnly)
+        let prefixLength = (AttributedTextBridge.visiblePrefix(for: block) as NSString).length
+        let contentRange = NSRange(location: prefixLength, length: max(0, styled.length - prefixLength))
+        guard contentRange.length == styledRange.length else { return }
+        textStorage.replaceCharacters(in: styledRange, with: styled.attributedSubstring(from: contentRange))
+
+        // 닫는 기호 뒤에 이어 쓰는 글자는 서식 없이 돌아가야 한다.
+        textView?.resetTypingAttributes(theme: theme, textAlpha: textAlpha, block: block)
     }
 
-    private func currentIndent(textStorage: NSTextStorage, lineStart: Int) -> Int {
-        let text = textStorage.string as NSString
-        let lineRange = text.lineRange(for: NSRange(location: lineStart, length: 0))
-        let line = text.substring(with: lineRange)
-        var tabs = 0
-        for character in line {
-            if character == "\t" { tabs += 1 } else { break }
-        }
-        return tabs
-    }
-
-    private func blockStyle(for style: InlineStyle, line indent: Int) -> BlockStyle {
-        switch style {
-        case .heading(let level): return .heading(level: level)
-        case .bulletList: return .bullet(indent: indent)
-        case .orderedList: return .ordered(indent: indent, number: 1)
-        case .checkbox(let checked): return .checkbox(indent: indent, checked: checked)
-        case .quote: return .quote
-        case .divider: return .divider
-        default: return .paragraph
-        }
-    }
-
-    private func inlineTag(for style: InlineStyle) -> InlineStyleTag {
-        switch style {
-        case .bold: return .bold
-        case .italic: return .italic
-        case .strikethrough: return .strikethrough
-        case .highlight: return .highlight
-        case .inlineCode: return .code
-        default: return []
-        }
+    private func currentBlock(in textStorage: NSTextStorage, at location: Int) -> BlockStyle {
+        guard location < textStorage.length,
+              let box = textStorage.attribute(.memoBlockStyle, at: location, effectiveRange: nil) as? BlockStyleBox
+        else { return .paragraph }
+        return box.value
     }
 
     /// UTF-16 위치를 Character 위치로 바꾼다.
     /// 한글은 둘이 같지만 이모지 같은 문자는 어긋나므로 반드시 변환해야 한다.
     private func characterOffset(in line: String, utf16Offset: Int) -> Int? {
         guard utf16Offset >= 0 else { return nil }
-        guard let index = String.Index(line.utf16.index(line.utf16.startIndex, offsetBy: utf16Offset, limitedBy: line.utf16.endIndex) ?? line.utf16.endIndex, within: line) else {
-            return nil
-        }
+        guard let utf16Index = line.utf16.index(line.utf16.startIndex, offsetBy: utf16Offset, limitedBy: line.utf16.endIndex),
+              let index = String.Index(utf16Index, within: line)
+        else { return nil }
         return line.distance(from: line.startIndex, to: index)
     }
 }

@@ -10,7 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.container = container
         self.menuBarController = MenuBarController(
             windowRegistry: container.windowRegistry,
-            store: container.store
+            store: container.store,
+            preferences: container.preferences
         )
 
         // 지난 실행에서 열려 있던 메모를 그대로 되살린다 (WIN-06).

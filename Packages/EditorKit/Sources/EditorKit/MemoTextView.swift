@@ -89,10 +89,24 @@ public final class MemoTextView: NSTextView {
 
     /// 새로 입력하는 글자가 앞 글자의 서식을 물려받지 않게 한다.
     /// 제목 줄 끝에서 엔터를 치면 본문으로 돌아와야 한다 (TXT-05).
-    public func resetTypingAttributes(theme: EditorTheme, textAlpha: Double) {
+    public func resetTypingAttributes(theme: EditorTheme, textAlpha: Double, block: BlockStyle = .paragraph) {
         typingAttributes = [
-            .font: NSFont.systemFont(ofSize: theme.baseFontSize),
+            .font: theme.font(for: block),
             .foregroundColor: theme.textColor.withAlphaComponent(textAlpha),
+            .memoBlockStyle: BlockStyleBox(block),
         ]
+    }
+
+    /// 글꼴이나 크기가 바뀌었을 때 이미 쓰인 내용에 새 설정을 다시 입힌다 (TXT-02, TXT-03).
+    ///
+    /// 내용을 마크다운으로 뽑아 다시 그리는 방식이라 서식이 어긋나지 않는다.
+    public func reapplyTheme(_ theme: EditorTheme, textAlpha: Double) {
+        let selection = selectedRange()
+        let markdown = currentMarkdown()
+        loadMarkdown(markdown, theme: theme, textAlpha: textAlpha)
+        resetTypingAttributes(theme: theme, textAlpha: textAlpha)
+
+        let length = (string as NSString).length
+        setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
     }
 }

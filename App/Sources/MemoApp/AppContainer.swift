@@ -1,5 +1,6 @@
 import Foundation
 import MemoCore
+import Services
 import StickyWindow
 
 /// 의존성 조립 지점. 생성자 주입만 사용하고 DI 프레임워크는 쓰지 않는다.
@@ -11,6 +12,7 @@ import StickyWindow
 final class AppContainer {
     let store: MemoStore
     let deviceState: DeviceStateStore
+    let preferences: AppPreferences
     let windowRegistry: WindowRegistry
 
     init() {
@@ -24,6 +26,11 @@ final class AppContainer {
 
         self.store = MemoStore(repository: repository)
         self.deviceState = DeviceStateStore(fileURL: DeviceStateStore.defaultFileURL())
-        self.windowRegistry = WindowRegistry(store: store, deviceState: deviceState)
+        self.preferences = AppPreferences()
+        self.windowRegistry = WindowRegistry(
+            store: store,
+            deviceState: deviceState,
+            preferences: preferences
+        )
     }
 }

@@ -11,6 +11,7 @@ let package = Package(
     dependencies: [
         .package(path: "../MemoCore"),
         .package(path: "../EditorKit"),
+        .package(path: "../Services"),
     ],
     targets: [
         .target(
@@ -18,6 +19,7 @@ let package = Package(
             dependencies: [
                 .product(name: "MemoCore", package: "MemoCore"),
                 .product(name: "EditorKit", package: "EditorKit"),
+                .product(name: "Services", package: "Services"),
             ]
         )
     ]

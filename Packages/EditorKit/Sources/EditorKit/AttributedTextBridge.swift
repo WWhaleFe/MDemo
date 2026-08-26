@@ -5,27 +5,6 @@ import MarkdownEngine
 ///
 /// 마크다운 해석은 전부 MarkdownEngine이 하고, 여기서는 그 결과를 글꼴과 색으로만 옮긴다.
 /// 이 경계 덕분에 변환 규칙은 창을 띄우지 않고도 시험할 수 있다.
-public struct EditorTheme: Sendable {
-    public var baseFontSize: CGFloat
-    public var textColor: NSColor
-
-    public init(baseFontSize: CGFloat = 13, textColor: NSColor = .black) {
-        self.baseFontSize = baseFontSize
-        self.textColor = textColor
-    }
-
-    /// 제목 단계별 크기. 본문과 확실히 구분되도록 계단을 준다 (TXT-05).
-    func fontSize(for block: BlockStyle) -> CGFloat {
-        switch block {
-        case .heading(let level):
-            let scales: [CGFloat] = [1.7, 1.45, 1.25, 1.15, 1.08, 1.0]
-            return baseFontSize * scales[max(0, min(level - 1, 5))]
-        default:
-            return baseFontSize
-        }
-    }
-}
-
 public enum AttributedTextBridge {
     /// 문서 전체를 화면 표시용 문자열로 만든다.
     public static func attributedString(
@@ -91,18 +70,7 @@ public enum AttributedTextBridge {
         theme: EditorTheme,
         textAlpha: Double
     ) -> [NSAttributedString.Key: Any] {
-        var font = NSFont.systemFont(ofSize: theme.fontSize(for: block))
-        var traits: NSFontTraitMask = []
-
-        if case .heading = block { traits.insert(.boldFontMask) }
-        if inline.contains(.bold) { traits.insert(.boldFontMask) }
-        if inline.contains(.italic) { traits.insert(.italicFontMask) }
-        if !traits.isEmpty {
-            font = NSFontManager.shared.convert(font, toHaveTrait: traits)
-        }
-        if inline.contains(.code) {
-            font = NSFont.monospacedSystemFont(ofSize: theme.fontSize(for: block) * 0.95, weight: .regular)
-        }
+        let font = theme.font(for: block, inline: inline)
 
         var color = theme.textColor.withAlphaComponent(textAlpha)
         if case .quote = block {

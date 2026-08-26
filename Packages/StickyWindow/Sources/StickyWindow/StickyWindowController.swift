@@ -31,13 +31,17 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     private static let headerHeight: CGFloat = 26
 
+    private var theme: EditorTheme
+
     public init(
         meta: MemoMeta,
         body: String,
         frame: NSRect,
+        theme: EditorTheme,
         store: MemoStore,
         deviceState: DeviceStateStore
     ) {
+        self.theme = theme
         self.memoID = meta.id
         self.meta = meta
         self.store = store
@@ -52,7 +56,6 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         buildViewHierarchy()
         applyAppearance()
 
-        let theme = EditorTheme(textColor: .black)
         textView.loadMarkdown(body, theme: theme, textAlpha: meta.textAlpha)
         textView.resetTypingAttributes(theme: theme, textAlpha: meta.textAlpha)
         formatController = LiveFormatController(textView: textView, theme: theme, textAlpha: meta.textAlpha)
@@ -215,6 +218,15 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         saveFrameNow()
     }
 
+    /// 환경설정에서 글꼴이나 크기를 바꿨을 때 열려 있는 창에 바로 반영한다 (TXT-02, TXT-03).
+    public func applyTheme(_ newTheme: EditorTheme) {
+        // 조합 중에 다시 그리면 입력하던 글자가 사라진다 (NFR-08).
+        guard !textView.isComposingText else { return }
+        theme = newTheme
+        textView.reapplyTheme(newTheme, textAlpha: meta.textAlpha)
+        formatController?.updateAppearance(theme: newTheme, textAlpha: meta.textAlpha)
+    }
+
     public func setHidden(_ hidden: Bool) {
         if hidden {
             panel.orderOut(nil)
@@ -224,6 +236,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     public var currentFrame: NSRect { panel.frame }
+
+    /// 이 컨트롤러가 그 창의 주인인지 확인한다.
+    public func owns(_ window: NSWindow) -> Bool { window === panel }
 }
 
 private extension NSScreen {

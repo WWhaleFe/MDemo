@@ -1,5 +1,7 @@
 import AppKit
+import EditorKit
 import MemoCore
+import Services
 
 /// 열려 있는 스티키 창을 관리한다 (WIN-01, WIN-05/06).
 ///
@@ -12,13 +14,24 @@ public final class WindowRegistry {
 
     private let store: MemoStore
     private let deviceState: DeviceStateStore
+    private let preferences: AppPreferences
 
-    public init(store: MemoStore, deviceState: DeviceStateStore) {
+    public init(store: MemoStore, deviceState: DeviceStateStore, preferences: AppPreferences) {
         self.store = store
         self.deviceState = deviceState
+        self.preferences = preferences
     }
 
     public var openCount: Int { controllers.count }
+
+    /// 환경설정을 반영한 현재 테마.
+    private var currentTheme: EditorTheme {
+        EditorTheme(
+            fontFamily: preferences.fontFamily,
+            baseFontSize: preferences.fontSize,
+            textColor: .black
+        )
+    }
 
     /// 새 메모를 만들고 창을 띄운다 (KEY-10).
     @discardableResult
@@ -51,6 +64,7 @@ public final class WindowRegistry {
             meta: meta,
             body: body,
             frame: frame,
+            theme: currentTheme,
             store: store,
             deviceState: deviceState
         )
@@ -59,6 +73,32 @@ public final class WindowRegistry {
         }
         controllers[meta.id] = controller
         controller.show()
+    }
+
+    // MARK: - 환경설정 반영
+
+    /// 글꼴·크기 설정이 바뀌면 열려 있는 모든 창에 즉시 적용한다 (TXT-02, TXT-03).
+    public func applyPreferencesToOpenWindows() {
+        let theme = currentTheme
+        for controller in controllers.values {
+            controller.applyTheme(theme)
+        }
+    }
+
+    /// 맨 앞 창의 크기를 새 메모 기본 크기로 삼는다 (SET-01).
+    /// 마음에 드는 크기를 손으로 잡아 두고 그대로 고정하고 싶을 때 쓴다.
+    @discardableResult
+    public func adoptFrontmostSizeAsDefault() -> Bool {
+        guard let frame = frontmostFrame() else { return false }
+        preferences.setDefaultMemoSize(width: frame.width, height: frame.height)
+        return true
+    }
+
+    private func frontmostFrame() -> NSRect? {
+        if let key = NSApp.keyWindow, controllers.values.contains(where: { $0.owns(key) }) {
+            return key.frame
+        }
+        return controllers.values.first?.currentFrame
     }
 
     // MARK: - 창 위치
@@ -71,8 +111,8 @@ public final class WindowRegistry {
         let saved = NSRect(
             x: state.frame[0],
             y: state.frame[1],
-            width: max(state.frame[2], 180),
-            height: max(state.frame[3], 120)
+            width: max(state.frame[2], AppPreferences.minimumMemoSize.width),
+            height: max(state.frame[3], AppPreferences.minimumMemoSize.height)
         )
         return Self.clampToVisibleScreen(saved) ?? cascadeFrame()
     }
@@ -98,7 +138,7 @@ public final class WindowRegistry {
 
     /// 새 창이 정확히 겹치지 않도록 조금씩 어긋나게 배치한다.
     private func cascadeFrame() -> NSRect {
-        let size = NSSize(width: 300, height: 320)
+        let size = NSSize(width: preferences.defaultMemoWidth, height: preferences.defaultMemoHeight)
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let origin = NSPoint(
             x: screen.maxX - size.width - 60 - nextCascadeOffset,
