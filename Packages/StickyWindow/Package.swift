@@ -12,6 +12,7 @@ let package = Package(
         .package(path: "../MemoCore"),
         .package(path: "../EditorKit"),
         .package(path: "../Services"),
+        .package(path: "../TestKit"),
     ],
     targets: [
         .target(
@@ -21,6 +22,14 @@ let package = Package(
                 .product(name: "EditorKit", package: "EditorKit"),
                 .product(name: "Services", package: "Services"),
             ]
-        )
+        ),
+        .executableTarget(
+            name: "StickyWindowTests",
+            dependencies: [
+                "StickyWindow",
+                .product(name: "TestKit", package: "TestKit"),
+            ],
+            path: "Tests/StickyWindowTests"
+        ),
     ]
 )

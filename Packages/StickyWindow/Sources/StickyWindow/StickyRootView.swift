@@ -19,6 +19,27 @@ public final class StickyRootView: NSView {
         fatalError("스토리보드를 사용하지 않는다")
     }
 
+    /// 마우스가 들어오고 나갈 때 알린다 (OPA-04).
+    public var onHoverChange: ((Bool) -> Void)?
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        onHoverChange?(true)
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        onHoverChange?(false)
+    }
+
     /// 배경색만 바꾼다. 텍스트에는 영향이 없다 (OPA-01).
     public func apply(colorHex: String, backgroundAlpha alpha: Double) {
         if let rgb = MemoColor.components(fromHex: colorHex) {
@@ -33,9 +54,18 @@ public final class StickyRootView: NSView {
     }
 }
 
-/// 창 상단 손잡이 영역. 여기를 잡으면 창이 끌린다.
-/// M2에서 더블클릭 접기(WIN-08)와 8방향 리사이즈 히트존이 여기에 붙는다.
+/// 창 상단 손잡이 영역. 여기를 잡으면 창이 끌리고, 두 번 누르면 접힌다 (WIN-08).
 public final class StickyHeaderView: NSView {
+    public var onDoubleClick: (() -> Void)?
+
+    public override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onDoubleClick?()
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
     public override func mouseDragged(with event: NSEvent) {
         window?.performDrag(with: event)
     }

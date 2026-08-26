@@ -19,6 +19,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let listWindow: MemoListWindowController
 
     private let memoryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var hoverOpaqueItem: NSMenuItem?
     private let fontMenu = NSMenu()
     private let fontSizeMenu = NSMenu()
     private let memoSizeMenu = NSMenu()
@@ -66,6 +67,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let memoSizeItem = NSMenuItem(title: "새 메모 기본 크기", action: nil, keyEquivalent: "")
         memoSizeItem.submenu = memoSizeMenu
         menu.addItem(memoSizeItem)
+
+        let hoverItem = item(title: "마우스 올리면 또렷하게", action: #selector(toggleHoverOpaque), key: "")
+        hoverItem.toolTip = "투명하게 둔 메모를 읽을 때만 또렷해집니다"
+        hoverOpaqueItem = hoverItem
+        menu.addItem(hoverItem)
 
         let helpItem = NSMenuItem(title: "서식 넣는 법", action: nil, keyEquivalent: "")
         helpItem.submenu = buildFormattingHelpMenu()
@@ -250,6 +256,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             + "  ·  전체 \(store.summaries.count)개"
         refreshFontSizeMenuState()
         refreshMemoSizeMenuState()
+        hoverOpaqueItem?.state = preferences.hoverOpaque ? .on : .off
+    }
+
+    @objc private func toggleHoverOpaque() {
+        preferences.hoverOpaque.toggle()
+        windowRegistry.applyPreferencesToOpenWindows()
     }
 
     /// 글꼴 메뉴를 처음 열 때만 목록을 만든다.

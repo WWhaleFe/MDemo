@@ -27,6 +27,11 @@ public final class AppPreferences {
         didSet { store.set(defaultMemoHeight, forKey: Key.defaultMemoHeight) }
     }
 
+    /// 마우스를 올렸을 때 잠깐 또렷하게 할지 (OPA-04, SET-03).
+    public var hoverOpaque: Bool {
+        didSet { store.set(hoverOpaque, forKey: Key.hoverOpaque) }
+    }
+
     public static let defaultFontSize: Double = 18
     public static let defaultMemoSize = (width: 420.0, height: 480.0)
     /// 창이 너무 작아 내용을 볼 수 없게 되는 것을 막는다.
@@ -43,12 +48,15 @@ public final class AppPreferences {
         static let fontSize = "editor.fontSize"
         static let defaultMemoWidth = "memo.defaultWidth"
         static let defaultMemoHeight = "memo.defaultHeight"
+        static let hoverOpaque = "memo.hoverOpaque"
     }
 
     public init(store: UserDefaults = .standard) {
         self.store = store
         self.fontFamily = store.string(forKey: Key.fontFamily)
 
+        // 저장된 값이 없으면 켜 둔다. 투명하게 써 놓고 읽을 때만 또렷해지는 편이 편하다.
+        self.hoverOpaque = store.object(forKey: Key.hoverOpaque) as? Bool ?? true
         self.hasChosenFontSize = store.object(forKey: Key.fontSize) != nil
         self.hasChosenMemoSize = store.object(forKey: Key.defaultMemoWidth) != nil
 

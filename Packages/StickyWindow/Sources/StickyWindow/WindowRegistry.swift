@@ -71,8 +71,11 @@ public final class WindowRegistry {
         controller.onClose = { [weak self] id in
             self?.release(id)
         }
+        controller.setHoverOpaqueEnabled(preferences.hoverOpaque)
         controllers[meta.id] = controller
         controller.show()
+        // 접힌 채로 닫았다면 그대로 되살린다 (WIN-08).
+        controller.restoreCollapsedStateIfNeeded()
     }
 
     // MARK: - 환경설정 반영
@@ -82,6 +85,7 @@ public final class WindowRegistry {
         let theme = currentTheme
         for controller in controllers.values {
             controller.applyTheme(theme)
+            controller.setHoverOpaqueEnabled(preferences.hoverOpaque)
         }
     }
 
@@ -101,6 +105,43 @@ public final class WindowRegistry {
             return
         }
         controllers.values.first?.insertText(text)
+    }
+
+    // MARK: - 창 조작
+    //
+    // 메뉴·버튼이 하는 일을 코드로도 부를 수 있게 열어 둔다.
+    // 창 동작은 눈으로만 확인하기 쉬운데, 그러면 고칠 때마다 놓치는 곳이 생긴다.
+
+    public func toggleCollapsed(id: MemoID) {
+        controllers[id]?.toggleCollapsed()
+    }
+
+    public func setColor(_ hex: String, for id: MemoID) {
+        controllers[id]?.setColor(hex)
+    }
+
+    public func setBackgroundAlpha(_ value: Double, for id: MemoID) {
+        controllers[id]?.setBackgroundAlpha(value)
+    }
+
+    public func setTextAlpha(_ value: Double, for id: MemoID) {
+        controllers[id]?.setTextAlpha(value)
+    }
+
+    public func setPinned(_ isPinned: Bool, for id: MemoID) {
+        controllers[id]?.setPinned(isPinned)
+    }
+
+    public func closeMemo(id: MemoID) {
+        controllers[id]?.close()
+    }
+
+    public func frame(of id: MemoID) -> NSRect? {
+        controllers[id]?.currentFrame
+    }
+
+    public func windowLevel(of id: MemoID) -> NSWindow.Level? {
+        controllers[id]?.windowLevel
     }
 
     /// 맨 앞 메모에서 엔터를 누른 것과 같은 경로를 태운다.
