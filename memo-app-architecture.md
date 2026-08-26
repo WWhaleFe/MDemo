@@ -377,7 +377,7 @@ MemoApp/
 | 마일스톤 | 내용 | 완료 기준 |
 |---|---|---|
 | **M0. 골격** ✅ | git init, SPM 패키지 골격, 메뉴바 상주(SYS-01/02), 빈 스티키 창 띄우기 | 완료 (2026-08-26). 측정값은 [docs/measurements.md](docs/measurements.md) |
-| **M1. 코어 검증 (리스크 우선)** | FrontmatterCodec + FileMemoRepository(원자적 저장) + MemoTextView + **한글 IME 실시간 변환 검증** | 굵게/제목/체크박스 실시간 변환이 한글 조합 중 깨지지 않음(NFR-08 수동 테스트 통과), 자동 저장 동작 |
+| **M1. 코어 검증 (리스크 우선)** 🔶 | FrontmatterCodec + FileMemoRepository(원자적 저장) + MemoTextView + **한글 IME 실시간 변환 검증** | 코드·자동 테스트 완료 (2026-08-26). **한글 IME 수동 테스트만 남음** — [docs/manual-test-ime.md](docs/manual-test-ime.md) |
 | **M2. 스티키 완성** | 8방향 리사이즈, 위치/크기 기억·복원, 항상 위 토글, 투명도 슬라이더(배경/텍스트 분리+하한), 배경색 프리셋 | 스펙 Phase 1의 창 관련 P0 전부 |
 | **M3. 리스트 창** | 목록·그룹·검색(FTS5)·정렬·휴지통 | P0 전체 완료 = **최소 사용 가능 버전**, 이후 실사용 시작 |
 | **M4. iCloud 스냅숏 동기화 (Mac↔Mac)** | SyncService: 수동 저장/불러오기 명령, 주기 자동화, 변경분 병합, 충돌 사본, 열린 창 미러링 | 맥미니↔맥북: 한쪽에서 띄운 메모가 다른 쪽 불러오기 시점에 동일하게 플로팅, 충돌 시 데이터 유실 0 |

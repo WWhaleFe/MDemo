@@ -6,7 +6,13 @@ macOS용 개인 메모앱. 바탕화면에 떠 있는 마크다운 스티키 노
 - 아키텍처 · 개발 프로세스: [memo-app-architecture.md](memo-app-architecture.md)
 - 마일스톤 측정 기록: [docs/measurements.md](docs/measurements.md)
 
-현재 상태: **M0 완료** (메뉴바 상주 + 플로팅 스티키 창 골격). 저장 기능은 M1에서 붙는다.
+현재 상태: **M1 진행 중** — 마크다운 저장·자동 저장·창 복원·실시간 서식 변환까지 동작한다.
+남은 것은 한글 입력 수동 확인([docs/manual-test-ime.md](docs/manual-test-ime.md)) 하나다.
+
+동작하는 것: 메뉴바 상주, 플로팅 스티키 창, 마크다운 파일 자동 저장, 재시작 시 창 복원,
+입력 중 서식 변환(제목·목록·체크박스·굵게·기울임·취소선·형광·코드).
+
+아직 없는 것: 리스트 창(M3), iCloud 동기화(M4), 전역 단축키·이미지·알람(M5).
 
 ## 빌드와 실행
 
@@ -59,4 +65,9 @@ Packages/
 
 - Xcode 미설치 환경이라 `.xcodeproj` 대신 SwiftPM + `Scripts/bundle.sh`로 `.app`을 만든다. 프로젝트 파일이 전부 텍스트라 diff와 병합이 쉽다는 이점도 있다.
 - CLT의 `Testing.framework`은 런타임 라이브러리가 빠져 있어 `swift test`가 동작하지 않는다. 그래서 `Packages/TestKit`의 최소 러너를 쓴다. Xcode를 설치하면 각 패키지를 `.testTarget` + swift-testing으로 되돌릴 수 있다.
+- Xcode를 설치했다면 라이선스에 한 번 동의해야 툴체인이 열린다. 동의 전에는 `Scripts/toolchain.sh`가 자동으로 Command Line Tools로 되돌려 빌드를 계속한다.
+
+  ```bash
+  sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch
+  ```
 - 서명은 ad-hoc(`codesign -s -`). 유료 개발자 계정을 확보하면 `Scripts/bundle.sh`의 서명 줄만 Developer ID로 바꾸면 된다.
