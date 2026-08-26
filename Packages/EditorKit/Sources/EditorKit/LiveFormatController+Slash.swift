@@ -63,8 +63,10 @@ extension LiveFormatController {
         guard beforeSlash.isEmpty || beforeSlash.hasSuffix(" ") || beforeSlash.hasSuffix("\t") else { return nil }
 
         let query = String(typed[typed.index(after: slashIndex)...])
-        // 공백이 들어오면 명령을 그만 찾는다 — 그냥 문장을 쓰는 중이다.
-        guard !query.contains(" ") else { return nil }
+        // 명령 이름에 띄어쓰기가 있으니("제목 1", "번호 목록") 공백도 받는다.
+        // 대신 길이를 제한해, `/` 뒤에 긴 문장을 쓰는 중에는 명령으로 보지 않는다.
+        // 맞는 명령이 없으면 호출한 쪽에서 목록을 닫는다.
+        guard query.count <= 20 else { return nil }
         return query
     }
 
@@ -116,6 +118,11 @@ extension LiveFormatController {
         let newPrefix = AttributedTextBridge.visiblePrefix(for: command.block)
         let oldPrefix = AttributedTextBridge.visiblePrefix(for: oldBlock)
 
+        // 미뤄서 적용하는 사이에 글자가 바뀌었을 수 있다. 범위를 다시 확인한다.
+        guard removeRange.location >= 0,
+              NSMaxRange(removeRange) <= text.length,
+              removeRange.length > 0
+        else { return }
         guard textView.shouldChangeText(in: removeRange, replacementString: "") else { return }
 
         beginFormatting()
@@ -124,10 +131,16 @@ extension LiveFormatController {
         textStorage.beginEditing()
         // 1. 입력한 `/명령` 지우기
         textStorage.replaceCharacters(in: removeRange, with: "")
-        // 2. 이전 표식을 새 블록의 표식으로 갈아 끼우기
-        let prefixRange = NSRange(location: lineRange.location, length: (oldPrefix as NSString).length)
-        textStorage.replaceCharacters(in: prefixRange, with: newPrefix)
-        applyBlockAttributes(command.block, lineStart: lineRange.location, textStorage: textStorage)
+
+        // 2. 이전 표식을 새 블록의 표식으로 갈아 끼우기.
+        //    앞에서 글자를 지웠으므로 남은 길이 안에서만 다뤄야 한다.
+        let remaining = (textStorage.string as NSString).length
+        let oldPrefixLength = min((oldPrefix as NSString).length, max(0, remaining - lineRange.location))
+        if lineRange.location <= remaining {
+            let prefixRange = NSRange(location: lineRange.location, length: oldPrefixLength)
+            textStorage.replaceCharacters(in: prefixRange, with: newPrefix)
+            applyBlockAttributes(command.block, lineStart: lineRange.location, textStorage: textStorage)
+        }
         textStorage.endEditing()
 
         let newCaret = lineRange.location + (newPrefix as NSString).length

@@ -89,31 +89,54 @@ public final class MemoTextView: NSTextView {
     // 슬래시 명령이 있다는 것을 모르면 쓸 수가 없다.
     // 빈 메모에 한 줄 안내를 띄워 두는 것이 가장 확실한 안내다.
 
+    /// 안내 문구는 별도의 라벨로 얹는다.
+    ///
+    /// 편집기의 `draw` 안에서 글자를 직접 그리면 텍스트 시스템이 그리는 도중에
+    /// 또 다른 텍스트 그리기가 끼어든다. 그 상태에서 본문이 바뀌면 AppKit이 예외를 던져
+    /// 앱이 그대로 종료된다. 그리기 경로를 아예 분리해 그런 겹침을 없앤다.
+    private lazy var placeholderLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.textColor = NSColor.black.withAlphaComponent(0.28)
+        label.isEditable = false
+        label.isSelectable = false
+        label.drawsBackground = false
+        // 클릭이 라벨에 막히면 커서를 놓을 수 없다.
+        label.refusesFirstResponder = true
+        return label
+    }()
+
     public var placeholderText: String = "" {
-        didSet { needsDisplay = true }
+        didSet { updatePlaceholder() }
     }
 
     public var shouldShowPlaceholder: Bool {
         string.isEmpty && !placeholderText.isEmpty
     }
 
-    public override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard shouldShowPlaceholder else { return }
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font ?? NSFont.systemFont(ofSize: 14),
-            .foregroundColor: NSColor.black.withAlphaComponent(0.28),
-        ]
-        let origin = NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height)
-        placeholderText.draw(at: origin, withAttributes: attributes)
-    }
-
     public override func didChangeText() {
         super.didChangeText()
-        // 첫 글자를 넣거나 모두 지웠을 때 안내가 켜지고 꺼지도록 다시 그린다.
-        if placeholderText.isEmpty == false {
-            needsDisplay = true
+        updatePlaceholder()
+    }
+
+    private func updatePlaceholder() {
+        guard !placeholderText.isEmpty else {
+            placeholderLabel.removeFromSuperview()
+            return
+        }
+
+        placeholderLabel.stringValue = placeholderText
+        placeholderLabel.font = font ?? NSFont.systemFont(ofSize: 14)
+        placeholderLabel.sizeToFit()
+        placeholderLabel.setFrameOrigin(
+            NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height)
+        )
+
+        if shouldShowPlaceholder {
+            if placeholderLabel.superview !== self {
+                addSubview(placeholderLabel)
+            }
+        } else {
+            placeholderLabel.removeFromSuperview()
         }
     }
 

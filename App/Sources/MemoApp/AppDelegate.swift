@@ -28,6 +28,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 슬래시 팝업이 실제로 뜨는지 확인하기 위한 경로.
         // 팝업은 창 상태에 좌우돼 단위 테스트로는 잡히지 않는 문제가 있어,
         // 실행한 앱에서 직접 재현할 수 있게 열어 둔다.
+        // `--demo-command=제목` 처럼 주면 그 명령을 치고 엔터까지 눌러 본다.
+        // 창 상태·그리기와 얽힌 문제는 실행 중인 앱에서만 드러나기 때문이다.
+        if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--demo-command=") }) {
+            let keyword = String(argument.dropFirst("--demo-command=".count))
+            container.windowRegistry.insertTextInFrontmostMemo("/" + keyword)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak container] in
+                container?.windowRegistry.simulateReturnKeyInFrontmostMemo()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    FileHandle.standardError.write(Data("엔터 처리 후에도 앱이 살아 있음\n".utf8))
+                }
+            }
+        }
+
         if CommandLine.arguments.contains("--demo-slash") {
             container.windowRegistry.insertTextInFrontmostMemo("/")
             // 배치가 끝난 뒤의 실제 치수를 찍는다. 계산과 화면이 어긋나는지 눈으로 확인할 수 있다.

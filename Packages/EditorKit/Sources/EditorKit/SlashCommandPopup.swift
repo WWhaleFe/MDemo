@@ -316,7 +316,15 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         }
         let command = commands[selectedIndex]
         hide()
-        onSelect?(command)
+
+        // 본문 수정은 다음 차례로 미룬다.
+        //
+        // 이 함수는 키 입력을 처리하다 불리는데, 그 시점에 AppKit이 화면을 그리는
+        // 중일 수 있다. 그리는 도중에 글자를 고치면 예외가 발생하고 앱이 그대로 종료된다.
+        // 한글 입력기가 조합을 확정하는 순간과 겹칠 때 특히 잘 나타난다.
+        DispatchQueue.main.async { [weak self] in
+            self?.onSelect?(command)
+        }
     }
 
     // MARK: - 표 내용

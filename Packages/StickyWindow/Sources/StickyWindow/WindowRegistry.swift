@@ -103,6 +103,11 @@ public final class WindowRegistry {
         controllers.values.first?.insertText(text)
     }
 
+    /// 맨 앞 메모에서 엔터를 누른 것과 같은 경로를 태운다.
+    public func simulateReturnKeyInFrontmostMemo() {
+        controllers.values.first?.simulateReturnKey()
+    }
+
     /// 슬래시 팝업의 실제 치수. 계산과 화면이 어긋날 때 확인용.
     public var slashPopupDiagnostics: String {
         controllers.values.first?.slashPopupDiagnostics ?? "열린 메모 없음"

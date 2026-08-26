@@ -164,6 +164,16 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         formatController?.textDidChange()
     }
 
+    /// 엔터를 눌렀을 때와 같은 경로를 태운다. 실행 중인 앱에서 동작을 확인할 때 쓴다.
+    public func simulateReturnKey() {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil,
+            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36
+        ) else { return }
+        textView.keyDown(with: event)
+    }
+
     /// 슬래시 팝업의 실제 치수.
     public var slashPopupDiagnostics: String {
         formatController?.slashPopupDiagnostics ?? "편집기 없음"

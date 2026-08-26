@@ -388,6 +388,13 @@ func makeKeyEvent(keyCode: UInt16, characters: String) -> NSEvent? {
     )
 }
 
+/// 명령 적용은 그리기와 겹치지 않도록 다음 차례로 미뤄 실행된다.
+/// 테스트에서는 실행 루프를 잠깐 돌려 그 차례가 오게 한다.
+@MainActor
+func pumpMainLoop(_ seconds: TimeInterval = 0.1) {
+    RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+}
+
 @MainActor
 func makeWindowedEditor(loading markdown: String = "") -> (MemoTextView, LiveFormatController, NSWindow) {
     let (textView, controller) = makeEditor(loading: markdown)
@@ -416,6 +423,7 @@ runner.test("키워드를 친 뒤 엔터를 누르면 서식이 적용된다 (SL
             return
         }
         textView.keyDown(with: enter)
+        pumpMainLoop()
 
         t.expect(textView.string.hasPrefix("☐ "), "체크박스가 적용되지 않았다: '\(textView.string)'")
         t.expect(!textView.string.contains("/todo"), "입력한 명령 글자가 남아 있다")
@@ -448,9 +456,56 @@ runner.test("한글 키워드 조합 중에 엔터를 눌러도 한 번에 적�
             return
         }
         textView.keyDown(with: enter)
+        pumpMainLoop()
 
         t.expect(!textView.isComposingText, "조합이 확정되지 않았다")
         t.expect(textView.string.hasPrefix("☐ "), "엔터 한 번에 적용되지 않았다: '\(textView.string)'")
+    }
+}
+
+// 사용자가 겪은 문제: `/제목` 뒤 엔터를 누르면 창이 그대로 꺼졌다.
+runner.test("모든 슬래시 명령이 엔터로 안전하게 적용된다 (SL-03)") { t in
+    MainActor.assumeIsolated {
+        for command in SlashCommandCatalog.standard {
+            let (textView, controller, _) = makeWindowedEditor()
+
+            // 명령 이름을 그대로 친다. 띄어쓰기가 든 이름("제목 1")도 찾아져야 한다.
+            textView.insertText("/" + command.title, replacementRange: textView.selectedRange())
+            controller.textDidChange()
+            t.expect(controller.isSlashPopupVisible, "\(command.title): 팝업이 뜨지 않았다")
+
+            guard let enter = makeKeyEvent(keyCode: 36, characters: "\r") else { return }
+            textView.keyDown(with: enter)
+            pumpMainLoop()
+        pumpMainLoop()
+
+            t.expect(
+                !textView.string.contains("/"),
+                "\(command.title): 입력한 명령 글자가 남아 있다 — '\(textView.string)'"
+            )
+            t.expect(!controller.isSlashPopupVisible, "\(command.title): 적용 후에도 팝업이 남아 있다")
+
+            // 적용 직후 글자를 이어 칠 수 있어야 한다.
+            textView.insertText("내용", replacementRange: textView.selectedRange())
+            controller.textDidChange()
+            t.expect(textView.string.contains("내용"), "\(command.title): 적용 후 입력이 되지 않는다")
+        }
+    }
+}
+
+runner.test("서식을 적용한 뒤 저장하면 표준 마크다운이 된다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller, _) = makeWindowedEditor()
+
+        textView.insertText("/제목", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        guard let enter = makeKeyEvent(keyCode: 36, characters: "\r") else { return }
+        textView.keyDown(with: enter)
+        pumpMainLoop()
+
+        textView.insertText("오늘 할 일", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        t.expectEqual(textView.currentMarkdown(), "# 오늘 할 일", "제목 서식이 저장 형식에 반영되지 않았다")
     }
 }
 
