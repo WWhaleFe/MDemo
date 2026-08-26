@@ -25,6 +25,11 @@ public struct MemoMeta: Hashable, Sendable, Codable {
     public var created: Date
     /// 동기화 병합 시 최신본 판별 기준 (SYNC-06).
     public var modified: Date
+    /// 충돌로 갈라져 나온 사본이면 원본 메모의 ID (SYNC-06).
+    ///
+    /// 두 기기에서 같은 메모를 동시에 고쳤을 때, 진 쪽을 버리지 않고 사본으로 남긴다.
+    /// 리스트 창은 이 값이 있는 메모에 표시를 붙여 사용자가 정리할 수 있게 한다.
+    public var conflictOf: MemoID?
 
     public init(
         schemaVersion: Int = MemoMeta.currentSchemaVersion,
@@ -36,7 +41,8 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         isOpen: Bool = true,
         isPinned: Bool = true,
         created: Date = Date(),
-        modified: Date = Date()
+        modified: Date = Date(),
+        conflictOf: MemoID? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -48,6 +54,7 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         self.isPinned = isPinned
         self.created = created
         self.modified = modified
+        self.conflictOf = conflictOf
     }
 
     /// 창을 완전히 잃어버리는 사고를 막기 위한 알파 하한선 (OPA-03).

@@ -12,11 +12,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windowRegistry: container.windowRegistry,
             store: container.store,
             preferences: container.preferences,
-            listWindow: container.listWindow
+            listWindow: container.listWindow,
+            syncCoordinator: container.syncCoordinator
         )
 
         // 지난 실행에서 열려 있던 메모를 그대로 되살린다 (WIN-06).
         container.windowRegistry.restoreOpenMemos()
+
+        // 켤 때 한 번 맞추고, 그 뒤로는 주기적으로 (SYNC-05).
+        container.syncCoordinator.start()
 
         // `open -a MemoApp --args --new-memo` 로 실행하면 곧바로 새 메모를 띄운다.
         // 인자를 반복하면 그 수만큼 만들어지므로 메모리 측정(§4-5 게이트)에도 쓴다.
@@ -64,5 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 종료 직전에 편집 중이던 내용을 확실히 기록한다. 디바운스를 기다리지 않는다 (DAT-03).
     func applicationWillTerminate(_ notification: Notification) {
         container?.windowRegistry.flushAllBeforeTermination()
+        // 끄기 직전에 올려 둔다. 다른 기기에서 이어서 쓸 수 있어야 한다 (SYNC-04).
+        container?.syncCoordinator.syncBeforeTermination()
     }
 }

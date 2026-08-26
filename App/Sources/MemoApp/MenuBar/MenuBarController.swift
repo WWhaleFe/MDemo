@@ -20,6 +20,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private let memoryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var hoverOpaqueItem: NSMenuItem?
+    private let syncStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var autoSyncItem: NSMenuItem?
+    private let syncCoordinator: SyncCoordinator
     private let fontMenu = NSMenu()
     private let fontSizeMenu = NSMenu()
     private let memoSizeMenu = NSMenu()
@@ -28,8 +31,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         windowRegistry: WindowRegistry,
         store: MemoStore,
         preferences: AppPreferences,
-        listWindow: MemoListWindowController
+        listWindow: MemoListWindowController,
+        syncCoordinator: SyncCoordinator
     ) {
+        self.syncCoordinator = syncCoordinator
         self.windowRegistry = windowRegistry
         self.store = store
         self.preferences = preferences
@@ -79,7 +84,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(item(title: "메모 목록…", action: #selector(showList), key: "l"))
-        menu.addItem(disabledItem(title: "iCloud에 저장 / 불러오기  (M4)"))
+        let syncItem = NSMenuItem(title: "iCloud 동기화", action: nil, keyEquivalent: "")
+        syncItem.submenu = buildSyncMenu()
+        menu.addItem(syncItem)
         menu.addItem(.separator())
 
         // 메모리 최소화가 제1 요구사항이므로 사용량을 항상 확인할 수 있게 노출한다 (§4-5).
@@ -96,6 +103,54 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         buildFontSizeMenu()
         buildMemoSizeMenu()
         return menu
+    }
+
+    // MARK: - iCloud 동기화 (SYNC-02~05, SYNC-09)
+
+    private func buildSyncMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+
+        menu.addItem(item(title: "지금 iCloud에 저장", action: #selector(pushNow), key: ""))
+        menu.addItem(item(title: "iCloud에서 불러오기", action: #selector(pullNow), key: ""))
+        menu.addItem(.separator())
+
+        let auto = item(title: "자동으로 맞추기 (5분마다)", action: #selector(toggleAutoSync), key: "")
+        auto.toolTip = "앱을 켤 때와 5분마다, 끌 때 자동으로 주고받습니다"
+        autoSyncItem = auto
+        menu.addItem(auto)
+        menu.addItem(.separator())
+
+        syncStatusItem.isEnabled = false
+        menu.addItem(syncStatusItem)
+        return menu
+    }
+
+    private func refreshSyncMenuState() {
+        autoSyncItem?.state = preferences.autoSyncEnabled ? .on : .off
+        if syncCoordinator.isAvailable {
+            syncStatusItem.title = syncCoordinator.status.menuText
+        } else {
+            syncStatusItem.title = "iCloud Drive가 꺼져 있습니다"
+            autoSyncItem?.isEnabled = false
+        }
+    }
+
+    @objc private func pushNow() {
+        syncCoordinator.run(mode: .push)
+    }
+
+    @objc private func pullNow() {
+        syncCoordinator.run(mode: .pull)
+    }
+
+    @objc private func toggleAutoSync() {
+        preferences.autoSyncEnabled.toggle()
+        if preferences.autoSyncEnabled {
+            syncCoordinator.start()
+        } else {
+            syncCoordinator.stopTimer()
+        }
     }
 
     // MARK: - 서식 도움말
@@ -257,6 +312,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshFontSizeMenuState()
         refreshMemoSizeMenuState()
         hoverOpaqueItem?.state = preferences.hoverOpaque ? .on : .off
+        refreshSyncMenuState()
     }
 
     @objc private func toggleHoverOpaque() {

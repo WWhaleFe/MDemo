@@ -17,6 +17,7 @@ final class AppContainer {
     let preferences: AppPreferences
     let windowRegistry: WindowRegistry
     let listWindow: MemoListWindowController
+    let syncCoordinator: SyncCoordinator
 
     init() {
         let repository: any MemoRepository
@@ -51,6 +52,12 @@ final class AppContainer {
             store: store,
             onOpenMemo: { [registry] id in registry.openMemo(id: id) },
             onCreateMemo: { [registry] in registry.createMemo() }
+        )
+
+        self.syncCoordinator = SyncCoordinator(
+            store: store,
+            windowRegistry: registry,
+            preferences: preferences
         )
 
         // 보관 기간이 지난 휴지통 항목을 정리한다 (TRS-03).

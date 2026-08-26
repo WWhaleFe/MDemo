@@ -59,6 +59,29 @@ public final class WindowRegistry {
         }
     }
 
+    /// 동기화로 파일이 바뀐 뒤, 화면에 떠 있는 창을 파일 상태에 맞춘다 (SYNC-08).
+    ///
+    /// 다른 기기에서 띄운 메모는 여기서도 뜨고, 저쪽에서 닫은 메모는 여기서도 닫힌다.
+    /// "무엇이 떠 있는가"만 맞추고 "어디에 떠 있는가"는 기기별로 그대로 둔다 (SYNC-07).
+    public func reconcileOpenWindows(with store: MemoStore) {
+        let shouldBeOpen = Set(store.openMemos.map(\.id))
+        let currentlyOpen = Set(controllers.keys)
+
+        for id in shouldBeOpen.subtracting(currentlyOpen) {
+            openMemo(id: id)
+        }
+        for id in currentlyOpen.subtracting(shouldBeOpen) {
+            // 사라진 메모(다른 기기에서 버린 경우)도 여기서 닫힌다.
+            controllers[id]?.closeWithoutMarkingClosed()
+            controllers.removeValue(forKey: id)
+        }
+
+        // 다른 기기에서 고친 내용이 열려 있는 창에도 보여야 한다.
+        for (id, controller) in controllers where shouldBeOpen.contains(id) {
+            controller.reloadBodyFromStore()
+        }
+    }
+
     private func present(meta: MemoMeta, body: String, frame: NSRect) {
         let controller = StickyWindowController(
             meta: meta,

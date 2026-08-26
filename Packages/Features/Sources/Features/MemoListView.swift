@@ -210,9 +210,23 @@ private struct MemoRow: View {
                 .frame(width: 4)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(memo.title)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(memo.title)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+
+                    // 두 기기에서 동시에 고쳐 갈라져 나온 사본 (SYNC-06).
+                    // 어느 쪽도 버리지 않았다는 표시이자, 정리해 달라는 신호다.
+                    if memo.meta.conflictOf != nil {
+                        Text("충돌 사본")
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.22), in: Capsule())
+                            .foregroundStyle(.orange)
+                            .help("다른 기기에서 같은 메모를 함께 고쳐 사본이 만들어졌습니다")
+                    }
+                }
 
                 if !previewText.isEmpty {
                     Text(previewText)

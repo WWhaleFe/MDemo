@@ -469,6 +469,28 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         onClose?(memoID)
     }
 
+    /// 다른 기기에서 닫은 메모를 여기서도 닫는다 (SYNC-08).
+    ///
+    /// 파일에는 이미 "닫힘"으로 적혀 있으므로, 그 값을 다시 쓰지 않는다.
+    /// 그렇지 않으면 수정 시각이 갱신돼 다음 동기화에서 헛된 충돌이 생긴다.
+    public func closeWithoutMarkingClosed() {
+        formatController?.dismissPopups()
+        saveFrameNow()
+        panel.orderOut(nil)
+    }
+
+    /// 동기화로 파일이 바뀌었을 때 화면 내용을 다시 읽는다 (SYNC-08).
+    public func reloadBodyFromStore() {
+        guard let document = store?.loadDocument(id: memoID) else { return }
+        // 지금 쓰고 있는 중이면 건드리지 않는다. 사용자의 입력이 우선이다.
+        guard !textView.isComposingText else { return }
+        guard document.body != textView.currentMarkdown() else { return }
+
+        meta = document.meta
+        textView.loadMarkdown(document.body, theme: theme, textAlpha: meta.textAlpha)
+        applyAppearance()
+    }
+
     /// 앱 종료 시 호출. 열림 상태는 유지한 채 내용만 확실히 저장한다 (WIN-06).
     public func flushBeforeTermination() {
         saveBodyNow()

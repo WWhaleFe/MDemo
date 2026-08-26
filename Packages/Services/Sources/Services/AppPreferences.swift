@@ -27,6 +27,16 @@ public final class AppPreferences {
         didSet { store.set(defaultMemoHeight, forKey: Key.defaultMemoHeight) }
     }
 
+    /// iCloud 자동 동기화를 켤지 (SYNC-04, SYNC-05).
+    public var autoSyncEnabled: Bool {
+        didSet { store.set(autoSyncEnabled, forKey: Key.autoSyncEnabled) }
+    }
+
+    /// 자동 동기화 주기(분). 너무 짧으면 파일을 계속 뒤지게 된다.
+    public var autoSyncMinutes: Double {
+        didSet { store.set(autoSyncMinutes, forKey: Key.autoSyncMinutes) }
+    }
+
     /// 마우스를 올렸을 때 잠깐 또렷하게 할지 (OPA-04, SET-03).
     public var hoverOpaque: Bool {
         didSet { store.set(hoverOpaque, forKey: Key.hoverOpaque) }
@@ -49,11 +59,18 @@ public final class AppPreferences {
         static let defaultMemoWidth = "memo.defaultWidth"
         static let defaultMemoHeight = "memo.defaultHeight"
         static let hoverOpaque = "memo.hoverOpaque"
+        static let autoSyncEnabled = "sync.autoEnabled"
+        static let autoSyncMinutes = "sync.autoMinutes"
     }
 
     public init(store: UserDefaults = .standard) {
         self.store = store
         self.fontFamily = store.string(forKey: Key.fontFamily)
+
+        // 동기화는 사용자가 켜야 시작한다. 모르는 사이에 파일이 오가면 곤란하다.
+        self.autoSyncEnabled = store.object(forKey: Key.autoSyncEnabled) as? Bool ?? false
+        let savedMinutes = store.double(forKey: Key.autoSyncMinutes)
+        self.autoSyncMinutes = savedMinutes > 0 ? savedMinutes : 5
 
         // 저장된 값이 없으면 켜 둔다. 투명하게 써 놓고 읽을 때만 또렷해지는 편이 편하다.
         self.hoverOpaque = store.object(forKey: Key.hoverOpaque) as? Bool ?? true

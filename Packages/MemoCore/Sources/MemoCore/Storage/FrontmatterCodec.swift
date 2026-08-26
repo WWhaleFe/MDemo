@@ -101,7 +101,8 @@ public enum FrontmatterCodec {
             isOpen: parseBool(fields[Key.open.rawValue]) ?? true,
             isPinned: parseBool(fields[Key.pinned.rawValue]) ?? true,
             created: created,
-            modified: modified
+            modified: modified,
+            conflictOf: fields[Key.conflictOf.rawValue].map(unquote).map(MemoID.init(rawValue:))
         )
     }
 
@@ -123,6 +124,9 @@ public enum FrontmatterCodec {
         lines.append("\(Key.pinned.rawValue): \(meta.isPinned)")
         lines.append("\(Key.created.rawValue): \(formatDate(meta.created))")
         lines.append("\(Key.modified.rawValue): \(formatDate(meta.modified))")
+        if let conflictOf = meta.conflictOf {
+            lines.append("\(Key.conflictOf.rawValue): \(conflictOf.rawValue)")
+        }
 
         // 모르는 필드를 마지막에 되돌려 놓는다 (상위 버전 호환).
         lines.append(contentsOf: document.unknownFrontmatterLines)
@@ -145,6 +149,7 @@ public enum FrontmatterCodec {
         case pinned
         case created
         case modified
+        case conflictOf
     }
 
     private static func splitKeyValue(_ line: String) -> (key: String, value: String)? {
