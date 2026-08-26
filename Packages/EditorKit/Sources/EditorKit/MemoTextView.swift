@@ -84,6 +84,39 @@ public final class MemoTextView: NSTextView {
     /// 슬래시 팝업이 떠 있을 때 방향키·엔터를 먼저 가져간다 (SL-03).
     public var onKeyDown: ((NSEvent) -> Bool)?
 
+    // MARK: - 빈 메모 안내
+    //
+    // 슬래시 명령이 있다는 것을 모르면 쓸 수가 없다.
+    // 빈 메모에 한 줄 안내를 띄워 두는 것이 가장 확실한 안내다.
+
+    public var placeholderText: String = "" {
+        didSet { needsDisplay = true }
+    }
+
+    public var shouldShowPlaceholder: Bool {
+        string.isEmpty && !placeholderText.isEmpty
+    }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard shouldShowPlaceholder else { return }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor.black.withAlphaComponent(0.28),
+        ]
+        let origin = NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height)
+        placeholderText.draw(at: origin, withAttributes: attributes)
+    }
+
+    public override func didChangeText() {
+        super.didChangeText()
+        // 첫 글자를 넣거나 모두 지웠을 때 안내가 켜지고 꺼지도록 다시 그린다.
+        if placeholderText.isEmpty == false {
+            needsDisplay = true
+        }
+    }
+
     public override func keyDown(with event: NSEvent) {
         if onKeyDown?(event) == true { return }
         super.keyDown(with: event)

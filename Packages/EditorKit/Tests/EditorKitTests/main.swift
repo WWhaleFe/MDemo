@@ -285,6 +285,47 @@ runner.test("슬래시 팝업을 여러 번 써도 편집기가 입력 포커스
     }
 }
 
+// 사용자가 "무슨 명령이 있는지 알 수 없다"고 한 지점.
+// 슬래시 하나만 쳐도 전체 목록이 보여야 무엇을 쓸 수 있는지 알 수 있다.
+runner.test("슬래시 하나만 쳐도 전체 명령 목록이 보인다 (SL-01)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let container = NSView(frame: window.contentLayoutRect)
+        container.addSubview(textView)
+        window.contentView = container
+        window.makeFirstResponder(textView)
+
+        textView.insertText("/", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+
+        t.expect(controller.isSlashPopupVisible, "슬래시만 쳤는데 목록이 뜨지 않았다")
+        t.expectEqual(controller.visibleSlashCommands.count, SlashCommandCatalog.standard.count, "전체 명령이 보여야 한다")
+
+        // 이어 입력하면 좁혀진다 (SL-02)
+        textView.insertText("체크", replacementRange: textView.selectedRange())
+        controller.textDidChange()
+        t.expect(controller.visibleSlashCommands.first?.id == "checkbox", "이어 입력했을 때 좁혀지지 않았다")
+
+        controller.dismissPopups()
+    }
+}
+
+runner.test("빈 메모에는 슬래시 안내 문구가 보인다") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor()
+        textView.placeholderText = "/ 를 입력하면 서식 목록이 열립니다"
+
+        t.expect(textView.shouldShowPlaceholder, "빈 메모인데 안내가 보이지 않는다")
+
+        textView.insertText("내용", replacementRange: textView.selectedRange())
+        t.expect(!textView.shouldShowPlaceholder, "내용을 쓰면 안내가 사라져야 한다")
+    }
+}
+
 runner.test("대괄호만 쳐도 체크박스가 만들어진다") { t in
     MainActor.assumeIsolated {
         let (textView, controller) = makeEditor()

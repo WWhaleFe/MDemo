@@ -35,9 +35,14 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         return true
     }
 
+    /// 지금 보이고 있는 명령들.
+    var visibleCommands: [SlashCommand] { isVisible ? commands : [] }
+
     private static let rowHeight: CGFloat = 40
-    private static let maximumVisibleRows = 6
-    private static let width: CGFloat = 260
+    /// 목록을 한눈에 보여 주려면 스크롤 없이 전부 보이는 편이 낫다.
+    /// 명령이 9개라 이 정도면 대부분 한 화면에 들어온다.
+    private static let maximumVisibleRows = 9
+    private static let width: CGFloat = 320
 
     // MARK: - 표시
 
@@ -244,8 +249,26 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
             title.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
             subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
-            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8),
         ])
+
+        // 같은 결과를 내는 마크다운 입력을 오른쪽에 함께 보여 준다.
+        // 몇 번 보다 보면 팝업을 열지 않고도 바로 치게 된다.
+        if !command.shortcut.isEmpty {
+            let shortcut = NSTextField(labelWithString: command.shortcut)
+            shortcut.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            shortcut.textColor = .tertiaryLabelColor
+            shortcut.alignment = .right
+            shortcut.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(shortcut)
+            NSLayoutConstraint.activate([
+                shortcut.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+                shortcut.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                shortcut.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
+                subtitle.trailingAnchor.constraint(lessThanOrEqualTo: shortcut.leadingAnchor, constant: -8),
+            ])
+        } else {
+            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8).isActive = true
+        }
         return container
     }
 }

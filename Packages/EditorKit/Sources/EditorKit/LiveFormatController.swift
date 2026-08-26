@@ -66,6 +66,12 @@ public final class LiveFormatController {
         slashPopup.hide()
     }
 
+    /// 슬래시 팝업이 떠 있는가. 동작 확인과 테스트에 쓴다.
+    public var isSlashPopupVisible: Bool { slashPopup.isVisible }
+
+    /// 지금 팝업에 보이는 명령 목록.
+    public var visibleSlashCommands: [SlashCommand] { slashPopup.visibleCommands }
+
     public func updateAppearance(theme: EditorTheme, textAlpha: Double) {
         self.currentTheme = theme
         self.currentTextAlpha = textAlpha

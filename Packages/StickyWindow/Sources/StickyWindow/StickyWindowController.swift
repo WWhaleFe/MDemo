@@ -56,6 +56,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         buildViewHierarchy()
         applyAppearance()
 
+        // 슬래시 명령이 있다는 걸 모르면 쓸 수 없으니, 빈 메모에서 한 줄로 알려 준다.
+        textView.placeholderText = "/ 를 입력하면 서식 목록"
         textView.loadMarkdown(body, theme: theme, textAlpha: meta.textAlpha)
         textView.resetTypingAttributes(theme: theme, textAlpha: meta.textAlpha)
         formatController = LiveFormatController(textView: textView, theme: theme, textAlpha: meta.textAlpha)

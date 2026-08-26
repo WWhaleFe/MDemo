@@ -1,5 +1,6 @@
 import AppKit
 import EditorKit
+import MarkdownEngine
 import MemoCore
 import Services
 import StickyWindow
@@ -57,6 +58,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let memoSizeItem = NSMenuItem(title: "새 메모 기본 크기", action: nil, keyEquivalent: "")
         memoSizeItem.submenu = memoSizeMenu
         menu.addItem(memoSizeItem)
+
+        let helpItem = NSMenuItem(title: "서식 넣는 법", action: nil, keyEquivalent: "")
+        helpItem.submenu = buildFormattingHelpMenu()
+        menu.addItem(helpItem)
         menu.addItem(.separator())
 
         menu.addItem(disabledItem(title: "메모 목록…  (M3)"))
@@ -77,6 +82,48 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         buildFontSizeMenu()
         buildMemoSizeMenu()
         return menu
+    }
+
+    // MARK: - 서식 도움말
+    //
+    // 슬래시 명령이 있다는 걸 알아도 무엇이 있는지는 열어 봐야 안다.
+    // 메뉴에 목록을 그대로 펼쳐 두면 언제든 확인할 수 있다.
+
+    private func buildFormattingHelpMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        menu.addItem(sectionHeader("메모에서 / 를 입력하면 아래 목록이 열립니다"))
+        for command in SlashCommandCatalog.standard {
+            let shortcut = command.shortcut.isEmpty ? "" : "   \(command.shortcut)"
+            menu.addItem(disabledItem(title: "/\(command.title)\(shortcut)"))
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(sectionHeader("글자 서식은 기호로 감쌉니다"))
+        for hint in SlashCommandCatalog.inlineHints {
+            menu.addItem(disabledItem(title: "\(hint.label)   \(hint.shortcut)"))
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(sectionHeader("목록에서"))
+        menu.addItem(disabledItem(title: "엔터   다음 항목 이어가기"))
+        menu.addItem(disabledItem(title: "빈 항목에서 엔터   목록 빠져나오기"))
+        menu.addItem(disabledItem(title: "Tab / Shift+Tab   단계 내리기 / 올리기"))
+        menu.addItem(disabledItem(title: "체크박스 클릭   체크 토글"))
+        return menu
+    }
+
+    private func sectionHeader(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        item.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        return item
     }
 
     // MARK: - 글꼴 (TXT-02)
