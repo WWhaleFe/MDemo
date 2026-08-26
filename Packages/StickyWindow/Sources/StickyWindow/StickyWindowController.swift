@@ -29,7 +29,19 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     public var onClose: ((MemoID) -> Void)?
 
-    private static let headerHeight: CGFloat = 26
+    /// 제목 영역과 닫기 버튼 크기는 글자 크기를 따라간다.
+    /// 고밀도 화면에서 고정 크기를 쓰면 버튼이 손톱만 해져 누르기 어렵다.
+    private var headerHeightConstraint: NSLayoutConstraint?
+    private var closeButtonSizeConstraints: [NSLayoutConstraint] = []
+    private let closeButton = NSButton()
+
+    private static func headerHeight(for fontSize: CGFloat) -> CGFloat {
+        max(32, fontSize * 1.7)
+    }
+
+    private static func closeButtonSize(for fontSize: CGFloat) -> CGFloat {
+        max(20, fontSize * 1.15)
+    }
 
     private var theme: EditorTheme
 
@@ -71,15 +83,19 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         let header = StickyHeaderView()
         header.translatesAutoresizingMaskIntoConstraints = false
 
-        let closeButton = NSButton(title: "", target: self, action: #selector(closeButtonTapped))
+        let buttonSize = Self.closeButtonSize(for: theme.baseFontSize)
+        closeButton.target = self
+        closeButton.action = #selector(closeButtonTapped)
+        closeButton.title = ""
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.bezelStyle = .circular
         closeButton.isBordered = false
+        closeButton.imageScaling = .scaleProportionallyUpOrDown
         closeButton.image = NSImage(
             systemSymbolName: "xmark.circle.fill",
             accessibilityDescription: "메모 닫기"
-        )
-        closeButton.contentTintColor = NSColor.black.withAlphaComponent(0.3)
+        )?.withSymbolConfiguration(.init(pointSize: buttonSize, weight: .regular))
+        closeButton.contentTintColor = NSColor.black.withAlphaComponent(0.35)
         closeButton.toolTip = "닫기 (메모는 삭제되지 않습니다)"
         header.addSubview(closeButton)
 
@@ -102,16 +118,24 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         rootView.autoresizingMask = [.width, .height]
         panel.contentView = rootView
 
+        let headerHeight = header.heightAnchor.constraint(
+            equalToConstant: Self.headerHeight(for: theme.baseFontSize)
+        )
+        let buttonWidth = closeButton.widthAnchor.constraint(equalToConstant: buttonSize)
+        let buttonHeight = closeButton.heightAnchor.constraint(equalToConstant: buttonSize)
+        headerHeightConstraint = headerHeight
+        closeButtonSizeConstraints = [buttonWidth, buttonHeight]
+
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: rootView.topAnchor),
             header.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            header.heightAnchor.constraint(equalToConstant: Self.headerHeight),
+            headerHeight,
 
             closeButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
-            closeButton.widthAnchor.constraint(equalToConstant: 14),
-            closeButton.heightAnchor.constraint(equalToConstant: 14),
+            closeButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+            buttonWidth,
+            buttonHeight,
 
             scrollView.topAnchor.constraint(equalTo: header.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 4),
@@ -242,6 +266,15 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         theme = newTheme
         textView.reapplyTheme(newTheme, textAlpha: meta.textAlpha)
         formatController?.updateAppearance(theme: newTheme, textAlpha: meta.textAlpha)
+
+        // 제목 영역과 닫기 버튼도 새 글자 크기에 맞춘다.
+        let buttonSize = Self.closeButtonSize(for: newTheme.baseFontSize)
+        headerHeightConstraint?.constant = Self.headerHeight(for: newTheme.baseFontSize)
+        closeButtonSizeConstraints.forEach { $0.constant = buttonSize }
+        closeButton.image = NSImage(
+            systemSymbolName: "xmark.circle.fill",
+            accessibilityDescription: "메모 닫기"
+        )?.withSymbolConfiguration(.init(pointSize: buttonSize, weight: .regular))
     }
 
     public func setHidden(_ hidden: Bool) {
