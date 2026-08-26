@@ -401,10 +401,14 @@ public struct SyncService: Sendable {
         }
     }
 
-    /// 파일에 기록되는 시각의 정밀도가 밀리초이므로, 그보다 작은 차이는 같은 것으로 본다.
+    /// 같은 시각인지 본다.
+    ///
+    /// 비교하는 두 값은 모두 파일에 적힌 밀리초 단위 시각에서 온다.
+    /// 여기서 허용 오차를 넉넉히 잡으면 빠르게 이어진 수정을 "안 바뀐 것"으로 보아
+    /// 변경이 조용히 묻힌다. 기록 중 생기는 소수점 오차만 흡수할 만큼만 둔다.
     private func isSameMoment(_ left: Date?, _ right: Date?) -> Bool {
         guard let left, let right else { return false }
-        return abs(left.timeIntervalSince1970 - right.timeIntervalSince1970) < 0.002
+        return abs(left.timeIntervalSince1970 - right.timeIntervalSince1970) < 0.0005
     }
 
     // MARK: - 동기화 기록
