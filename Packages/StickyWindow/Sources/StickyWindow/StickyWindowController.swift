@@ -15,6 +15,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     private let rootView: StickyRootView
     private let textView: MemoTextView
     private let scrollView: NSScrollView
+    /// 입력 중 마크다운 기호를 서식으로 바꾼다. 한글 조합 처리를 여기에 가둬 둔다 (NFR-08).
+    private var formatController: LiveFormatController?
 
     /// 저장을 맡은 쪽. 컨트롤러는 파일 시스템을 직접 다루지 않는다 (설계서 §4-3).
     private weak var store: MemoStore?
@@ -49,7 +51,12 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
         buildViewHierarchy()
         applyAppearance()
-        textView.string = body
+
+        let theme = EditorTheme(textColor: .black)
+        textView.loadMarkdown(body, theme: theme, textAlpha: meta.textAlpha)
+        textView.resetTypingAttributes(theme: theme, textAlpha: meta.textAlpha)
+        formatController = LiveFormatController(textView: textView, theme: theme, textAlpha: meta.textAlpha)
+
         textView.delegate = self
         panel.delegate = self
         panel.setAlwaysOnTop(meta.isPinned)
@@ -123,8 +130,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     // MARK: - 저장
 
-    /// 입력이 있을 때마다 타이머를 미룬다. 멈추고 0.5초 뒤 한 번만 저장한다.
+    /// 입력이 있을 때마다 서식을 갱신하고, 저장 타이머를 미룬다.
     public func textDidChange(_ notification: Notification) {
+        formatController?.textDidChange()
         scheduleBodySave()
     }
 
@@ -138,10 +146,17 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     /// 지금 즉시 저장한다. 창을 닫거나 앱이 종료될 때는 디바운스를 기다리지 않는다.
+    ///
+    /// 화면에는 기호가 숨겨져 있으므로, 저장할 때 표준 마크다운으로 되돌린다 (DOC-01).
     public func saveBodyNow() {
         saveTimer?.invalidate()
         saveTimer = nil
-        store?.saveBody(id: memoID, body: textView.string)
+        // 조합 중에는 저장하지 않는다. 미완성 글자가 파일에 남으면 다시 열 때 깨진다 (NFR-08).
+        guard !textView.isComposingText else {
+            scheduleBodySave()
+            return
+        }
+        store?.saveBody(id: memoID, body: textView.currentMarkdown())
     }
 
     // MARK: - 창 상태

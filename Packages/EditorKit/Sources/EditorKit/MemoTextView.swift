@@ -66,7 +66,33 @@ public final class MemoTextView: NSTextView {
 
     /// 한글 조합 중인지 여부 (NFR-08).
     ///
-    /// M1의 실시간 변환은 이 값이 true인 동안 어떤 속성 변경도 하지 않고,
-    /// 조합이 확정된 뒤에 보류했던 변환을 적용한다. 조합 중 속성을 건드리면 글자가 깨진다.
+    /// 실시간 변환은 이 값이 true인 동안 어떤 속성 변경도 하지 않고,
+    /// 조합이 확정된 뒤에 검사한다. 조합 중 속성을 건드리면 글자가 깨진다.
     public var isComposingText: Bool { hasMarkedText() }
+
+    // MARK: - 문서 싣고 꺼내기
+
+    /// 마크다운을 읽어 화면에 서식으로 표시한다. 창을 열 때 한 번 호출한다.
+    public func loadMarkdown(_ markdown: String, theme: EditorTheme, textAlpha: Double) {
+        let lines = MarkdownParser.parse(markdown)
+        let attributed = AttributedTextBridge.attributedString(from: lines, theme: theme, textAlpha: textAlpha)
+        textStorage?.setAttributedString(attributed)
+        // 파일을 여는 것은 사용자의 편집이 아니므로 되돌리기 이력에서 제외한다.
+        undoManager?.removeAllActions()
+    }
+
+    /// 화면 내용을 표준 마크다운으로 되돌린다. 저장 직전에 호출한다 (DOC-01).
+    public func currentMarkdown() -> String {
+        guard let textStorage else { return string }
+        return MarkdownSerializer.serialize(AttributedTextBridge.styledLines(from: textStorage))
+    }
+
+    /// 새로 입력하는 글자가 앞 글자의 서식을 물려받지 않게 한다.
+    /// 제목 줄 끝에서 엔터를 치면 본문으로 돌아와야 한다 (TXT-05).
+    public func resetTypingAttributes(theme: EditorTheme, textAlpha: Double) {
+        typingAttributes = [
+            .font: NSFont.systemFont(ofSize: theme.baseFontSize),
+            .foregroundColor: theme.textColor.withAlphaComponent(textAlpha),
+        ]
+    }
 }

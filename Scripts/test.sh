@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/Scripts/toolchain.sh"
 
 FAILED=0
-for package in MemoCore MarkdownEngine Services; do
+for package in MemoCore MarkdownEngine EditorKit Services; do
     if ! (cd "$ROOT/Packages/$package" && swift run -c debug "${package}Tests" 2>&1 \
         | grep -vE "^\[|Compiling|Emitting|Build |Planning|Write |Linking|Building for"); then
         FAILED=1
