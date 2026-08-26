@@ -34,5 +34,5 @@ mem:
 		awk '{printf "%s: %.1f MB\n", $$2, $$1/1024}' || echo "실행 중인 MemoApp 없음"
 
 clean:
-	@rm -rf build .build Packages/*/.build
+	@rm -rf build .build .build-shared Packages/*/.build
 	@echo "✓ 정리 완료"

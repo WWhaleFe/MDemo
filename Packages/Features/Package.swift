@@ -12,6 +12,7 @@ let package = Package(
     dependencies: [
         .package(path: "../MemoCore"),
         .package(path: "../Services"),
+        .package(path: "../TestKit"),
     ],
     targets: [
         .target(
@@ -20,6 +21,14 @@ let package = Package(
                 .product(name: "MemoCore", package: "MemoCore"),
                 .product(name: "Services", package: "Services"),
             ]
-        )
+        ),
+        .executableTarget(
+            name: "FeaturesTests",
+            dependencies: [
+                "Features",
+                .product(name: "TestKit", package: "TestKit"),
+            ],
+            path: "Tests/FeaturesTests"
+        ),
     ]
 )

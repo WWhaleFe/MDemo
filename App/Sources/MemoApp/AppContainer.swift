@@ -1,4 +1,5 @@
 import EditorKit
+import Features
 import Foundation
 import MemoCore
 import Services
@@ -15,6 +16,7 @@ final class AppContainer {
     let deviceState: DeviceStateStore
     let preferences: AppPreferences
     let windowRegistry: WindowRegistry
+    let listWindow: MemoListWindowController
 
     init() {
         let repository: any MemoRepository
@@ -37,10 +39,21 @@ final class AppContainer {
             memoWidth: Double(recommendation.memoSize.width),
             memoHeight: Double(recommendation.memoSize.height)
         )
-        self.windowRegistry = WindowRegistry(
+        let registry = WindowRegistry(
             store: store,
             deviceState: deviceState,
             preferences: preferences
         )
+        self.windowRegistry = registry
+
+        // 리스트 창은 메모를 열어 달라고 요청만 하고, 창을 만드는 일은 레지스트리가 한다.
+        self.listWindow = MemoListWindowController(
+            store: store,
+            onOpenMemo: { [registry] id in registry.openMemo(id: id) },
+            onCreateMemo: { [registry] in registry.createMemo() }
+        )
+
+        // 보관 기간이 지난 휴지통 항목을 정리한다 (TRS-03).
+        store.emptyTrash(olderThan: 30)
     }
 }

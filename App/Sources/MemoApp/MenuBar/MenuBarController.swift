@@ -1,5 +1,6 @@
 import AppKit
 import EditorKit
+import Features
 import MarkdownEngine
 import MemoCore
 import Services
@@ -15,16 +16,23 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let windowRegistry: WindowRegistry
     private let store: MemoStore
     private let preferences: AppPreferences
+    private let listWindow: MemoListWindowController
 
     private let memoryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let fontMenu = NSMenu()
     private let fontSizeMenu = NSMenu()
     private let memoSizeMenu = NSMenu()
 
-    init(windowRegistry: WindowRegistry, store: MemoStore, preferences: AppPreferences) {
+    init(
+        windowRegistry: WindowRegistry,
+        store: MemoStore,
+        preferences: AppPreferences,
+        listWindow: MemoListWindowController
+    ) {
         self.windowRegistry = windowRegistry
         self.store = store
         self.preferences = preferences
+        self.listWindow = listWindow
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -64,7 +72,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(helpItem)
         menu.addItem(.separator())
 
-        menu.addItem(disabledItem(title: "메모 목록…  (M3)"))
+        menu.addItem(item(title: "메모 목록…", action: #selector(showList), key: "l"))
         menu.addItem(disabledItem(title: "iCloud에 저장 / 불러오기  (M4)"))
         menu.addItem(.separator())
 
@@ -257,6 +265,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func newMemo() {
         windowRegistry.createMemo()
+        listWindow.refreshIfOpen()
+    }
+
+    @objc private func showList() {
+        listWindow.show()
     }
 
     @objc private func hideAllMemos() {

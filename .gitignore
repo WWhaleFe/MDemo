@@ -16,3 +16,6 @@ Data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# 공용 테스트 빌드 폴더
+.build-shared/

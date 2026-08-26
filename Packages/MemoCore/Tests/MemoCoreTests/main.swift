@@ -291,6 +291,219 @@ runner.test("휴지통으로 옮기면 목록에서 사라진다 (TRS-01)") { t 
     }
 }
 
+// MARK: - 그룹 (LST-02, LST-03)
+
+runner.test("그룹을 만들고 이름을 바꾸면 메모의 이름표도 따라간다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        store.createGroup(named: "업무")
+        let meta = store.createMemo(group: "업무")
+
+        t.expect(store.groups.contains("업무"))
+        t.expectEqual(store.memoCount(inGroup: "업무"), 1)
+
+        store.renameGroup(from: "업무", to: "회사")
+        t.expect(store.groups.contains("회사"), "그룹 이름이 바뀌지 않았다")
+        t.expectEqual(store.summaries.first(where: { $0.id == meta.id })?.meta.group, "회사", "메모의 그룹이 따라오지 않았다")
+    }
+}
+
+runner.test("그룹을 지워도 메모는 남는다 (그룹 없음으로)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        store.createGroup(named: "임시")
+        let meta = store.createMemo(group: "임시")
+
+        store.deleteGroup("임시")
+        t.expect(!store.groups.contains("임시"), "그룹이 지워지지 않았다")
+        t.expectEqual(store.summaries.count, 1, "그룹을 지웠다고 메모가 사라지면 안 된다")
+        t.expectNil(store.summaries.first(where: { $0.id == meta.id })?.meta.group)
+    }
+}
+
+runner.test("그룹 목록은 다시 열어도 유지된다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        store.createGroup(named: "업무")
+        store.createGroup(named: "개인")
+
+        let reopened = MemoStore(repository: repository)
+        t.expect(reopened.groups.contains("업무") && reopened.groups.contains("개인"), "그룹이 저장되지 않았다")
+    }
+}
+
+// MARK: - 휴지통 (TRS-01~04)
+
+runner.test("휴지통으로 옮긴 메모를 되돌릴 수 있다 (TRS-02)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let meta = store.createMemo()
+        store.saveBody(id: meta.id, body: "지우면 안 되는 내용")
+
+        store.moveToTrash(id: meta.id)
+        t.expectEqual(store.summaries.count, 0, "목록에서 사라져야 한다")
+        t.expectEqual(store.trashed.count, 1, "휴지통에 있어야 한다")
+
+        store.restoreFromTrash(id: meta.id)
+        t.expectEqual(store.summaries.count, 1, "복원되지 않았다")
+        t.expectEqual(store.trashed.count, 0, "휴지통에 남아 있다")
+        t.expectEqual(store.loadDocument(id: meta.id)?.body, "지우면 안 되는 내용", "내용이 보존되지 않았다")
+    }
+}
+
+runner.test("영구 삭제하면 파일까지 사라진다 (TRS-04)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let meta = store.createMemo()
+        store.moveToTrash(id: meta.id)
+        store.permanentlyDelete(id: meta.id)
+
+        t.expectEqual(store.trashed.count, 0)
+        let path = root.appendingPathComponent("trash/\(meta.id.rawValue)").path
+        t.expect(!FileManager.default.fileExists(atPath: path), "파일이 남아 있다")
+    }
+}
+
+runner.test("보관 기간이 지나지 않은 항목은 자동으로 지워지지 않는다 (TRS-03)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let meta = store.createMemo()
+        store.moveToTrash(id: meta.id)
+
+        store.emptyTrash(olderThan: 30)
+        t.expectEqual(store.trashed.count, 1, "방금 버린 메모가 사라졌다")
+
+        store.emptyTrash()
+        t.expectEqual(store.trashed.count, 0, "즉시 비우기가 동작하지 않았다")
+    }
+}
+
+// MARK: - 검색과 정렬 (SRC-01~03)
+
+runner.test("제목과 본문 모두에서 찾는다 (SRC-01)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let titleHit = store.createMemo()
+        store.saveBody(id: titleHit.id, body: "# 장보기 목록\n우유")
+
+        let bodyHit = store.createMemo()
+        // 제목에는 없고 본문 뒤쪽에만 있는 낱말 — 미리보기 범위를 넘어간다
+        store.saveBody(id: bodyHit.id, body: "# 회의록\n" + String(repeating: "내용 ", count: 200) + "장보기")
+
+        let miss = store.createMemo()
+        store.saveBody(id: miss.id, body: "# 다른 메모\n관계없는 내용")
+
+        let results = store.search(query: "장보기")
+        t.expectEqual(results.count, 2, "제목과 본문 양쪽에서 찾아야 한다")
+        t.expect(results.contains { $0.id == titleHit.id }, "제목으로 찾지 못했다")
+        t.expect(results.contains { $0.id == bodyHit.id }, "본문으로 찾지 못했다")
+        t.expect(!results.contains { $0.id == miss.id }, "관계없는 메모가 걸렸다")
+    }
+}
+
+runner.test("그룹으로 검색 범위를 좁힌다 (SRC-02)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let work = store.createMemo(group: "업무")
+        store.saveBody(id: work.id, body: "회의 준비")
+        let personal = store.createMemo(group: "개인")
+        store.saveBody(id: personal.id, body: "회의 참석")
+
+        t.expectEqual(store.search(query: "회의").count, 2)
+        t.expectEqual(store.search(query: "회의", group: "업무").count, 1)
+        t.expectEqual(store.search(query: "회의", group: "업무").first?.id, work.id)
+    }
+}
+
+runner.test("빈 검색어는 전체를 돌려준다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        store.createMemo()
+        store.createMemo()
+        t.expectEqual(store.search(query: "").count, 2)
+        t.expectEqual(store.search(query: "   ").count, 2)
+    }
+}
+
+runner.test("정렬 기준과 방향이 모두 동작한다 (SRC-03)") { t in
+    let older = MemoSummary(
+        meta: MemoMeta(id: .generate(), created: Date(timeIntervalSince1970: 100), modified: Date(timeIntervalSince1970: 100)),
+        preview: "나중 제목"
+    )
+    let newer = MemoSummary(
+        meta: MemoMeta(id: .generate(), created: Date(timeIntervalSince1970: 200), modified: Date(timeIntervalSince1970: 200)),
+        preview: "가나다 제목"
+    )
+    let list = [older, newer]
+
+    t.expectEqual(MemoSearch.sorted(list, by: .newestFirst).first?.id, newer.id, "최신순 정렬 실패")
+    t.expectEqual(MemoSearch.sorted(list, by: MemoSortOrder(key: .modified, ascending: true)).first?.id, older.id)
+    t.expectEqual(MemoSearch.sorted(list, by: MemoSortOrder(key: .title, ascending: true)).first?.id, newer.id, "제목 오름차순 실패")
+    t.expectEqual(MemoSearch.sorted(list, by: MemoSortOrder(key: .created, ascending: false)).first?.id, newer.id)
+}
+
+runner.test("메모 1,000개에서도 검색이 0.3초 안에 끝난다 (NFR-05)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // 실제 사용에 가까운 분량으로 만든다 — 메모당 30줄.
+    let body = "# 회의록\n" + (0..<30).map { "- [ ] 항목 \($0) 내용입니다" }.joined(separator: "\n")
+    var needleID: MemoID?
+    for index in 0..<1000 {
+        let meta = MemoMeta(id: .generate())
+        // 제목·미리보기에는 없고 본문 끝에만 있는 낱말 — 가장 비싼 경로를 재게 한다.
+        let text = index == 777 ? body + "\n숨겨진낱말특별표시" : body
+        try repository.save(MemoDocument(meta: meta, body: text))
+        if index == 777 { needleID = meta.id }
+    }
+
+    try MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        t.expectEqual(store.summaries.count, 1000, "1,000개가 모두 읽히지 않았다")
+
+        let started = Date()
+        let results = store.search(query: "숨겨진낱말특별표시")
+        let elapsed = Date().timeIntervalSince(started)
+
+        t.expectEqual(results.count, 1, "본문에만 있는 낱말을 찾지 못했다")
+        t.expectEqual(results.first?.id, needleID)
+        t.expect(elapsed < 0.3, String(format: "검색에 %.3f초 걸렸다 (목표 0.3초)", elapsed))
+
+        // 제목으로 찾는 경우는 파일을 읽지 않으므로 훨씬 빨라야 한다.
+        let quickStart = Date()
+        _ = store.search(query: "회의록")
+        let quickElapsed = Date().timeIntervalSince(quickStart)
+        t.expect(quickElapsed < 0.1, String(format: "제목 검색에 %.3f초 걸렸다", quickElapsed))
+    }
+}
+
 // MARK: - 기기별 상태 (SYNC-07)
 
 runner.test("기기별 창 상태는 따로 저장되고 다시 읽힌다") { t in

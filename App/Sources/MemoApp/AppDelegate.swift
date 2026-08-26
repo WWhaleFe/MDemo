@@ -11,7 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.menuBarController = MenuBarController(
             windowRegistry: container.windowRegistry,
             store: container.store,
-            preferences: container.preferences
+            preferences: container.preferences,
+            listWindow: container.listWindow
         )
 
         // 지난 실행에서 열려 있던 메모를 그대로 되살린다 (WIN-06).
@@ -39,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     FileHandle.standardError.write(Data("엔터 처리 후에도 앱이 살아 있음\n".utf8))
                 }
             }
+        }
+
+        if CommandLine.arguments.contains("--show-list") {
+            container.listWindow.show()
         }
 
         if CommandLine.arguments.contains("--demo-slash") {
