@@ -1,20 +1,57 @@
-# MemoApp
+# MDemo
 
 macOS용 개인 메모앱. 바탕화면에 떠 있는 마크다운 스티키 노트.
+(저장소·코드 이름은 MemoApp, 설치되는 앱 이름은 **MDemo**다. MemoApp은 다른 앱과 이름이 겹친다.)
+
+## ⬇️ 다운로드 (macOS)
+
+[최신 릴리스](https://github.com/WWhaleFe/MemoApp/releases/latest)에서 `MDemo-vX.Y.Z.zip`을 받아
+압축을 풀고 **응용 프로그램** 폴더로 옮긴다. `.dmg`를 받았다면 열어서 Applications로 끌어다 놓는다.
+
+- 유니버설(Apple Silicon + Intel), macOS 14 이상.
+- 아직 공증(notarization)을 받지 않은 임시 서명 앱이다. 처음 열면 macOS가 막는데,
+  **시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기"**를 누르면 된다.
+  (macOS 15부터는 Finder 우클릭 → "열기"로는 넘어가지 않는다.)
+- 메뉴바 앱이라 Dock에는 뜨지 않는다. 화면 위쪽 메뉴바의 메모 아이콘에서 쓴다.
+
+## 🔄 업데이트
+
+메뉴바 메뉴 → **업데이트**에서 현재 버전을 보고, 새 버전을 확인하고, 내려받는다.
+
+- 켤 때 한 번, 그 뒤 하루에 한 번 GitHub의 최신 릴리스를 확인한다 ("자동으로 확인"으로 끌 수 있다).
+  새 버전이 있으면 한 번 알림을 띄운다.
+- **최신 버전 다운로드**는 zip을 다운로드 폴더에 받고 Finder에서 보여 준다.
+  임시 서명 앱이라 자동으로 바꿔 끼우지 않는다 — 압축을 풀어 응용 프로그램에 덮어쓰면 된다.
+- 메모와 설정은 앱 밖(`~/Library/Application Support/MemoApp/Data`, 사용자 기본값)에 있어서
+  앱을 바꿔도 그대로 남는다.
+- 앱이 외부와 통신하는 것은 이 업데이트 확인 하나뿐이다 (NFR-07). 메모 내용은 보내지 않는다.
+
+## 📦 릴리스 절차
+
+버전은 `App/Resources/Info.plist` 한 곳에서 관리한다.
+
+1. `CFBundleShortVersionString`(예: `0.9.1`)과 `CFBundleVersion`(빌드 번호, 1씩 증가)을 올린다.
+2. `make test && make dist` — `build/dist/MDemo-vX.Y.Z.zip`과 `.dmg`가 생긴다.
+3. 커밋: `vX.Y.Z: 바뀐 점 요약`
+4. 태그와 릴리스: `gh release create vX.Y.Z build/dist/MDemo-vX.Y.Z.zip build/dist/MDemo-vX.Y.Z.dmg --title "MDemo vX.Y.Z" --notes-file <노트>`
+
+앱의 업데이트 확인은 태그(`v` 뒤의 숫자)와 앱 버전을 비교하고, 릴리스의 `.zip`을 내려받는다.
+그래서 태그 이름과 zip 첨부는 이 꼴을 지켜야 한다.
+
+## 개발
 
 - 기능 명세: [memo-app-feature-spec.md](memo-app-feature-spec.md)
 - 아키텍처 · 개발 프로세스: [memo-app-architecture.md](memo-app-architecture.md)
 - 마일스톤 측정 기록: [docs/measurements.md](docs/measurements.md)
 
-현재 상태: **M1 진행 중** — 마크다운 저장·자동 저장·창 복원·실시간 서식 변환까지 동작한다.
-남은 것은 한글 입력 수동 확인([docs/manual-test-ime.md](docs/manual-test-ime.md)) 하나다.
+현재 상태: **v0.9.0 (테스트 배포)**
 
-동작하는 것: 메뉴바 상주, 플로팅 스티키 창, 마크다운 파일 자동 저장, 재시작 시 창 복원,
-입력 중 서식 변환(제목·목록·체크박스·굵게·기울임·취소선·형광·코드),
-슬래시 명령(`/`로 서식 고르기), 목록 이어가기와 Tab 들여쓰기, 체크박스 클릭 토글,
-화면 밀도에 맞춘 글자·창 크기 자동 설정.
+동작하는 것: 메뉴바 상주, 플로팅 스티키 창(크기 조절·투명도·배경색·접기·제목), 마크다운 자동 저장,
+입력 중 서식 변환과 서식 막대(제목·목록·체크박스·인용·코드 박스·표·굵게·기울임·취소선·글자 색·형광펜),
+슬래시 명령, 리스트 창(그룹·검색·정렬·복수 선택·휴지통), iCloud 스냅숏 동기화,
+서식·전역 단축키, 로그인 시 자동 실행, 백업, GitHub 릴리스 업데이트 확인.
 
-아직 없는 것: 리스트 창(M3), iCloud 동기화(M4), 전역 단축키·이미지·알람(M5).
+아직 없는 것: 이미지 첨부, 알람.
 
 ## 문제를 확인하는 방법
 
@@ -22,25 +59,26 @@ macOS용 개인 메모앱. 바탕화면에 떠 있는 마크다운 스티키 노
 
 ```bash
 # 슬래시 팝업이 뜨는지 + 실제 치수 (스크롤·정렬 확인)
-./build/MemoApp.app/Contents/MacOS/MemoApp --new-memo --demo-slash
+./build/MDemo.app/Contents/MacOS/MDemo --new-memo --demo-slash
 
 # 특정 명령을 치고 엔터까지 눌러 본다 (적용·크래시 확인)
-./build/MemoApp.app/Contents/MacOS/MemoApp --new-memo --demo-command=제목
+./build/MDemo.app/Contents/MacOS/MDemo --new-memo --demo-command=제목
 ```
 
-앱이 종료됐다면 `~/Library/Logs/DiagnosticReports/MemoApp-*.ips`에 원인이 남는다.
+앱이 종료됐다면 `~/Library/Logs/DiagnosticReports/MDemo-*.ips`에 원인이 남는다.
 
 ## 빌드와 실행
 
 이 프로젝트는 **Xcode 없이 Command Line Tools만으로** 빌드된다.
 
 ```bash
-make build     # 디버그 빌드 + build/MemoApp.app 생성
+make build     # 디버그 빌드 + build/MDemo.app 생성
 make run       # 빌드 후 실행 (메뉴바에 메모 아이콘이 나타난다)
 make test      # 전 패키지 테스트
 make check     # 계층 규칙 · 네트워크 코드 검사
 make mem       # 실행 중인 앱의 메모리 사용량
 make release   # arm64 + x86_64 유니버설 번들
+make dist      # 배포 파일 build/dist/MDemo-vX.Y.Z.zip · .dmg
 ```
 
 앱은 Dock에 뜨지 않는다(LSUIElement). 종료는 메뉴바 아이콘 → 종료.
@@ -48,7 +86,7 @@ make release   # arm64 + x86_64 유니버설 번들
 메모리 측정용으로 실행과 동시에 메모를 띄우려면:
 
 ```bash
-open build/MemoApp.app --args --new-memo --new-memo   # 인자 수만큼 창 생성
+open build/MDemo.app --args --new-memo --new-memo   # 인자 수만큼 창 생성
 ```
 
 ## 프로젝트 구조

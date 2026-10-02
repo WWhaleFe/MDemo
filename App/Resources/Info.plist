@@ -4,18 +4,22 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>ko</string>
+	<key>CFBundleDisplayName</key>
+	<string>MDemo</string>
 	<key>CFBundleExecutable</key>
-	<string>MemoApp</string>
+	<string>MDemo</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.wwhalefe.MemoApp</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>MemoApp</string>
+	<string>MDemo</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.9.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -23,7 +27,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>개인용 메모앱</string>
+	<string>MDemo — 개인용 메모앱</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
