@@ -238,7 +238,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func exportBackup() {
         let panel = NSSavePanel()
         panel.title = "전체 백업 내보내기"
-        panel.nameFieldStringValue = "MemoApp-백업-\(Self.todayText()).zip"
+        panel.nameFieldStringValue = "MDemo-백업-\(Self.todayText()).zip"
         panel.allowedContentTypes = [.zip]
 
         guard panel.runModal() == .OK, let url = panel.url else { return }

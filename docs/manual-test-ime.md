@@ -10,7 +10,7 @@
 
 ```bash
 make run
-open build/MemoApp.app --args --new-memo
+open build/MDemo.app --args --new-memo
 ```
 
 입력기를 한글로 바꾼 뒤 아래를 순서대로 확인한다.
@@ -38,7 +38,7 @@ open build/MemoApp.app --args --new-memo
 계산한 크기와 화면이 어긋나는지 눈으로 확인할 수 있다:
 
 ```bash
-./build/MemoApp.app/Contents/MacOS/MemoApp --new-memo --demo-slash
+./build/MDemo.app/Contents/MacOS/MDemo --new-memo --demo-slash
 ```
 
 출력 예시 (정상 상태):

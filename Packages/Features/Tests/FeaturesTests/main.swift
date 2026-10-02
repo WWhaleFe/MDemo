@@ -11,7 +11,7 @@ let runner = TestRunner("Features")
 @MainActor
 func makeModel() throws -> (MemoListModel, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("MemoAppFeatureTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("MDemoFeatureTests-\(UUID().uuidString)", isDirectory: true)
     let repository = try FileMemoRepository(rootDirectory: root)
     return (MemoListModel(store: MemoStore(repository: repository)), root)
 }
@@ -35,7 +35,7 @@ final class FakeWindows {
 @MainActor
 func makeModelWithWindows() throws -> (MemoListModel, FakeWindows, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("MemoAppFeatureTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("MDemoFeatureTests-\(UUID().uuidString)", isDirectory: true)
     let repository = try FileMemoRepository(rootDirectory: root)
     let windows = FakeWindows()
     let model = MemoListModel(store: MemoStore(repository: repository), windowActions: windows.actions)

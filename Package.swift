@@ -4,10 +4,10 @@ import PackageDescription
 // 앱 타깃. 조립(DI)과 메뉴바만 담당하고, 실제 기능은 Packages/ 아래 계층 모듈에 있다.
 // 계층 규칙은 memo-app-architecture.md §2 참고. Scripts/check-layering.sh 가 이를 검사한다.
 let package = Package(
-    name: "MemoApp",
+    name: "MDemo",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "MemoApp", targets: ["MemoApp"])
+        .executable(name: "MDemo", targets: ["MDemo"])
     ],
     dependencies: [
         .package(path: "Packages/MemoCore"),
@@ -19,7 +19,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "MemoApp",
+            name: "MDemo",
             dependencies: [
                 .product(name: "MemoCore", package: "MemoCore"),
                 .product(name: "MarkdownEngine", package: "MarkdownEngine"),
@@ -28,7 +28,7 @@ let package = Package(
                 .product(name: "Services", package: "Services"),
                 .product(name: "Features", package: "Features"),
             ],
-            path: "App/Sources/MemoApp"
+            path: "App/Sources/MDemo"
         )
     ]
 )

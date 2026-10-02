@@ -22,6 +22,19 @@ final class AppContainer {
     let updateChecker: UpdateChecker
 
     init() {
+        // 앱 이름이 MemoApp에서 MDemo로 바뀌며 저장 폴더와 앱 식별자가 달라졌다.
+        // 예전 메모·설정을 새 자리로 복사한다. 반드시 데이터 폴더를 만들기 전에 해야 한다 —
+        // 저장소가 빈 새 폴더를 먼저 만들면 옮겨 올 자리가 "이미 있음"으로 보여 건너뛴다.
+        let migration = LegacyMigration.run(
+            applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
+            iCloudDrive: SyncService.iCloudDriveRoot(),
+            legacyDefaults: UserDefaults.standard.persistentDomain(forName: LegacyMigration.legacyBundleIdentifier),
+            defaults: .standard
+        )
+        if !migration.errors.isEmpty {
+            NSLog("MDemo: 예전 데이터를 옮기지 못한 항목이 있습니다 — %@", migration.errors.joined(separator: "; "))
+        }
+
         let repository: any MemoRepository
         do {
             repository = try FileMemoRepository(rootDirectory: FileMemoRepository.defaultRootDirectory())

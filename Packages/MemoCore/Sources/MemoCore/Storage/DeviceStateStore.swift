@@ -14,10 +14,10 @@ public final class DeviceStateStore: @unchecked Sendable {
         self.states = Self.read(from: fileURL)
     }
 
-    /// 기본 위치: ~/Library/Application Support/MemoApp/device-state.json
+    /// 기본 위치: ~/Library/Application Support/MDemo/device-state.json
     public static func defaultFileURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("MemoApp/device-state.json")
+        return base.appendingPathComponent("\(AppStorageName.folder)/device-state.json")
     }
 
     private static func read(from url: URL) -> [String: DeviceMemoState] {

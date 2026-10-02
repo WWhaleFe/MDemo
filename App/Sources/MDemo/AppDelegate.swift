@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         registerGlobalHotkeys(container)
 
-        // `open -a MemoApp --args --new-memo` 로 실행하면 곧바로 새 메모를 띄운다.
+        // `open -a MDemo --args --new-memo` 로 실행하면 곧바로 새 메모를 띄운다.
         // 인자를 반복하면 그 수만큼 만들어지므로 메모리 측정(§4-5 게이트)에도 쓴다.
         // 이후 전역 단축키(KEY-11)와 외부 실행 경로에서 같은 진입점을 재사용한다.
         let requestedMemoCount = CommandLine.arguments.filter { $0 == "--new-memo" }.count

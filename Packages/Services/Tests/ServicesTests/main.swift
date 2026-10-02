@@ -332,4 +332,49 @@ runner.test("마크다운 파일을 메모로 가져온다 (DAT-07)") { t in
     t.expectEqual(fromMarkdown.body, "# 원래 제목\n내용")
 }
 
+// MARK: - MemoApp → MDemo 옮겨 오기
+
+runner.test("예전 MemoApp 폴더와 설정을 MDemo로 한 번만 옮겨 온다") { t in
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("MDemoMigrationTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let support = root.appendingPathComponent("Application Support", isDirectory: true)
+    let cloud = root.appendingPathComponent("CloudDocs", isDirectory: true)
+    let oldMemo = support.appendingPathComponent("MemoApp/Data/memos/A/memo.md")
+    try FileManager.default.createDirectory(at: oldMemo.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "# 예전 메모".write(to: oldMemo, atomically: true, encoding: .utf8)
+    try FileManager.default.createDirectory(at: cloud.appendingPathComponent("MemoApp"), withIntermediateDirectories: true)
+
+    let suite = "MDemoMigrationTests-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set(24.0, forKey: "editor.fontSize")   // 새 앱에서 이미 정한 값은 덮어쓰지 않는다
+
+    let report = LegacyMigration.run(
+        applicationSupport: support,
+        iCloudDrive: cloud,
+        legacyDefaults: ["editor.fontSize": 18.0, "memo.hoverOpaque": false],
+        defaults: defaults
+    )
+    t.expect(report.copiedLocalData, "로컬 데이터를 옮기지 않았다")
+    t.expect(report.copiedICloudData, "iCloud 폴더를 옮기지 않았다")
+    let newMemo = support.appendingPathComponent("MDemo/Data/memos/A/memo.md")
+    t.expectEqual(try? String(contentsOf: newMemo, encoding: .utf8), "# 예전 메모")
+    t.expect(FileManager.default.fileExists(atPath: oldMemo.path), "원본을 지우면 안 된다")
+    t.expectEqual(defaults.double(forKey: "editor.fontSize"), 24.0, "새 앱의 설정을 덮어썼다")
+    t.expectEqual(defaults.object(forKey: "memo.hoverOpaque") as? Bool, false, "예전 설정을 옮기지 않았다")
+    t.expectEqual(report.copiedSettingsCount, 1)
+
+    // 두 번째 실행에서는 아무것도 하지 않는다 — 옮긴 뒤 바꾼 값을 되돌리면 안 된다.
+    defaults.set(true, forKey: "memo.hoverOpaque")
+    let again = LegacyMigration.run(
+        applicationSupport: support,
+        iCloudDrive: cloud,
+        legacyDefaults: ["memo.hoverOpaque": false],
+        defaults: defaults
+    )
+    t.expect(!again.copiedLocalData && !again.copiedICloudData, "두 번째에도 폴더를 건드렸다")
+    t.expectEqual(defaults.object(forKey: "memo.hoverOpaque") as? Bool, true, "두 번째 실행에서 설정을 되돌렸다")
+}
+
 runner.finish()

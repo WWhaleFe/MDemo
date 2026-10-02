@@ -24,7 +24,7 @@ done
 # 예외는 명세가 허용한 업데이트 확인 하나뿐이고, 그 파일 하나로 가둬 둔다.
 NET_HITS="$(grep -rn --include='*.swift' -E 'URLSession|NWConnection|CFStream' \
     "$ROOT/Packages" "$ROOT/App" 2>/dev/null \
-    | grep -v '/App/Sources/MemoApp/Update/UpdateChecker.swift:' || true)"
+    | grep -v '/App/Sources/MDemo/Update/UpdateChecker.swift:' || true)"
 if [ -n "$NET_HITS" ]; then
     echo "✗ 네트워크 통신 코드가 발견되었습니다 (NFR-07 위반):"
     echo "$NET_HITS"

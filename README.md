@@ -1,11 +1,12 @@
 # MDemo
 
 macOS용 개인 메모앱. 바탕화면에 떠 있는 마크다운 스티키 노트.
-(저장소·코드 이름은 MemoApp, 설치되는 앱 이름은 **MDemo**다. MemoApp은 다른 앱과 이름이 겹친다.)
+(0.9.0까지 이름은 MemoApp이었다. 다른 앱과 겹쳐 저장소·코드·앱 식별자·저장 폴더를 모두 MDemo로 바꿨다.
+예전 버전의 메모와 설정은 MDemo를 처음 켤 때 새 자리로 복사된다. 원본은 지우지 않는다.)
 
 ## ⬇️ 다운로드 (macOS)
 
-[최신 릴리스](https://github.com/WWhaleFe/MemoApp/releases/latest)에서 `MDemo-vX.Y.Z.zip`을 받아
+[최신 릴리스](https://github.com/WWhaleFe/MDemo/releases/latest)에서 `MDemo-vX.Y.Z.zip`을 받아
 압축을 풀고 **응용 프로그램** 폴더로 옮긴다. `.dmg`를 받았다면 열어서 Applications로 끌어다 놓는다.
 
 - 유니버설(Apple Silicon + Intel), macOS 14 이상.
@@ -22,7 +23,7 @@ macOS용 개인 메모앱. 바탕화면에 떠 있는 마크다운 스티키 노
   새 버전이 있으면 한 번 알림을 띄운다.
 - **최신 버전 다운로드**는 zip을 다운로드 폴더에 받고 Finder에서 보여 준다.
   임시 서명 앱이라 자동으로 바꿔 끼우지 않는다 — 압축을 풀어 응용 프로그램에 덮어쓰면 된다.
-- 메모와 설정은 앱 밖(`~/Library/Application Support/MemoApp/Data`, 사용자 기본값)에 있어서
+- 메모와 설정은 앱 밖(`~/Library/Application Support/MDemo/Data`, 사용자 기본값)에 있어서
   앱을 바꿔도 그대로 남는다.
 - 앱이 외부와 통신하는 것은 이 업데이트 확인 하나뿐이다 (NFR-07). 메모 내용은 보내지 않는다.
 

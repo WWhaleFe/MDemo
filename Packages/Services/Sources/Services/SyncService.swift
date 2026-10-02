@@ -72,18 +72,22 @@ public struct SyncService: Sendable {
         self.stateURL = stateURL
     }
 
-    /// iCloud Drive 안의 앱 폴더. iCloud Drive가 꺼져 있으면 nil.
-    public static func defaultRemoteRoot() -> URL? {
+    /// iCloud Drive 최상위 폴더. 꺼져 있으면 nil.
+    public static func iCloudDriveRoot() -> URL? {
         let iCloudDrive = FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: iCloudDrive.path) else { return nil }
-        return iCloudDrive.appendingPathComponent("MemoApp", isDirectory: true)
+        return FileManager.default.fileExists(atPath: iCloudDrive.path) ? iCloudDrive : nil
+    }
+
+    /// iCloud Drive 안의 앱 폴더. iCloud Drive가 꺼져 있으면 nil.
+    public static func defaultRemoteRoot() -> URL? {
+        iCloudDriveRoot()?.appendingPathComponent(AppStorageName.folder, isDirectory: true)
     }
 
     public static func defaultStateURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("MemoApp/sync-state.json")
+        return base.appendingPathComponent("\(AppStorageName.folder)/sync-state.json")
     }
 
     public static var isICloudAvailable: Bool { defaultRemoteRoot() != nil }

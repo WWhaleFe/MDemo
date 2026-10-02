@@ -35,7 +35,7 @@
 
 ```
 ┌─────────────────────────────────────────────┐
-│  MemoApp (앱 타깃)                            │  조립·DI·AppDelegate·메뉴바
+│  MDemo (앱 타깃)                              │  조립·DI·AppDelegate·메뉴바
 ├──────────────┬──────────────┬───────────────┤
 │ StickyWindow │  ListFeature │ SettingsFeature│  기능 계층 (Feature)
 │  (AppKit)    │  (SwiftUI)   │  (SwiftUI)     │
@@ -108,7 +108,7 @@
 | `SyncService` | iCloud Drive 스냅숏 저장(push)/불러오기(pull) — 수동 + 주기 자동. 메모별 병합·충돌 사본 생성, 상태 보고. 백그라운드 큐에서 변경분만 처리 | SYNC-* |
 | `LaunchAtLoginService` | SMAppService 래핑 | SYS-03 |
 
-### 2-6. 앱 타깃 (MemoApp)
+### 2-6. 앱 타깃 (MDemo)
 
 - `AppDelegate`: LSUIElement 메뉴바 상주, 메뉴 구성 (SYS-01/02)
 - `AppContainer`: 의존성 조립(수동 DI — 생성자 주입만 사용, DI 프레임워크 금지)
@@ -124,7 +124,7 @@
 
 ```
 [작업 데이터 — 항상 로컬, 원본]
-  기본: ~/Library/Application Support/MemoApp/Data/  (사용자 지정 가능, DAT-02)
+  기본: ~/Library/Application Support/MDemo/Data/  (사용자 지정 가능, DAT-02)
 ├── memos/
 │   ├── 01H8XKQ2V9/                # 메모별 폴더 (폴더명 = 메모 ID, ULID)
 │   │   ├── memo.md                # 프론트매터 + 본문 (열림 상태 포함 → 미러링의 근거)
@@ -134,11 +134,11 @@
 ├── trash/                         # 휴지통 = 메모 폴더를 통째로 이동 (TRS-01)
 └── groups.json                    # 그룹 목록·정렬 (기기 간 공유 대상)
 
-[기기 로컬 상태 — 동기화 제외]  ~/Library/Application Support/MemoApp/
+[기기 로컬 상태 — 동기화 제외]  ~/Library/Application Support/MDemo/
 ├── index.sqlite                   # 검색 캐시. 파일에서 언제든 재생성 (DOC-03), 기기별 보관
 └── device-state.json              # 이 기기에서의 창 위치/크기/모니터 매핑/접힘 상태 (SYNC-07)
 
-[iCloud 동기화 저장소 — 스냅숏]  ~/Library/Mobile Documents/com~apple~CloudDocs/MemoApp/  (SYNC-01)
+[iCloud 동기화 저장소 — 스냅숏]  ~/Library/Mobile Documents/com~apple~CloudDocs/MDemo/  (SYNC-01)
 ├── memos/ · trash/ · groups.json  # 작업 데이터와 동일 구조의 사본 (push/pull 대상)
 └── sync-manifest.json             # 메모별 modified 목록 — 변경분 판별·병합에 사용
 ```
@@ -244,7 +244,7 @@ hidesOnDeactivate = false
 
 ### 4-4. iCloud 동기화 — 스냅숏 저장/불러오기 (SYNC-*)
 
-**전제: 유료 Apple 개발자 계정 없음.** 유비쿼티 컨테이너와 CloudKit은 iCloud entitlement(유료 계정)가 필요해 사용할 수 없다. 대신 **iCloud Drive의 일반 폴더**(`~/Library/Mobile Documents/com~apple~CloudDocs/MemoApp/`)를 동기화 저장소로 쓴다. 이 폴더는 일반 파일 시스템 경로라서 entitlement 없이 읽고 쓸 수 있고, 업로드와 기기 간 전송은 macOS의 iCloud Drive가 알아서 처리한다. 앱이 하는 일은 "로컬 작업 데이터 ↔ 이 폴더" 사이의 push/pull뿐이다.
+**전제: 유료 Apple 개발자 계정 없음.** 유비쿼티 컨테이너와 CloudKit은 iCloud entitlement(유료 계정)가 필요해 사용할 수 없다. 대신 **iCloud Drive의 일반 폴더**(`~/Library/Mobile Documents/com~apple~CloudDocs/MDemo/`)를 동기화 저장소로 쓴다. 이 폴더는 일반 파일 시스템 경로라서 entitlement 없이 읽고 쓸 수 있고, 업로드와 기기 간 전송은 macOS의 iCloud Drive가 알아서 처리한다. 앱이 하는 일은 "로컬 작업 데이터 ↔ 이 폴더" 사이의 push/pull뿐이다.
 
 **동작 모델: 로컬 작업 + 스냅숏 push/pull**
 
@@ -340,20 +340,20 @@ pull (불러오기): iCloud 폴더 → 로컬 작업 데이터
 ## 6. 프로젝트 구성
 
 ```
-MemoApp/
+MDemo/
 ├── memo-app-feature-spec.md
 ├── memo-app-architecture.md        # 이 문서
 ├── README.md
 ├── Makefile                        # build / run / test / check / mem
 ├── Package.swift                   # 앱 타깃 (로컬 패키지들을 조립)
 ├── Scripts/
-│   ├── bundle.sh                   # SwiftPM 산출물 → MemoApp.app
+│   ├── bundle.sh                   # SwiftPM 산출물 → MDemo.app
 │   └── check-layering.sh           # 계층 규칙 · 네트워크 코드 검사
 ├── docs/
 │   ├── measurements.md             # 마일스톤별 메모리·크기 기록
 │   └── manual-test-ime.md          # 한글 입력 수동 체크리스트
 ├── App/
-│   ├── Sources/MemoApp/            # main, AppDelegate, AppContainer, MenuBar/
+│   ├── Sources/MDemo/              # main, AppDelegate, AppContainer, MenuBar/
 │   └── Resources/Info.plist        # LSUIElement 등
 └── Packages/                       # 로컬 SPM 패키지 (계층 = §2)
     ├── MemoCore/                   # Sources/ + Tests/

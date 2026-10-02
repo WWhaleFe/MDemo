@@ -392,7 +392,7 @@ modified: 2026-08-26T10:30:00+09:00
 
 | ID | 기능 | 상세 | 우선순위 |
 |---|---|---|---|
-| SYNC-01 | iCloud 저장소 폴더 | `~/Library/Mobile Documents/com~apple~CloudDocs/MemoApp/`을 동기화 저장소로 사용. entitlement·유료 계정 불필요. iCloud 미로그인 시 기능 비활성 + 안내 | P1 |
+| SYNC-01 | iCloud 저장소 폴더 | `~/Library/Mobile Documents/com~apple~CloudDocs/MDemo/`을 동기화 저장소로 사용. entitlement·유료 계정 불필요. iCloud 미로그인 시 기능 비활성 + 안내 | P1 |
 | SYNC-02 | 수동 저장 | 메뉴바·리스트 창의 "지금 iCloud에 저장" — 로컬 → iCloud 스냅숏 push | P1 |
 | SYNC-03 | 수동 불러오기 | "iCloud에서 불러오기" — 스냅숏을 로컬로 병합(pull) | P1 |
 | SYNC-04 | 주기 자동 저장 | 변경 후 디바운스 + 주기(기본 5분, 설정 가능) + 앱 종료 시 자동 push. 변경분만 복사 | P1 |

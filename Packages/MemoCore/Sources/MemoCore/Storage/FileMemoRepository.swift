@@ -31,10 +31,10 @@ public struct FileMemoRepository: MemoRepository {
         )
     }
 
-    /// 기본 데이터 폴더: ~/Library/Application Support/MemoApp/Data
+    /// 기본 데이터 폴더: ~/Library/Application Support/MDemo/Data
     public static func defaultRootDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("MemoApp/Data", isDirectory: true)
+        return base.appendingPathComponent("\(AppStorageName.folder)/Data", isDirectory: true)
     }
 
     // MARK: - 경로

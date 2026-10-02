@@ -10,9 +10,7 @@ set -euo pipefail
 CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/Scripts/toolchain.sh"
-# SwiftPM 제품 이름(실행 파일)과 사용자에게 보이는 앱 이름이 다르다.
-# 앱 이름 MemoApp은 다른 앱과 겹쳐 MDemo로 바꿨다. 코드·패키지 이름은 그대로 둔다.
-PRODUCT_NAME="MemoApp"
+PRODUCT_NAME="MDemo"
 APP_NAME="MDemo"
 APP_DIR="$ROOT/build/$APP_NAME.app"
 

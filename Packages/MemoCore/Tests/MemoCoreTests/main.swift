@@ -171,7 +171,7 @@ runner.test("구분자가 없는 파일은 오류로 거부한다") { t in
 
 func makeTemporaryRepository() throws -> (FileMemoRepository, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("MemoAppTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("MDemoTests-\(UUID().uuidString)", isDirectory: true)
     return (try FileMemoRepository(rootDirectory: root), root)
 }
 

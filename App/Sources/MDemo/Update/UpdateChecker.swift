@@ -26,7 +26,7 @@ final class UpdateChecker: NSObject {
         case failed(String)
     }
 
-    static let repository = "WWhaleFe/MemoApp"
+    static let repository = "WWhaleFe/MDemo"
     private static let latestAPI = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
     static let releasesPage = URL(string: "https://github.com/\(repository)/releases/latest")!
     private static let checkInterval: TimeInterval = 24 * 60 * 60

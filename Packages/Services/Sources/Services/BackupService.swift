@@ -29,7 +29,7 @@ public struct BackupService: Sendable {
     /// - false면 기존 메모를 남기고 백업에 있는 것만 더한다 (DAT-05).
     public func importBackup(from archive: URL, replaceExisting: Bool) throws {
         let staging = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MemoAppRestore-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("MDemoRestore-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: staging) }
 
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
