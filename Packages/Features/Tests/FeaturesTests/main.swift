@@ -16,6 +16,32 @@ func makeModel() throws -> (MemoListModel, URL) {
     return (MemoListModel(store: MemoStore(repository: repository)), root)
 }
 
+/// 창 계층을 흉내 낸다. 어떤 메모가 화면에 떠 있는지만 기억하면 목록 규칙은 다 시험할 수 있다.
+@MainActor
+final class FakeWindows {
+    var onScreen: Set<MemoID> = []
+    private(set) var arrangeCalls: [Bool] = []
+
+    var actions: MemoWindowActions {
+        MemoWindowActions(
+            isVisible: { [self] id in onScreen.contains(id) },
+            open: { [self] ids in onScreen.formUnion(ids) },
+            hide: { [self] ids in onScreen.subtract(ids) },
+            arrange: { [self] byGroup in arrangeCalls.append(byGroup) }
+        )
+    }
+}
+
+@MainActor
+func makeModelWithWindows() throws -> (MemoListModel, FakeWindows, URL) {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("MemoAppFeatureTests-\(UUID().uuidString)", isDirectory: true)
+    let repository = try FileMemoRepository(rootDirectory: root)
+    let windows = FakeWindows()
+    let model = MemoListModel(store: MemoStore(repository: repository), windowActions: windows.actions)
+    return (model, windows, root)
+}
+
 runner.test("전체 보기에는 모든 메모가 나온다 (LST-01)") { t in
     try MainActor.assumeIsolated {
         let (model, root) = try makeModel()
@@ -134,6 +160,134 @@ runner.test("왼쪽 목록에 그룹과 개수가 나온다") { t in
         t.expect(items.contains { $0.scope == .all && $0.count == 2 }, "전체 개수가 맞지 않다")
         t.expect(items.contains { $0.scope == .group("업무") && $0.count == 1 }, "그룹 개수가 맞지 않다")
         t.expect(items.contains { $0.scope == .trash }, "휴지통 항목이 없다")
+    }
+}
+
+runner.test("보이는 메모와 숨겨진 메모가 갈라진다 (LST-09)") { t in
+    try MainActor.assumeIsolated {
+        let (model, windows, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let shown = model.store.createMemo().id
+        model.store.createMemo()
+        model.store.createMemo()
+        windows.onScreen = [shown]
+        model.noteWindowStateChanged()
+
+        model.prepare(for: .visible)
+        t.expectEqual(model.visibleMemos.map(\.id), [shown])
+
+        model.prepare(for: .hidden)
+        t.expectEqual(model.visibleMemos.count, 2, "화면에 없는 메모 둘이 나와야 한다")
+
+        let counts = Dictionary(uniqueKeysWithValues: model.viewSidebarItems.map { ($0.scope, $0.count) })
+        t.expectEqual(counts[.all], 3)
+        t.expectEqual(counts[.visible], 1)
+        t.expectEqual(counts[.hidden], 2)
+    }
+}
+
+runner.test("모두 띄우기·모두 숨기기·선택 띄우기가 창 상태를 바꾼다 (LST-10)") { t in
+    try MainActor.assumeIsolated {
+        let (model, windows, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let first = model.store.createMemo().id
+        let second = model.store.createMemo().id
+
+        model.showAll()
+        t.expectEqual(windows.onScreen.count, 2, "모두 띄우기가 두 개를 올리지 않았다")
+
+        model.hideAll()
+        t.expect(windows.onScreen.isEmpty, "모두 숨기기가 남긴 창이 있다")
+
+        model.selection = [second]
+        model.showSelection()
+        t.expectEqual(windows.onScreen, [second], "고른 것만 떠야 한다")
+
+        // 한 줄의 눈 아이콘은 그 메모만 뒤집는다.
+        model.toggleVisibility(of: first)
+        t.expectEqual(windows.onScreen, [first, second])
+        model.toggleVisibility(of: second)
+        t.expectEqual(windows.onScreen, [first])
+    }
+}
+
+runner.test("숨겨도 메모는 남는다 (LST-10)") { t in
+    try MainActor.assumeIsolated {
+        let (model, _, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        model.store.createMemo()
+        model.store.createMemo()
+        model.showAll()
+        model.hideAll()
+
+        model.prepare(for: .all)
+        t.expectEqual(model.visibleMemos.count, 2, "숨기기가 메모를 지웠다")
+        t.expect(model.store.trashed.isEmpty, "숨기기가 휴지통으로 보냈다")
+    }
+}
+
+runner.test("창 나열과 그룹 나열은 서로 다른 요청을 보낸다 (LST-06, LST-11)") { t in
+    try MainActor.assumeIsolated {
+        let (model, windows, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        model.arrangeWindows(byGroup: false)
+        model.arrangeWindows(byGroup: true)
+        t.expectEqual(windows.arrangeCalls, [false, true])
+    }
+}
+
+runner.test("한꺼번에 띄우기 전에 확인을 받을지 정한다 (NFR-02)") { t in
+    try MainActor.assumeIsolated {
+        let (model, _, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for _ in 0..<MemoListModel.bulkOpenWarningThreshold {
+            model.store.createMemo()
+        }
+        t.expect(!model.needsBulkOpenConfirmation, "한계선까지는 바로 띄워야 한다")
+
+        model.store.createMemo()
+        t.expect(model.needsBulkOpenConfirmation, "한계선을 넘으면 확인을 받아야 한다")
+    }
+}
+
+runner.test("여러 개를 골라 복원하고 영구 삭제한다 (LST-05, TRS-02)") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let ids = (0..<3).map { _ in model.store.createMemo().id }
+        model.selection = Set(ids)
+        model.moveSelectionToTrash()
+
+        model.prepare(for: .trash)
+        t.expectEqual(model.visibleMemos.count, 3)
+        model.selection = [ids[0], ids[1]]
+        model.restoreSelection()
+        t.expectEqual(model.visibleMemos.count, 1, "고른 것만 복원돼야 한다")
+
+        model.selectAllVisible()
+        model.deleteSelectionPermanently()
+        t.expectEqual(model.visibleMemos.count, 0, "영구 삭제가 안 됐다")
+        model.prepare(for: .all)
+        t.expectEqual(model.visibleMemos.count, 2)
+    }
+}
+
+runner.test("우클릭한 줄이 선택에 들어 있으면 선택 전체가 대상이다 (LST-05)") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<3).map { _ in model.store.createMemo().id }
+
+        var opened: [MemoID] = []
+        model.windowActions = MemoWindowActions(open: { opened += $0 })
+        model.open(model.targets(for: [ids[0], ids[2]]))
+        t.expectEqual(Set(opened), [ids[0], ids[2]], "고른 메모만 열려야 한다")
     }
 }
 

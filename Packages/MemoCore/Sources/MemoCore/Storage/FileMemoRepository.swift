@@ -139,6 +139,10 @@ public struct FileMemoRepository: MemoRepository {
         }
         // 첨부 폴더까지 통째로 따라간다 (TRS-05).
         try FileManager.default.moveItem(at: source, to: destination)
+        // 버린 시각은 폴더의 수정 시각으로 기록한다 (TRS-03).
+        // 폴더를 옮기기만 하면 수정 시각은 마지막으로 고친 때 그대로라,
+        // 오래 묵은 메모를 버리면 다음 자동 비우기에서 곧바로 지워졌다.
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
     }
 
     private func trashDirectory(for id: MemoID) -> URL {

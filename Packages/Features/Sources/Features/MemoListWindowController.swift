@@ -14,13 +14,22 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
     private let store: MemoStore
     private let onOpenMemo: (MemoID) -> Void
     private let onCreateMemo: () -> Void
+    /// 창을 띄우고 내리고 늘어놓는 일. 창 계층에서 주입한다 (LST-06 ~ LST-10).
+    public var windowActions: MemoWindowActions
+    /// 휴지통 자동 비우기 기한(일). 꺼져 있으면 nil.
+    public var trashRetentionDays: () -> Int? = { nil }
+
+    /// ⌃ 클릭을 ⌘ 클릭으로 바꿔 주는 감시자. 창이 떠 있는 동안만 둔다.
+    private var controlClickMonitor: Any?
 
     public init(
         store: MemoStore,
+        windowActions: MemoWindowActions = .none,
         onOpenMemo: @escaping (MemoID) -> Void,
         onCreateMemo: @escaping () -> Void
     ) {
         self.store = store
+        self.windowActions = windowActions
         self.onOpenMemo = onOpenMemo
         self.onCreateMemo = onCreateMemo
         super.init()
@@ -36,7 +45,8 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let model = MemoListModel(store: store)
+        let model = MemoListModel(store: store, windowActions: windowActions)
+        model.trashRetentionDays = trashRetentionDays
         model.refresh()
         self.model = model
 
@@ -47,7 +57,8 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
         )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 560),
+            // 버튼 줄이 한 줄에 다 들어가는 너비로 연다.
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -61,8 +72,34 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
         window.level = .floating
 
         self.window = window
+        installControlClickSelection()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// 목록에서 ⌃ 클릭으로도 하나씩 골라 담을 수 있게 한다 (LST-05).
+    ///
+    /// 맥에서 ⌃ 클릭은 우클릭과 같아 메뉴가 뜨지만, Windows에 익숙한 손은 Ctrl로 여러 개를 고른다.
+    /// 이 창 안에서만 ⌃ 클릭을 ⌘ 클릭으로 바꿔 넘긴다. 우클릭 메뉴는 오른쪽 버튼으로 그대로 열린다.
+    private func installControlClickSelection() {
+        controlClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            guard let window = self?.window, event.window === window else { return event }
+            let flags = event.modifierFlags
+            guard flags.contains(.control), !flags.contains(.command) else { return event }
+
+            let converted = flags.subtracting(.control).union(.command)
+            return NSEvent.mouseEvent(
+                with: event.type,
+                location: event.locationInWindow,
+                modifierFlags: converted,
+                timestamp: event.timestamp,
+                windowNumber: event.windowNumber,
+                context: nil,
+                eventNumber: event.eventNumber,
+                clickCount: event.clickCount,
+                pressure: event.pressure
+            ) ?? event
+        }
     }
 
     public func close() {
@@ -71,6 +108,10 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
 
     /// 창을 닫으면 화면과 모델을 버린다.
     public func windowWillClose(_ notification: Notification) {
+        if let controlClickMonitor {
+            NSEvent.removeMonitor(controlClickMonitor)
+        }
+        controlClickMonitor = nil
         window?.contentView = nil
         window?.delegate = nil
         window = nil

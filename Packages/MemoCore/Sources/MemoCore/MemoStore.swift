@@ -143,19 +143,42 @@ public final class MemoStore {
     // MARK: - 휴지통 (TRS-*)
 
     public func moveToTrash(id: MemoID) {
-        try? repository.moveToTrash(id: id)
-        summaries.removeAll { $0.id == id }
+        moveToTrash(ids: [id])
+    }
+
+    /// 여러 개를 한 번에 버린다 (LST-05). 목록은 끝에 한 번만 다시 읽는다.
+    public func moveToTrash(ids: [MemoID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            try? repository.moveToTrash(id: id)
+        }
+        let removed = Set(ids)
+        summaries.removeAll { removed.contains($0.id) }
         reloadTrash()
     }
 
     public func restoreFromTrash(id: MemoID) {
-        try? repository.restoreFromTrash(id: id)
+        restoreFromTrash(ids: [id])
+    }
+
+    public func restoreFromTrash(ids: [MemoID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            try? repository.restoreFromTrash(id: id)
+        }
         reloadSummaries()
         reloadTrash()
     }
 
     public func permanentlyDelete(id: MemoID) {
-        try? repository.permanentlyDelete(id: id)
+        permanentlyDelete(ids: [id])
+    }
+
+    public func permanentlyDelete(ids: [MemoID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            try? repository.permanentlyDelete(id: id)
+        }
         reloadTrash()
     }
 

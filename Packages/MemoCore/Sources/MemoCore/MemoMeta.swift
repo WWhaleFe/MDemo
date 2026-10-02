@@ -6,10 +6,18 @@ import Foundation
 /// 창 위치 · 크기 · 접힘처럼 기기마다 달라야 하는 값은 `DeviceMemoState`로 분리한다 (SYNC-07).
 public struct MemoMeta: Hashable, Sendable, Codable {
     /// 프론트매터 스키마 버전. 포맷 변경 시 올리고 마이그레이션을 함께 넣는다.
-    public static let currentSchemaVersion = 1
+    ///
+    /// - v1 → v2: `title` 추가. 없던 파일은 제목이 비어 있는 것으로 읽고,
+    ///   본문 첫 줄을 대신 보여 준다. 버리는 값이 없으므로 되돌릴 수도 있다.
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var id: MemoID
+    /// 사용자가 직접 붙인 제목 (TXT-06).
+    ///
+    /// 비어 있으면 본문 첫 줄을 제목으로 삼는다. 본문과 따로 두는 이유는,
+    /// 첫 줄을 고치면 제목이 딸려 바뀌는 것이 메모를 쌓아 둘수록 불편해지기 때문이다.
+    public var title: String?
     /// 소속 그룹. nil이면 미지정 (LST-03).
     public var group: String?
     /// 배경색 (16진수 문자열, 예: "#FFF3B0").
@@ -34,6 +42,7 @@ public struct MemoMeta: Hashable, Sendable, Codable {
     public init(
         schemaVersion: Int = MemoMeta.currentSchemaVersion,
         id: MemoID,
+        title: String? = nil,
         group: String? = nil,
         colorHex: String = MemoColor.presets[0].hex,
         backgroundAlpha: Double = 0.95,
@@ -46,6 +55,7 @@ public struct MemoMeta: Hashable, Sendable, Codable {
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
+        self.title = title.flatMap { $0.isEmpty ? nil : $0 }
         self.group = group
         self.colorHex = colorHex
         self.backgroundAlpha = MemoMeta.clampBackgroundAlpha(backgroundAlpha)

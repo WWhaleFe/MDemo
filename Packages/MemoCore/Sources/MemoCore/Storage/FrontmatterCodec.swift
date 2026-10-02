@@ -81,8 +81,13 @@ public enum FrontmatterCodec {
             throw FrontmatterError.invalidValue(key: Key.id.rawValue, value: rawID)
         }
 
-        let schemaVersion = fields[Key.schemaVersion.rawValue].flatMap { Int(unquote($0)) }
+        // 옛 파일도 지금 스키마로 올려서 읽는다.
+        // v1 → v2는 제목이 하나 늘어난 것뿐이라, 없으면 비워 두면 그대로 맞는다.
+        let fileVersion = fields[Key.schemaVersion.rawValue].flatMap { Int(unquote($0)) }
             ?? MemoMeta.currentSchemaVersion
+        let schemaVersion = max(fileVersion, MemoMeta.currentSchemaVersion)
+
+        let title = fields[Key.title.rawValue].map(unquote).flatMap { $0.isEmpty ? nil : $0 }
 
         let group = fields[Key.group.rawValue].map(unquote).flatMap { $0.isEmpty ? nil : $0 }
 
@@ -94,6 +99,7 @@ public enum FrontmatterCodec {
         return MemoMeta(
             schemaVersion: schemaVersion,
             id: id,
+            title: title,
             group: group,
             colorHex: colorHex,
             backgroundAlpha: fields[Key.bgAlpha.rawValue].flatMap { Double(unquote($0)) } ?? 0.95,
@@ -114,6 +120,9 @@ public enum FrontmatterCodec {
 
         lines.append("\(Key.schemaVersion.rawValue): \(meta.schemaVersion)")
         lines.append("\(Key.id.rawValue): \(meta.id.rawValue)")
+        if let title = meta.title, !title.isEmpty {
+            lines.append("\(Key.title.rawValue): \(quote(title))")
+        }
         if let group = meta.group, !group.isEmpty {
             lines.append("\(Key.group.rawValue): \(quote(group))")
         }
@@ -141,6 +150,7 @@ public enum FrontmatterCodec {
     private enum Key: String, CaseIterable {
         case schemaVersion
         case id
+        case title
         case group
         case color
         case bgAlpha

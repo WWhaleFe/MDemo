@@ -67,6 +67,42 @@ runner.test("프론트매터는 왕복해도 값이 보존된다") { t in
     t.expectEqual(decoded.body, original.body, "본문이 변형되면 안 된다")
 }
 
+runner.test("제목은 프론트매터에 남고 왕복해도 그대로다 (TXT-06)") { t in
+    let meta = MemoMeta(id: .generate(), title: "장보기 목록")
+    let encoded = FrontmatterCodec.encode(MemoDocument(meta: meta, body: "우유"))
+    t.expect(encoded.contains("title: \"장보기 목록\""), "제목 줄이 없다:\n\(encoded)")
+
+    let decoded = try FrontmatterCodec.decode(fileContents: encoded)
+    t.expectEqual(decoded.meta.title, "장보기 목록")
+    t.expectEqual(decoded.meta.schemaVersion, MemoMeta.currentSchemaVersion)
+}
+
+runner.test("제목이 없던 옛 파일도 그대로 읽힌다 (v1 → v2 마이그레이션)") { t in
+    let id = MemoID.generate()
+    let old = """
+    ---
+    schemaVersion: 1
+    id: \(id.rawValue)
+    color: "#FFF3B0"
+    bgAlpha: 0.9
+    textAlpha: 1.0
+    open: true
+    pinned: true
+    created: 2026-08-26T00:00:00.000Z
+    modified: 2026-08-26T00:00:00.000Z
+    ---
+    첫 줄이 제목 노릇을 한다
+    """
+
+    let decoded = try FrontmatterCodec.decode(fileContents: old)
+    t.expectEqual(decoded.meta.title, nil, "없던 제목이 생겼다")
+    t.expectEqual(decoded.meta.schemaVersion, MemoMeta.currentSchemaVersion, "스키마 버전이 올라가지 않았다")
+
+    // 제목이 없으면 목록에는 본문 첫 줄이 보인다 (TXT-05).
+    let summary = MemoSummary(meta: decoded.meta, preview: decoded.body)
+    t.expectEqual(summary.title, "첫 줄이 제목 노릇을 한다")
+}
+
 runner.test("본문의 --- 구분선은 프론트매터로 오인되지 않는다 (MD-12)") { t in
     let meta = MemoMeta(id: .generate())
     let body = "위 문단\n\n---\n\n아래 문단"
@@ -393,6 +429,53 @@ runner.test("보관 기간이 지나지 않은 항목은 자동으로 지워지�
 
         store.emptyTrash()
         t.expectEqual(store.trashed.count, 0, "즉시 비우기가 동작하지 않았다")
+    }
+}
+
+runner.test("오래 고치지 않은 메모도 버린 날부터 보관 기간을 센다 (TRS-03)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let meta = store.createMemo()
+        // 40일 전에 마지막으로 고친 메모처럼 만든다.
+        let old = Date().addingTimeInterval(-40 * 24 * 60 * 60)
+        let folder = root.appendingPathComponent("memos/\(meta.id.rawValue)")
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            // 저장 위치 이름이 바뀌어도 시험이 조용히 빗나가지 않게 실제 폴더를 찾는다.
+            let found = (try? FileManager.default.subpathsOfDirectory(atPath: root.path))?
+                .first { $0.hasSuffix(meta.id.rawValue) }
+            t.expectNotNil(found, "메모 폴더를 찾지 못했다")
+            if let found {
+                try? FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: root.appendingPathComponent(found).path)
+            }
+        } else {
+            try? FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: folder.path)
+        }
+
+        store.moveToTrash(id: meta.id)
+        store.emptyTrash(olderThan: 30)
+        t.expectEqual(store.trashed.count, 1, "방금 버린 오래된 메모가 바로 지워졌다")
+    }
+}
+
+runner.test("버린 지 보관 기간이 지난 항목은 자동으로 지워진다 (TRS-03)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let kept = store.createMemo()
+        let expired = store.createMemo()
+        store.moveToTrash(ids: [kept.id, expired.id])
+
+        let old = Date().addingTimeInterval(-31 * 24 * 60 * 60)
+        let trashed = root.appendingPathComponent("trash/\(expired.id.rawValue)").path
+        try? FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: trashed)
+
+        store.emptyTrash(olderThan: 30)
+        t.expectEqual(store.trashed.map(\.id), [kept.id], "기한이 지난 것만 지워져야 한다")
     }
 }
 

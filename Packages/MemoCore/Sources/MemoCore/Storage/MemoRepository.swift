@@ -19,8 +19,13 @@ public struct MemoSummary: Equatable, Sendable, Identifiable {
         self.deletedAt = deletedAt
     }
 
-    /// 본문 첫 줄을 제목으로 삼는다 (TXT-05: 제목과 본문 분리).
+    /// 목록에 보일 제목.
+    ///
+    /// 직접 붙인 제목이 있으면 그것을 쓰고(TXT-06), 없으면 본문 첫 줄을 쓴다 (TXT-05).
     public var title: String {
+        if let given = meta.title, !given.trimmingCharacters(in: .whitespaces).isEmpty {
+            return given
+        }
         let firstLine = preview
             .components(separatedBy: "\n")
             .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
