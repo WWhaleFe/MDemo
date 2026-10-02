@@ -385,4 +385,40 @@ runner.test("코드 안의 색 태그와 짝 없는 태그는 글자 그대로 �
     t.expectEqual(MarkdownSerializer.serialize(MarkdownParser.parse(unclosed)), unclosed)
 }
 
+// MARK: - 노션 호환 (클립보드)
+
+runner.test("클립보드용 마크다운은 색 태그와 ==형광==을 빼고 목록은 4칸으로 들여 쓴다") { t in
+    let lines = MarkdownParser.parse("- 하나\n  - <span style=\"color:#D93025\">빨강</span>과 ==노랑==\n    1. 셋")
+    t.expectEqual(
+        MarkdownSerializer.serialize(lines, flavor: .clipboard),
+        "- 하나\n    - 빨강과 노랑\n        1. 셋"
+    )
+    // 파일 형식은 그대로다.
+    t.expectEqual(
+        MarkdownSerializer.serialize(lines),
+        "- 하나\n  - <span style=\"color:#D93025\">빨강</span>과 ==노랑==\n    1. 셋"
+    )
+}
+
+runner.test("붙여 넣은 글의 들여쓰기 단위(4칸·탭)를 알아서 단계로 바꾼다") { t in
+    for sample in ["- 하나\n    - 둘\n        - 셋", "- 하나\n\t- 둘\n\t\t- 셋", "- 하나\n  - 둘\n    - 셋"] {
+        let lines = PastedMarkdown.parse(sample)
+        t.expectEqual(lines.map(\.block), [.bullet(indent: 0), .bullet(indent: 1), .bullet(indent: 2)], "단계가 틀렸다: \(sample)")
+    }
+}
+
+runner.test("글자로 된 목록·체크박스 기호와 * · + · 1) 꼴도 받는다") { t in
+    let lines = PastedMarkdown.parse("• 점\n☐ 할 일\n☑ 한 일\n* 별\n+ 더하기\n* [ ] 별 체크\n1) 괄호 번호\n❝ 인용\r\n")
+    t.expectEqual(lines.map(\.block), [
+        .bullet(indent: 0), .checkbox(indent: 0, checked: false), .checkbox(indent: 0, checked: true),
+        .bullet(indent: 0), .bullet(indent: 0), .checkbox(indent: 0, checked: false),
+        .ordered(indent: 0, number: 1), .quote,
+    ])
+}
+
+runner.test("코드 박스 안의 들여쓰기와 기호는 건드리지 않는다") { t in
+    let lines = PastedMarkdown.parse("```\n    - 그대로\n• 그대로\n```")
+    t.expectEqual(lines.map(\.spans.first?.text), ["    - 그대로", "• 그대로"])
+}
+
 runner.finish()

@@ -154,6 +154,64 @@ public enum AttributedTextBridge {
         return lines
     }
 
+    /// 고른 구간만 서식 표현으로 되돌린다. 복사할 때 쓴다.
+    ///
+    /// 줄 하나의 일부만 골랐으면 글자 서식만 남긴다 — 목록 한 줄에서 낱말 하나를 복사했는데
+    /// `- 낱말`이 붙어 나오면 붙여 넣는 쪽에서 엉뚱한 목록이 생긴다.
+    /// 여러 줄에 걸치면 줄마다 블록(제목·목록·체크박스…)을 함께 가져간다.
+    public static func styledLines(from attributed: NSAttributedString, in selection: NSRange) -> [StyledLine] {
+        let fullText = attributed.string as NSString
+        guard selection.length > 0, NSMaxRange(selection) <= fullText.length else { return [] }
+
+        var lines: [StyledLine] = []
+        var lineStart = fullText.lineRange(for: NSRange(location: selection.location, length: 0)).location
+        while lineStart < NSMaxRange(selection) {
+            let lineRange = fullText.lineRange(for: NSRange(location: lineStart, length: 0))
+            let contentLength = max(0, lineRange.length - trailingNewlineLength(fullText, lineRange))
+
+            var block = BlockStyle.paragraph
+            if contentLength > 0,
+               let box = attributed.attribute(.memoBlockStyle, at: lineStart, effectiveRange: nil) as? BlockStyleBox {
+                block = box.value
+            }
+            let prefixLength = min((visiblePrefix(for: block) as NSString).length, contentLength)
+            let content = NSRange(location: lineStart + prefixLength, length: contentLength - prefixLength)
+            let picked = NSIntersectionRange(content, selection)
+
+            var line = StyledLine(block: block, spans: spans(from: attributed, in: picked))
+            let staysInThisLine = NSMaxRange(selection) <= NSMaxRange(content)
+            if lines.isEmpty, staysInThisLine, picked.length < content.length {
+                // 한 줄 안의 일부만 골랐다 — 글자 서식만 가져간다.
+                line.block = .paragraph
+            }
+            lines.append(line)
+
+            if NSMaxRange(lineRange) <= lineStart { break }
+            lineStart = NSMaxRange(lineRange)
+        }
+        return lines
+    }
+
+    private static func spans(from attributed: NSAttributedString, in range: NSRange) -> [StyledSpan] {
+        guard range.length > 0 else { return [] }
+        var spans: [StyledSpan] = []
+        attributed.enumerateAttributes(in: range) { attributes, subrange, _ in
+            let span = StyledSpan(
+                text: (attributed.string as NSString).substring(with: subrange),
+                styles: InlineStyleTag(rawValue: (attributes[.memoInlineStyle] as? Int) ?? 0),
+                textColor: attributes[.memoTextColor] as? String,
+                highlightColor: attributes[.memoHighlightColor] as? String
+            )
+            if var last = spans.last, last.hasSameFormat(as: span) {
+                last.text += span.text
+                spans[spans.count - 1] = last
+            } else {
+                spans.append(span)
+            }
+        }
+        return spans
+    }
+
     private static func trailingNewlineLength(_ text: NSString, _ lineRange: NSRange) -> Int {
         guard lineRange.length > 0 else { return 0 }
         let last = text.substring(with: NSRange(location: NSMaxRange(lineRange) - 1, length: 1))
@@ -174,23 +232,7 @@ public enum AttributedTextBridge {
             length: max(0, range.length - prefixLength)
         )
         guard contentRange.length > 0 else { return StyledLine(block: block, spans: []) }
-
-        var spans: [StyledSpan] = []
-        attributed.enumerateAttributes(in: contentRange) { attributes, subrange, _ in
-            let span = StyledSpan(
-                text: (attributed.string as NSString).substring(with: subrange),
-                styles: InlineStyleTag(rawValue: (attributes[.memoInlineStyle] as? Int) ?? 0),
-                textColor: attributes[.memoTextColor] as? String,
-                highlightColor: attributes[.memoHighlightColor] as? String
-            )
-            if var last = spans.last, last.hasSameFormat(as: span) {
-                last.text += span.text
-                spans[spans.count - 1] = last
-            } else {
-                spans.append(span)
-            }
-        }
-        return StyledLine(block: block, spans: spans)
+        return StyledLine(block: block, spans: spans(from: attributed, in: contentRange))
     }
 }
 

@@ -47,6 +47,10 @@ public final class LiveFormatController {
             return handleFormattingKey(event)
         }
         // 메모 영역을 클릭하면 목록 바깥을 누른 것이므로 팝업을 닫는다.
+        // 다른 앱에서 복사한 마크다운은 붙여 넣는 순간 서식으로 바꾼다 (노션 호환).
+        textView.onPasteText = { [weak self] text in
+            self?.pasteMarkdown(text) ?? false
+        }
         textView.onEditorClick = { [weak self] in
             self?.slashPopup.hide()
         }

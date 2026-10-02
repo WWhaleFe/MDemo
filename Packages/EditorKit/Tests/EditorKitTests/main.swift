@@ -948,4 +948,65 @@ runner.test("글머리 기호는 단계마다 다르게 보이고 파일에는 -
     }
 }
 
+// MARK: - 노션 호환 복사 · 붙여넣기
+
+runner.test("복사하면 화면 표식 대신 마크다운이 나간다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "# 제목\n- [ ] 할 일\n- **굵은** 항목\n  - 아래 단계")
+        textView.setSelectedRange(NSRange(location: 0, length: (textView.string as NSString).length))
+        t.expectEqual(textView.selectedMarkdown(), "# 제목\n- [ ] 할 일\n- **굵은** 항목\n    - 아래 단계")
+    }
+}
+
+runner.test("한 줄 안의 일부만 복사하면 글자 서식만 나간다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "- **굵은** 항목")
+        // 화면: "• 굵은 항목" — "굵은"만 고른다.
+        textView.setSelectedRange(NSRange(location: 2, length: 2))
+        t.expectEqual(textView.selectedMarkdown(), "**굵은**")
+    }
+}
+
+runner.test("노션에서 복사한 여러 줄 마크다운을 붙여 넣으면 서식으로 들어간다") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "")
+        let notion = "# 회의\n- [x] 끝난 일\n- [ ] 남은 일\n- 항목\n    - 하위 항목\n1. 첫째\n> 인용\n**굵게** 와 *기울임*\n"
+        t.expect(textView.onPasteText?(notion) == true, "붙여넣기를 처리하지 않았다")
+        t.expectEqual(
+            textView.currentMarkdown(),
+            "# 회의\n- [x] 끝난 일\n- [ ] 남은 일\n- 항목\n  - 하위 항목\n1. 첫째\n> 인용\n**굵게** 와 *기울임*"
+        )
+        t.expect(!textView.string.contains("# ") && !textView.string.contains("**"), "기호가 화면에 남았다: \(textView.string)")
+    }
+}
+
+runner.test("글이 있는 줄 가운데에 붙여 넣으면 그 줄의 블록을 지킨다") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "- 앞뒤")
+        textView.setSelectedRange(NSRange(location: 3, length: 0))   // "• 앞|뒤"
+        t.expect(textView.onPasteText?("**굵게**") == true)
+        t.expectEqual(textView.currentMarkdown(), "- 앞**굵게**뒤")
+    }
+}
+
+runner.test("서식 없는 한 줄은 기본 붙여넣기에 맡긴다") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "# 제목")
+        t.expect(textView.onPasteText?("그냥 글자") == false, "평범한 글을 가로챘다")
+    }
+}
+
+runner.test("복사한 것을 그대로 붙여 넣으면 같은 내용이 된다") { t in
+    MainActor.assumeIsolated {
+        let source = "## 할 일\n- [ ] 우유\n- 장보기\n  - 사과\n1. 첫째\n```\nlet x = 1\n```"
+        let from = makeTextView(loading: source)
+        from.setSelectedRange(NSRange(location: 0, length: (from.string as NSString).length))
+        let copied = from.selectedMarkdown() ?? ""
+
+        let (to, _) = makeEditor(loading: "")
+        t.expect(to.onPasteText?(copied) == true)
+        t.expectEqual(to.currentMarkdown(), source)
+    }
+}
+
 runner.finish()

@@ -237,6 +237,44 @@ public final class MemoTextView: NSTextView {
         undoManager?.removeAllActions()
     }
 
+    // MARK: - 복사 · 붙여넣기 (노션 호환)
+    //
+    // 화면에는 마크다운 기호를 숨기고 `•` · `☐` 같은 표식만 보인다. 그대로 복사하면 다른 앱에는
+    // 그 표식 글자만 건너가고 제목 · 굵게 같은 서식은 사라진다. 노션은 붙여 넣은 글이 마크다운일 때만
+    // 블록으로 바꿔 주므로, 복사할 때는 고른 부분을 마크다운으로 되돌려 넣는다.
+    // 반대로 붙여 넣을 때는 받은 마크다운을 해석해 서식으로 바꿔 넣는다 (LiveFormatController).
+
+    /// 붙여넣은 글을 서식으로 바꿔 넣는 쪽. 처리했으면 true. LiveFormatController가 연결한다.
+    public var onPasteText: ((String) -> Bool)?
+
+    /// 고른 부분의 마크다운 (클립보드용).
+    public func selectedMarkdown() -> String? {
+        guard let textStorage else { return nil }
+        let selection = selectedRange()
+        guard selection.length > 0 else { return nil }
+        let lines = AttributedTextBridge.styledLines(from: textStorage, in: selection)
+        return MarkdownSerializer.serialize(lines, flavor: .clipboard)
+    }
+
+    public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let markdown = selectedMarkdown() else {
+            return super.writeSelection(to: pboard, types: types)
+        }
+        pboard.declareTypes([.string], owner: nil)
+        return pboard.setString(markdown, forType: .string)
+    }
+
+    public override func paste(_ sender: Any?) {
+        // 조합 중이면 입력기가 먼저다 (NFR-08).
+        guard !isComposingText,
+              let text = NSPasteboard.general.string(forType: .string),
+              onPasteText?(text) == true
+        else {
+            super.paste(sender)
+            return
+        }
+    }
+
     /// 화면 내용을 표준 마크다운으로 되돌린다. 저장 직전에 호출한다 (DOC-01).
     public func currentMarkdown() -> String {
         guard let textStorage else { return string }
