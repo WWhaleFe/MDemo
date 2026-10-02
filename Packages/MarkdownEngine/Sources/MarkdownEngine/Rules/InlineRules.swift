@@ -83,6 +83,8 @@ public extension InputRuleSet {
     /// - 굵게(`**`)가 기울임(`*`)보다 먼저다.
     static var m1: InputRuleSet {
         InputRuleSet(rules: [
+            // 코드 박스가 인라인 코드(`)보다 먼저다 — ```는 `로도 읽힌다.
+            CodeBlockRule(),
             HeadingRule(),
             CheckboxRule(),
             BulletListRule(),

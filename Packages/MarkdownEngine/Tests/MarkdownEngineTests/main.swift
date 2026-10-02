@@ -158,7 +158,7 @@ runner.test("명령 순서는 글의 구조를 따라간다") { t in
         "paragraph",
         "heading1", "heading2", "heading3",
         "ordered", "bullet", "checkbox",
-        "divider", "quote",
+        "divider", "quote", "table", "codeBlock",
     ]
     t.expectEqual(SlashCommandCatalog.standard.map(\.id), expected, "드롭다운 배치 순서가 바뀌었다")
 }
@@ -250,6 +250,139 @@ runner.test("여러 줄 문서 전체가 왕복된다") { t in
     **중요**: 오늘까지
     """
     t.expectEqual(MarkdownSerializer.serialize(MarkdownParser.parse(document)), document)
+}
+
+// MARK: - 코드 박스 (MD-10)
+
+runner.test("코드 박스는 울타리를 벗겨 내고 줄마다 코드 서식을 단다 (MD-10)") { t in
+    let lines = MarkdownParser.parse("앞\n```\nlet x = 1\n# 주석 아님\n```\n뒤")
+    t.expectEqual(lines.count, 4, "울타리 줄이 남았다: \(lines.map(\.block))")
+    t.expectEqual(lines[1].block, .codeBlock)
+    t.expectEqual(lines[2].block, .codeBlock)
+    t.expectEqual(lines[3].block, .paragraph)
+
+    // 코드 안의 #은 제목이 아니고, *는 기울임이 아니다.
+    t.expectEqual(lines[2].spans.map(\.text).joined(), "# 주석 아님")
+    t.expectEqual(lines[2].spans.first?.styles, [])
+}
+
+runner.test("코드 박스는 울타리를 되살려 저장된다 (MD-10, DOC-01)") { t in
+    let markdown = "앞\n```\nlet x = 1\n*별표 그대로*\n```\n뒤"
+    let roundTrip = MarkdownSerializer.serialize(MarkdownParser.parse(markdown))
+    t.expectEqual(roundTrip, markdown, "왕복에서 코드가 달라졌다")
+}
+
+runner.test("``` 로 시작한 줄은 코드 박스로 바뀐다 (MD-10)") { t in
+    let match = InputRuleSet.m1.firstMatch(
+        InputRuleContext(content: "``` ", caretOffset: 4, block: .paragraph)
+    )
+    t.expectEqual(match?.outcome, .block(.codeBlock))
+}
+
+// MARK: - 번호 목록 표식 (MD-03)
+
+runner.test("번호 목록은 단계마다 다른 꼴로 보인다 (MD-03)") { t in
+    t.expectEqual(OrderedListMarker.text(number: 1, indent: 0), "1.")
+    t.expectEqual(OrderedListMarker.text(number: 2, indent: 1), "b.")
+    t.expectEqual(OrderedListMarker.text(number: 3, indent: 2), "iii.")
+    // 네 번째 단계부터는 다시 처음 꼴로 돌아간다.
+    t.expectEqual(OrderedListMarker.text(number: 4, indent: 3), "4.")
+
+    t.expectEqual(OrderedListMarker.letters(27), "aa")
+    t.expectEqual(OrderedListMarker.roman(9), "ix")
+}
+
+runner.test("단계가 달라도 파일에는 표준 번호로 적힌다 (DOC-01, DOC-04)") { t in
+    let lines = [
+        StyledLine(block: .ordered(indent: 0, number: 1), spans: [StyledSpan(text: "겉")]),
+        StyledLine(block: .ordered(indent: 1, number: 2), spans: [StyledSpan(text: "속")]),
+    ]
+    t.expectEqual(MarkdownSerializer.serialize(lines), "1. 겉\n  2. 속")
+}
+
+// MARK: - 표 (MD-14)
+
+runner.test("표는 구분 줄을 화면에서 빼고 저장할 때 되살린다 (MD-14)") { t in
+    let markdown = "| 항목 | 내용 |\n| --- | --- |\n| 하나 | 1 |"
+    let lines = MarkdownParser.parse(markdown)
+
+    t.expectEqual(lines.count, 2, "구분 줄이 화면에 남았다: \(lines.count)줄")
+    t.expectEqual(lines[0].block, .tableRow)
+    t.expectEqual(lines[1].spans.map(\.text).joined(), "| 하나 | 1 |")
+
+    t.expectEqual(MarkdownSerializer.serialize(lines), markdown, "왕복에서 표가 달라졌다")
+}
+
+runner.test("표 앞뒤의 본문은 표에 딸려 들어가지 않는다 (MD-14)") { t in
+    let markdown = "앞\n| A | B |\n| --- | --- |\n| 1 | 2 |\n뒤"
+    let lines = MarkdownParser.parse(markdown)
+    t.expectEqual(lines.map(\.block), [.paragraph, .tableRow, .tableRow, .paragraph])
+    t.expectEqual(MarkdownSerializer.serialize(lines), markdown)
+}
+
+runner.test("문장 가운데 세로줄은 표가 아니다 (MD-14)") { t in
+    let lines = MarkdownParser.parse("가격은 1000원 | 수량은 2개")
+    t.expectEqual(lines[0].block, .paragraph, "그냥 세로줄을 쓴 문장이 표가 됐다")
+}
+
+runner.test("표 뼈대는 제목 줄과 빈 줄로 만들어진다 (MD-14)") { t in
+    let skeleton = MarkdownTable.skeleton(columns: 2, rows: 3)
+    t.expectEqual(skeleton.count, 3)
+    t.expectEqual(skeleton[0], "| 항목 | 내용 |")
+    t.expect(MarkdownTable.isEmptyRow(skeleton[1]), "둘째 줄이 빈 행이 아니다: \(skeleton[1])")
+    t.expectEqual(MarkdownTable.columnCount(of: skeleton[0]), 2)
+
+    // 뼈대를 저장하면 구분 줄이 끼어들어 표준 마크다운이 된다.
+    let lines = skeleton.map { StyledLine(block: .tableRow, spans: [StyledSpan(text: $0)]) }
+    t.expectEqual(
+        MarkdownSerializer.serialize(lines),
+        "| 항목 | 내용 |\n| --- | --- |\n|  |  |\n|  |  |"
+    )
+}
+
+runner.test("정렬 표시가 붙은 구분 줄도 알아본다 (MD-14)") { t in
+    t.expect(MarkdownTable.isSeparatorRow("| :--- | ---: | :---: |"), "정렬 표시를 구분 줄로 보지 않았다")
+    t.expect(!MarkdownTable.isSeparatorRow("| 하나 | 둘 |"), "내용 줄을 구분 줄로 봤다")
+}
+
+// MARK: - 글자 색 · 형광펜 색
+
+runner.test("글자 색과 형광펜 색은 HTML 태그로 왕복한다") { t in
+    let samples = [
+        "<span style=\"color:#D93025\">빨간 글자</span>",
+        "앞 <mark style=\"background:#A7D3FF\">파란 형광</mark> 뒤",
+        "<span style=\"color:#1A73E8\">**굵은 파랑**</span>",
+        "<span style=\"color:#188038\"><mark style=\"background:#FFB3D1\">초록 글자 분홍 칠</mark></span>",
+        "==기본 노랑은 예전 그대로==",
+    ]
+    for sample in samples {
+        let lines = MarkdownParser.parse(sample)
+        t.expectEqual(MarkdownSerializer.serialize(lines), sample, "왕복이 깨졌다")
+    }
+}
+
+runner.test("글자 색 태그를 읽으면 기호 없이 색만 남는다") { t in
+    let spans = MarkdownParser.parse("<span style=\"color:#d93025\">빨강</span>과 <mark style=\"background:#a8e6a1\">초록</mark>")[0].spans
+    t.expectEqual(spans.count, 3)
+    t.expectEqual(spans.first?.text, "빨강")
+    t.expectEqual(spans.first?.textColor, "#D93025", "색 표기는 대문자로 맞춘다")
+    t.expectEqual(spans.last?.text, "초록")
+    t.expect(spans.last?.styles.contains(.highlight) == true, "형광이 켜지지 않았다")
+    t.expectEqual(spans.last?.highlightColor, "#A8E6A1")
+}
+
+runner.test("다른 도구가 쓴 색 태그 꼴도 읽는다") { t in
+    let spans = MarkdownParser.parse("<mark style='background-color: #FFCC99;'>주황</mark>")[0].spans
+    t.expectEqual(spans.first?.text, "주황")
+    t.expectEqual(spans.first?.highlightColor, "#FFCC99")
+}
+
+runner.test("코드 안의 색 태그와 짝 없는 태그는 글자 그대로 둔다") { t in
+    let code = "`<span style=\"color:#D93025\">x</span>`"
+    t.expectEqual(MarkdownSerializer.serialize(MarkdownParser.parse(code)), code)
+    let unclosed = "<span style=\"color:#D93025\">닫히지 않음"
+    t.expectEqual(MarkdownParser.parse(unclosed)[0].spans.first?.textColor, nil)
+    t.expectEqual(MarkdownSerializer.serialize(MarkdownParser.parse(unclosed)), unclosed)
 }
 
 runner.finish()

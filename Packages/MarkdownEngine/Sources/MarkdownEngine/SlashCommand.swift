@@ -93,6 +93,17 @@ public enum SlashCommandCatalog {
             shortcut: "> ",
             block: .quote
         ),
+        SlashCommand(
+            id: "table", title: "표", subtitle: "칸을 나눠 정리하는 표를 넣습니다",
+            keywords: ["표", "테이블", "table", "grid"],
+            block: .tableRow
+        ),
+        SlashCommand(
+            id: "codeBlock", title: "코드 박스", subtitle: "여러 줄 코드를 상자에 담아 표시",
+            keywords: ["코드", "코드블록", "코드박스", "code", "codeblock", "박스"],
+            shortcut: "``` ",
+            block: .codeBlock
+        ),
     ]
 
     /// 글자 서식은 블록이 아니라 감싸는 기호로 넣는다. 팝업 아래쪽에 안내로만 보여 준다.

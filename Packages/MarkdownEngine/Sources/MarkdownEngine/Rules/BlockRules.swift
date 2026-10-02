@@ -91,6 +91,23 @@ public struct OrderedListRule: InputRule {
     }
 }
 
+/// ``` ` ``` 세 개 → 코드 박스 (MD-10)
+///
+/// 엔터로 여는 길은 `LiveFormatController.handleNewline`이 맡는다.
+/// 여기서는 공백까지 친 경우를 받는다 — 두 길이 같은 결과로 이어져야 한다.
+public struct CodeBlockRule: InputRule {
+    public let id = "MD-10"
+
+    public init() {}
+
+    public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        guard context.block == .paragraph else { return nil }
+        let marker = "``` "
+        guard context.content.hasPrefix(marker), context.caretOffset == marker.count else { return nil }
+        return InputRuleMatch(range: 0..<marker.count, replacement: "", outcome: .block(.codeBlock))
+    }
+}
+
 /// 체크박스 (MD-04). 저장 시 표준 문법을 유지한다 (CHK-05).
 ///
 /// 두 갈래로 들어올 수 있다:

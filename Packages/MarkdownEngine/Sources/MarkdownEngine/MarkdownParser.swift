@@ -5,11 +5,31 @@ import Foundation
 /// `MarkdownSerializer`와 짝을 이루며, 왕복해도 내용이 변하지 않아야 한다.
 /// 지원 범위는 명세가 허용한 것만이다 — 표준 마크다운 + `==형광==` (DOC-04).
 public enum MarkdownParser {
+    /// 코드 박스의 울타리 기호 (MD-10).
+    public static let codeFence = "```"
+
     public static func parse(_ markdown: String) -> [StyledLine] {
-        markdown
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .components(separatedBy: "\n")
-            .map(parseLine)
+        var lines: [StyledLine] = []
+        var insideCodeBlock = false
+
+        for raw in markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            // 울타리 줄 자체는 화면에 남기지 않는다. 마크다운 기호는 숨긴다는 원칙 그대로다 (MD-01).
+            if raw.trimmingCharacters(in: .whitespaces).hasPrefix(codeFence) {
+                insideCodeBlock.toggle()
+                continue
+            }
+            if insideCodeBlock {
+                // 코드 안의 `*`나 `#`는 서식이 아니라 코드다. 인라인 해석을 하지 않는다.
+                lines.append(StyledLine(block: .codeBlock, spans: raw.isEmpty ? [] : [StyledSpan(text: raw)]))
+                continue
+            }
+            // 표의 구분 줄은 문법이지 내용이 아니다. 화면에서 빼고 저장할 때 다시 만든다 (MD-14).
+            if MarkdownTable.isSeparatorRow(raw) {
+                continue
+            }
+            lines.append(parseLine(raw))
+        }
+        return lines
     }
 
     public static func parseLine(_ line: String) -> StyledLine {
@@ -59,6 +79,11 @@ public enum MarkdownParser {
             return (.quote, String(trimmed.dropFirst(2)))
         }
 
+        // 표는 세로줄이 곧 내용이다. 기호를 벗기지 않고 줄 전체를 그대로 둔다 (MD-14).
+        if MarkdownTable.isRow(trimmed) {
+            return (.tableRow, trimmed)
+        }
+
         return (.paragraph, line)
     }
 
@@ -94,7 +119,7 @@ public enum MarkdownParser {
     private static func parseInline(_ text: String) -> [StyledSpan] {
         guard !text.isEmpty else { return [] }
         var spans: [StyledSpan] = []
-        appendSpans(from: Array(text), styles: [], into: &spans)
+        appendSpans(from: Array(text), format: StyledSpan(text: ""), into: &spans)
         return mergeAdjacent(spans)
     }
 
@@ -109,22 +134,44 @@ public enum MarkdownParser {
         (Array("*"), .italic),
     ]
 
+    /// `format`은 바깥에서 물려받은 서식이다. 글자는 비어 있고 서식만 쓴다.
     private static func appendSpans(
         from characters: [Character],
-        styles: InlineStyleTag,
+        format: StyledSpan,
         into spans: inout [StyledSpan]
     ) {
+        let styles = format.styles
         var index = 0
         var plain: [Character] = []
 
         func flushPlain() {
             if !plain.isEmpty {
-                spans.append(StyledSpan(text: String(plain), styles: styles))
+                var span = format
+                span.text = String(plain)
+                spans.append(span)
                 plain = []
             }
         }
 
         outer: while index < characters.count {
+            // 색 태그 (<span style="color:…">, <mark style="background:…">). 코드 안에서는 글자일 뿐이다.
+            if !styles.contains(.code), characters[index] == "<",
+               let tag = matchColorTag(characters, at: index),
+               let closing = findClosing(characters, from: index + tag.openingLength, marker: Array(tag.closing)) {
+                flushPlain()
+                var inner = format
+                if tag.isHighlight {
+                    inner.styles.insert(.highlight)
+                    inner.highlightColor = tag.hex
+                } else {
+                    inner.textColor = tag.hex
+                }
+                let content = Array(characters[(index + tag.openingLength)..<closing])
+                appendSpans(from: content, format: inner, into: &spans)
+                index = closing + tag.closing.count
+                continue outer
+            }
+
             for (marker, style) in delimiters {
                 // 코드 구간 안에서는 다른 기호를 서식으로 보지 않는다.
                 if styles.contains(.code) && style != .code { continue }
@@ -134,7 +181,9 @@ public enum MarkdownParser {
                 if let closing = findClosing(characters, from: index + marker.count, marker: marker) {
                     flushPlain()
                     let inner = Array(characters[(index + marker.count)..<closing])
-                    appendSpans(from: inner, styles: styles.union(style), into: &spans)
+                    var innerFormat = format
+                    innerFormat.styles = styles.union(style)
+                    appendSpans(from: inner, format: innerFormat, into: &spans)
                     index = closing + marker.count
                     continue outer
                 }
@@ -143,6 +192,45 @@ public enum MarkdownParser {
             index += 1
         }
         flushPlain()
+    }
+
+    private struct ColorTag {
+        let isHighlight: Bool
+        let hex: String
+        let openingLength: Int
+        let closing: String
+    }
+
+    /// 여는 색 태그를 읽는다. 앱이 쓰는 꼴 말고도, 다른 도구가 흔히 쓰는 꼴
+    /// (`background-color:`, 따옴표 종류, 공백, 소문자)까지는 받아 준다.
+    private static let colorTagPattern = try! NSRegularExpression(
+        pattern: #"^<(span|mark)\s+style\s*=\s*["']\s*(color|background|background-color)\s*:\s*(#?[0-9A-Fa-f]{6})\s*;?\s*["']\s*>"#
+    )
+
+    private static func matchColorTag(_ characters: [Character], at index: Int) -> ColorTag? {
+        // 태그는 길지 않다. 줄 끝까지 넘기지 않고 앞부분만 본다.
+        let window = String(characters[index..<min(characters.count, index + 64)])
+        let range = NSRange(window.startIndex..., in: window)
+        guard let match = colorTagPattern.firstMatch(in: window, range: range),
+              let tagRange = Range(match.range(at: 1), in: window),
+              let propertyRange = Range(match.range(at: 2), in: window),
+              let hexRange = Range(match.range(at: 3), in: window),
+              let wholeRange = Range(match.range, in: window),
+              let hex = InlineColor.normalized(String(window[hexRange]))
+        else { return nil }
+
+        let tag = String(window[tagRange])
+        let isHighlight = tag == "mark"
+        // <span style="color">만 글자 색, <mark style="background">만 형광펜으로 본다.
+        let property = String(window[propertyRange])
+        guard isHighlight == property.hasPrefix("background") else { return nil }
+
+        return ColorTag(
+            isHighlight: isHighlight,
+            hex: hex,
+            openingLength: window[wholeRange].count,
+            closing: "</\(tag)>"
+        )
     }
 
     private static func matches(_ characters: [Character], at index: Int, marker: [Character]) -> Bool {
@@ -166,7 +254,7 @@ public enum MarkdownParser {
     private static func mergeAdjacent(_ spans: [StyledSpan]) -> [StyledSpan] {
         var merged: [StyledSpan] = []
         for span in spans where !span.text.isEmpty {
-            if var last = merged.last, last.styles == span.styles {
+            if var last = merged.last, last.hasSameFormat(as: span) {
                 last.text += span.text
                 merged[merged.count - 1] = last
             } else {
