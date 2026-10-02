@@ -49,11 +49,26 @@ final class AppContainer {
         self.windowRegistry = registry
 
         // 리스트 창은 메모를 열어 달라고 요청만 하고, 창을 만드는 일은 레지스트리가 한다.
-        self.listWindow = MemoListWindowController(
+        let listWindow = MemoListWindowController(
             store: store,
+            windowActions: MemoWindowActions(
+                isVisible: { [registry] id in registry.isVisible(id: id) },
+                open: { [registry] ids in registry.openMemos(ids: ids) },
+                hide: { [registry] ids in registry.hideMemos(ids: ids) },
+                arrange: { [registry] byGroup in registry.arrangeOpenWindows(byGroup: byGroup) }
+            ),
             onOpenMemo: { [registry] id in registry.openMemo(id: id) },
             onCreateMemo: { [registry] in registry.createMemo() }
         )
+        listWindow.trashRetentionDays = { [preferences] in
+            preferences.autoEmptyTrash ? AppPreferences.trashRetentionDays : nil
+        }
+        self.listWindow = listWindow
+
+        // 창이 뜨거나 지면 리스트 창의 "보이는/숨겨진" 개수도 함께 달라진다.
+        registry.onWindowStateChange = { [weak listWindow] in
+            listWindow?.refreshIfOpen()
+        }
 
         self.syncCoordinator = SyncCoordinator(
             store: store,
@@ -62,6 +77,20 @@ final class AppContainer {
         )
 
         // 보관 기간이 지난 휴지통 항목을 정리한다 (TRS-03).
-        store.emptyTrash(olderThan: 30)
+        // 메뉴바 앱은 며칠씩 켜 둔 채로 쓰므로 시작할 때 한 번으로는 모자라다. 몇 시간마다 다시 본다.
+        purgeExpiredTrash()
+        trashPurgeTimer = Timer.scheduledTimer(withTimeInterval: Self.trashPurgeInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeExpiredTrash() }
+        }
+    }
+
+    private var trashPurgeTimer: Timer?
+    private static let trashPurgeInterval: TimeInterval = 6 * 60 * 60
+
+    /// 자동 비우기가 꺼져 있으면 아무것도 지우지 않는다.
+    func purgeExpiredTrash() {
+        guard preferences.autoEmptyTrash else { return }
+        store.emptyTrash(olderThan: AppPreferences.trashRetentionDays)
+        listWindow.refreshIfOpen()
     }
 }

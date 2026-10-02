@@ -49,6 +49,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // `--demo-code` 로 실행하면 코드 박스에 예제를 채운 메모를 띄운다.
+        // 상자는 레이아웃 매니저가 글자 뒤에 그리는 것이라 자동 테스트로는 확인할 수 없다 (MD-10).
+        if CommandLine.arguments.contains("--demo-code") {
+            let id = container.windowRegistry.createMemo()
+            container.windowRegistry.performToolbarCommand(.block(.codeBlock), in: id)
+            container.windowRegistry.insertText("let x = 1", in: id)
+            container.windowRegistry.simulateReturnKey(in: id)
+            container.windowRegistry.insertText("print(x)  // 상자 안", in: id)
+        }
+
+        // `--demo-table` 로 실행하면 표를 넣은 메모를 띄운다. 바탕 띠와 칸 이동을 눈으로 확인한다 (MD-14).
+        if CommandLine.arguments.contains("--demo-table") {
+            let id = container.windowRegistry.createMemo()
+            container.windowRegistry.performToolbarCommand(.block(.tableRow), in: id)
+            container.windowRegistry.insertText("월", in: id)
+            container.windowRegistry.simulateTabKey(in: id)
+            container.windowRegistry.insertText("할 일", in: id)
+            container.windowRegistry.simulateTabKey(in: id)
+            container.windowRegistry.insertText("9월", in: id)
+            container.windowRegistry.simulateTabKey(in: id)
+            container.windowRegistry.insertText("메모앱 마무리", in: id)
+        }
+
         if CommandLine.arguments.contains("--show-list") {
             container.listWindow.show()
         }

@@ -19,15 +19,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let preferences: AppPreferences
     private let listWindow: MemoListWindowController
 
-    private let memoryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let memoryItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var hoverOpaqueItem: NSMenuItem?
-    private let syncStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var autoEmptyTrashItem: NSMenuItem?
+    private var rememberLastSizeItem: NSMenuItem?
+    private let syncStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var autoSyncItem: NSMenuItem?
     private var launchAtLoginItem: NSMenuItem?
     private let syncCoordinator: SyncCoordinator
     private let fontMenu = NSMenu()
     private let fontSizeMenu = NSMenu()
     private let memoSizeMenu = NSMenu()
+    private let toolbarMenu = NSMenu()
 
     init(
         windowRegistry: WindowRegistry,
@@ -74,10 +77,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         memoSizeItem.submenu = memoSizeMenu
         menu.addItem(memoSizeItem)
 
+        let rememberItem = item(
+            title: "새 메모를 마지막으로 맞춘 크기로",
+            action: #selector(toggleRememberLastMemoSize),
+            key: ""
+        )
+        rememberItem.toolTip = "끄면 '새 메모 기본 크기'에서 고른 크기로만 열립니다"
+        rememberLastSizeItem = rememberItem
+        menu.addItem(rememberItem)
+
         let loginItem = item(title: "로그인할 때 자동 실행", action: #selector(toggleLaunchAtLogin), key: "")
         loginItem.toolTip = "메뉴바에 늘 떠 있게 합니다"
         launchAtLoginItem = loginItem
         menu.addItem(loginItem)
+
+        let toolbarItem = NSMenuItem(title: "서식 막대", action: nil, keyEquivalent: "")
+        toolbarItem.submenu = toolbarMenu
+        toolbarItem.toolTip = "메모 창의 서식 버튼 줄을 어디에 둘지 정합니다"
+        menu.addItem(toolbarItem)
 
         let hoverItem = item(title: "마우스 올리면 또렷하게", action: #selector(toggleHoverOpaque), key: "")
         hoverItem.toolTip = "투명하게 둔 메모를 읽을 때만 또렷해집니다"
@@ -91,6 +108,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(item(title: "메모 목록…", action: #selector(showList), key: "l"))
 
+        let trashItem = item(
+            title: "휴지통 \(AppPreferences.trashRetentionDays)일 지나면 자동 비우기",
+            action: #selector(toggleAutoEmptyTrash),
+            key: ""
+        )
+        trashItem.toolTip = "끄면 직접 비울 때까지 휴지통에 남습니다"
+        autoEmptyTrashItem = trashItem
+        menu.addItem(trashItem)
+
         let backupItem = NSMenuItem(title: "백업", action: nil, keyEquivalent: "")
         backupItem.submenu = buildBackupMenu()
         menu.addItem(backupItem)
@@ -100,7 +126,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // 메모리 최소화가 제1 요구사항이므로 사용량을 항상 확인할 수 있게 노출한다 (§4-5).
-        memoryItem.isEnabled = false
         menu.addItem(memoryItem)
         menu.addItem(.separator())
 
@@ -112,6 +137,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         buildFontSizeMenu()
         buildMemoSizeMenu()
+        buildToolbarMenu()
         return menu
     }
 
@@ -230,7 +256,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(auto)
         menu.addItem(.separator())
 
-        syncStatusItem.isEnabled = false
         menu.addItem(syncStatusItem)
         return menu
     }
@@ -238,9 +263,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private func refreshSyncMenuState() {
         autoSyncItem?.state = preferences.autoSyncEnabled ? .on : .off
         if syncCoordinator.isAvailable {
-            syncStatusItem.title = syncCoordinator.status.menuText
+            setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
         } else {
-            syncStatusItem.title = "iCloud Drive가 꺼져 있습니다"
+            setInfoTitle(syncStatusItem, "iCloud Drive가 꺼져 있습니다")
             autoSyncItem?.isEnabled = false
         }
     }
@@ -272,36 +297,82 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(sectionHeader("메모에서 / 를 입력하면 아래 목록이 열립니다"))
         for command in SlashCommandCatalog.standard {
-            let shortcut = command.shortcut.isEmpty ? "" : "   \(command.shortcut)"
-            menu.addItem(disabledItem(title: "/\(command.title)\(shortcut)"))
+            menu.addItem(infoItem("/\(command.title)", detail: command.shortcut))
         }
 
         menu.addItem(.separator())
         menu.addItem(sectionHeader("글자 서식은 기호로 감쌉니다"))
         for hint in SlashCommandCatalog.inlineHints {
-            menu.addItem(disabledItem(title: "\(hint.label)   \(hint.shortcut)"))
+            menu.addItem(infoItem(hint.label, detail: hint.shortcut))
         }
 
         menu.addItem(.separator())
+        menu.addItem(sectionHeader("메모 창의 서식 막대"))
+        menu.addItem(infoItem("윗줄", detail: "제목 · 목록 · 체크박스 · 인용 · 구분선"))
+        menu.addItem(infoItem("아랫줄", detail: "굵게 · 기울임 · 취소선 · 글자 색 · 형광펜 · 코드 · 들여쓰기 · 글자 크기"))
+        menu.addItem(infoItem("자리 바꾸기", detail: "메뉴 → 서식 막대"))
+
+        menu.addItem(.separator())
         menu.addItem(sectionHeader("목록에서"))
-        menu.addItem(disabledItem(title: "엔터   다음 항목 이어가기"))
-        menu.addItem(disabledItem(title: "빈 항목에서 엔터   목록 빠져나오기"))
-        menu.addItem(disabledItem(title: "Tab / Shift+Tab   단계 내리기 / 올리기"))
-        menu.addItem(disabledItem(title: "체크박스 클릭   체크 토글"))
+        menu.addItem(infoItem("엔터", detail: "다음 항목 이어가기"))
+        menu.addItem(infoItem("빈 항목에서 엔터", detail: "목록 빠져나오기"))
+        menu.addItem(infoItem("Tab / Shift+Tab", detail: "단계 내리기 / 올리기"))
+        menu.addItem(infoItem("체크박스 클릭", detail: "체크 토글"))
         return menu
     }
 
+    /// 묶음 제목. 시스템 구역 제목은 흐린 회색이라 반투명 메뉴에서 잘 안 읽힌다.
+    /// 본문 색 그대로, 굵게만 해서 제목임을 드러낸다.
     private func sectionHeader(_ title: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        item.attributedTitle = NSAttributedString(
+        NSMenuItem.info(NSAttributedString(
             string: title,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .small), weight: .bold),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        ), rowHeight: 24)
+    }
+
+    /// 누를 수 없는 안내 줄 (MenuInfoView 참고).
+    /// 이름은 조금 굵게, 설명은 보통 굵기로 — 둘 다 본문 색이라 흐려지지 않는다. 설명은 탭으로 줄을 맞춘다.
+    private func infoItem(_ label: String, detail: String = "") -> NSMenuItem {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.tabStops = [NSTextTab(textAlignment: .left, location: Self.infoDetailColumn)]
+
+        let size = NSFont.systemFontSize
+        let text = NSMutableAttributedString(
+            string: label,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: size, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraph,
             ]
         )
-        return item
+        if !detail.isEmpty {
+            text.append(NSAttributedString(
+                string: "\t" + detail,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: size),
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: paragraph,
+                ]
+            ))
+        }
+        return NSMenuItem.info(text)
+    }
+
+    /// 안내 줄에서 설명이 시작하는 자리. 가장 긴 이름("Tab / Shift+Tab")이 들어가는 폭이다.
+    private static let infoDetailColumn: CGFloat = 130
+
+    /// 상태 줄(메모리·동기화)도 안내 줄처럼 또렷하게 그린다.
+    private func setInfoTitle(_ item: NSMenuItem, _ title: String) {
+        item.setInfoText(NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        ))
     }
 
     // MARK: - 글꼴 (TXT-02)
@@ -315,9 +386,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         fontMenu.addItem(.separator())
 
         // 한글이 표시되는 글꼴만 올린다. 전체 목록은 대부분 한글이 깨져 고를 이유가 없다.
-        let header = NSMenuItem(title: "한글 글꼴", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        fontMenu.addItem(header)
+        fontMenu.addItem(sectionHeader("한글 글꼴"))
 
         for family in FontResolver.koreanCapableFamilies {
             let menuItem = item(title: family, action: #selector(selectFont(_:)), key: "")
@@ -363,6 +432,32 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    // MARK: - 서식 막대 자리 (FMT-01, FMT-02)
+
+    private func buildToolbarMenu() {
+        toolbarMenu.removeAllItems()
+        for position in FormatToolbarPosition.allCases {
+            let menuItem = item(title: position.label, action: #selector(selectToolbarPosition(_:)), key: "")
+            menuItem.representedObject = position.rawValue
+            toolbarMenu.addItem(menuItem)
+        }
+    }
+
+    private func refreshToolbarMenuState() {
+        for menuItem in toolbarMenu.items {
+            guard let raw = menuItem.representedObject as? String else { continue }
+            menuItem.state = raw == preferences.formatToolbarPosition.rawValue ? .on : .off
+        }
+    }
+
+    @objc private func selectToolbarPosition(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let position = FormatToolbarPosition(rawValue: raw)
+        else { return }
+        preferences.formatToolbarPosition = position
+        windowRegistry.applyPreferencesToOpenWindows()
+    }
+
     // MARK: - 새 메모 기본 크기 (SET-01)
 
     private func buildMemoSizeMenu() {
@@ -406,21 +501,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return menuItem
     }
 
-    private func disabledItem(title: String) -> NSMenuItem {
-        let menuItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        menuItem.isEnabled = false
-        return menuItem
-    }
-
     /// 메뉴를 열 때마다 현재 상태를 갱신한다.
     func menuWillOpen(_ menu: NSMenu) {
         guard menu !== fontMenu else { return }
-        memoryItem.title = "메모리 \(MemoryReporter.formattedFootprint())"
+        setInfoTitle(memoryItem, "메모리 \(MemoryReporter.formattedFootprint())"
             + "  ·  열린 창 \(windowRegistry.openCount)개"
-            + "  ·  전체 \(store.summaries.count)개"
+            + "  ·  전체 \(store.summaries.count)개")
         refreshFontSizeMenuState()
         refreshMemoSizeMenuState()
+        refreshToolbarMenuState()
         hoverOpaqueItem?.state = preferences.hoverOpaque ? .on : .off
+        autoEmptyTrashItem?.state = preferences.autoEmptyTrash ? .on : .off
+        rememberLastSizeItem?.state = preferences.rememberLastMemoSize ? .on : .off
+        if let last = preferences.lastMemoSize {
+            rememberLastSizeItem?.title = "새 메모를 마지막으로 맞춘 크기로  (지금 \(Int(last.width)) × \(Int(last.height)))"
+        }
         refreshSyncMenuState()
         launchAtLoginItem?.state = LaunchAtLoginService.isEnabled ? .on : .off
         if LaunchAtLoginService.isBlockedBySystemSettings {
@@ -434,6 +529,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             alert.messageText = "자동 실행을 설정하지 못했습니다"
             alert.informativeText = error.localizedDescription
             alert.runModal()
+        }
+    }
+
+    @objc private func toggleRememberLastMemoSize() {
+        preferences.rememberLastMemoSize.toggle()
+    }
+
+    @objc private func toggleAutoEmptyTrash() {
+        preferences.autoEmptyTrash.toggle()
+        // 다시 켰다면 그동안 기한이 지난 것을 바로 정리한다. 다음 정기 확인까지 기다릴 까닭이 없다.
+        if preferences.autoEmptyTrash {
+            store.emptyTrash(olderThan: AppPreferences.trashRetentionDays)
+            listWindow.refreshIfOpen()
         }
     }
 
