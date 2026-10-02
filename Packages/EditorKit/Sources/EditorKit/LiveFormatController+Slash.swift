@@ -102,6 +102,13 @@ extension LiveFormatController {
     public func applySlashCommand(_ command: SlashCommand) {
         guard let textView, let textStorage = textView.textStorage else { return }
 
+        // 표는 한 줄의 서식이 아니라 여러 줄짜리 뼈대다. 지운 자리에 통째로 넣는다 (MD-14).
+        if command.block == .tableRow {
+            removeTypedSlashCommand(textView: textView, textStorage: textStorage)
+            insertTable()
+            return
+        }
+
         let text = textStorage.string as NSString
         let caret = textView.selectedRange()
         let lineRange = text.lineRange(for: NSRange(location: min(caret.location, text.length), length: 0))
@@ -147,5 +154,31 @@ extension LiveFormatController {
         textView.setSelectedRange(NSRange(location: min(newCaret, (textStorage.string as NSString).length), length: 0))
         textView.resetTypingAttributes(theme: currentTheme, textAlpha: currentTextAlpha, block: command.block)
         textView.didChangeText()
+    }
+
+    /// 입력한 `/명령` 글자만 지운다.
+    /// 줄의 서식을 바꾸는 대신 무언가를 넣는 명령(표 등)이 쓴다.
+    private func removeTypedSlashCommand(textView: MemoTextView, textStorage: NSTextStorage) {
+        let text = textStorage.string as NSString
+        let caret = textView.selectedRange()
+        let lineRange = text.lineRange(for: NSRange(location: min(caret.location, text.length), length: 0))
+        let caretInLine = caret.location - lineRange.location
+        let lineText = text.substring(with: lineRange) as NSString
+        let typed = lineText.substring(to: caretInLine)
+
+        guard let slashIndex = typed.lastIndex(of: "/") else { return }
+        let slashOffset = typed.distance(from: typed.startIndex, to: slashIndex)
+        let removeLocation = lineRange.location + (typed as NSString).substring(to: slashOffset).utf16.count
+        let removeRange = NSRange(location: removeLocation, length: caret.location - removeLocation)
+        guard removeRange.length > 0, NSMaxRange(removeRange) <= text.length else { return }
+        guard textView.shouldChangeText(in: removeRange, replacementString: "") else { return }
+
+        beginFormatting()
+        defer { endFormatting() }
+
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(in: removeRange, with: "")
+        textStorage.endEditing()
+        textView.setSelectedRange(NSRange(location: removeRange.location, length: 0))
     }
 }

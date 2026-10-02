@@ -32,13 +32,13 @@ public enum AttributedTextBridge {
         if !prefix.isEmpty {
             result.append(NSAttributedString(
                 string: prefix,
-                attributes: attributes(block: line.block, inline: [], theme: theme, textAlpha: textAlpha)
+                attributes: attributes(block: line.block, span: StyledSpan(text: ""), theme: theme, textAlpha: textAlpha)
             ))
         }
         for span in line.spans {
             result.append(NSAttributedString(
                 string: span.text,
-                attributes: attributes(block: line.block, inline: span.styles, theme: theme, textAlpha: textAlpha)
+                attributes: attributes(block: line.block, span: span, theme: theme, textAlpha: textAlpha)
             ))
         }
         // 블록 종류를 텍스트에 실어 둔다. 저장할 때 이 값으로 마크다운 기호를 되살린다.
@@ -50,46 +50,87 @@ public enum AttributedTextBridge {
     public static func visiblePrefix(for block: BlockStyle) -> String {
         switch block {
         case .bullet(let indent):
-            return String(repeating: "\t", count: indent) + "• "
+            // 단계마다 다른 기호를 쓴다 — • / ◦ / ▪. 번호 목록의 1. / a. / i.와 같은 방식이다.
+            // 모두 한 글자라 표식 길이가 단계에 따라 달라지지 않는다.
+            return String(repeating: "\t", count: indent) + bulletSymbol(forIndent: indent) + " "
         case .ordered(let indent, let number):
-            return String(repeating: "\t", count: indent) + "\(number). "
+            // 단계마다 다른 꼴을 쓴다 — 1. / a. / i. (MD-03).
+            return String(repeating: "\t", count: indent)
+                + OrderedListMarker.text(number: number, indent: indent) + " "
         case .checkbox(let indent, let checked):
             return String(repeating: "\t", count: indent) + (checked ? "☑ " : "☐ ")
         case .quote:
             return "❝ "
         case .divider:
             return "──────────"
-        case .heading, .paragraph:
+        case .heading, .paragraph, .codeBlock, .tableRow:
             return ""
         }
     }
 
+    /// 글머리 기호. 네 번째 단계부터는 처음 기호로 돌아간다.
+    public static func bulletSymbol(forIndent indent: Int) -> String {
+        let symbols = ["•", "◦", "▪"]
+        return symbols[max(0, indent) % symbols.count]
+    }
+
+    /// `span`의 글자는 쓰지 않고 서식(굵게·색…)만 읽는다.
     private static func attributes(
         block: BlockStyle,
-        inline: InlineStyleTag,
+        span: StyledSpan,
         theme: EditorTheme,
         textAlpha: Double
     ) -> [NSAttributedString.Key: Any] {
+        let inline = span.styles
         let font = theme.font(for: block, inline: inline)
 
-        var color = theme.textColor.withAlphaComponent(textAlpha)
+        var alpha = textAlpha
         if case .quote = block {
-            color = color.withAlphaComponent(textAlpha * 0.7)
+            alpha *= 0.7
         }
+        let color = InlineColorPalette.foreground(hex: span.textColor, theme: theme, alpha: alpha)
 
         var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: color,
         ]
+
+        // 표도 코드 박스와 같은 방식으로 줄 뒤에 띠를 그린다 (MD-14).
+        if case .tableRow = block {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.firstLineHeadIndent = Self.codeBlockInset.width
+            paragraph.headIndent = Self.codeBlockInset.width
+            paragraph.tailIndent = -Self.codeBlockInset.width
+            attributes[.paragraphStyle] = paragraph
+        }
+
+        // 코드 박스는 상자 안에 들어간 것처럼 좌우를 들여 쓴다.
+        // 상자 자체는 MemoLayoutManager가 글자 뒤에 그린다 (MD-10).
+        if case .codeBlock = block {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.firstLineHeadIndent = Self.codeBlockInset.width
+            paragraph.headIndent = Self.codeBlockInset.width
+            paragraph.tailIndent = -Self.codeBlockInset.width
+            attributes[.paragraphStyle] = paragraph
+        }
         if inline.contains(.strikethrough) {
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
         if inline.contains(.highlight) {
-            attributes[.backgroundColor] = NSColor.systemYellow.withAlphaComponent(0.45)
+            attributes[.backgroundColor] = InlineColorPalette.highlightBackground(hex: span.highlightColor)
+            if let hex = span.highlightColor {
+                attributes[.memoHighlightColor] = hex
+            }
+        }
+        if let hex = span.textColor {
+            attributes[.memoTextColor] = hex
         }
         attributes[.memoInlineStyle] = inline.rawValue
         return attributes
     }
+
+    /// 코드 상자 안쪽 여백. 그리는 쪽과 글자를 미는 쪽이 같은 값을 써야 어긋나지 않는다.
+    public static let codeBlockInset = NSSize(width: 10, height: 2)
 
     // MARK: - 되돌리기 (화면 → 서식 표현)
 
@@ -135,14 +176,18 @@ public enum AttributedTextBridge {
         guard contentRange.length > 0 else { return StyledLine(block: block, spans: []) }
 
         var spans: [StyledSpan] = []
-        attributed.enumerateAttribute(.memoInlineStyle, in: contentRange) { value, subrange, _ in
-            let styles = InlineStyleTag(rawValue: (value as? Int) ?? 0)
-            let text = (attributed.string as NSString).substring(with: subrange)
-            if var last = spans.last, last.styles == styles {
-                last.text += text
+        attributed.enumerateAttributes(in: contentRange) { attributes, subrange, _ in
+            let span = StyledSpan(
+                text: (attributed.string as NSString).substring(with: subrange),
+                styles: InlineStyleTag(rawValue: (attributes[.memoInlineStyle] as? Int) ?? 0),
+                textColor: attributes[.memoTextColor] as? String,
+                highlightColor: attributes[.memoHighlightColor] as? String
+            )
+            if var last = spans.last, last.hasSameFormat(as: span) {
+                last.text += span.text
                 spans[spans.count - 1] = last
             } else {
-                spans.append(StyledSpan(text: text, styles: styles))
+                spans.append(span)
             }
         }
         return StyledLine(block: block, spans: spans)
@@ -166,4 +211,8 @@ public extension NSAttributedString.Key {
     static let memoBlockStyle = NSAttributedString.Key("MemoBlockStyle")
     /// 이 구간의 글자 서식 비트.
     static let memoInlineStyle = NSAttributedString.Key("MemoInlineStyle")
+    /// 이 구간의 글자 색 ("#RRGGBB"). 없으면 테마 색.
+    static let memoTextColor = NSAttributedString.Key("MemoTextColor")
+    /// 이 구간의 형광펜 색 ("#RRGGBB"). 형광이 켜져 있는데 이 값이 없으면 기본 노랑.
+    static let memoHighlightColor = NSAttributedString.Key("MemoHighlightColor")
 }

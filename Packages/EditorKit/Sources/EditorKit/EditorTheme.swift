@@ -39,8 +39,9 @@ public struct EditorTheme: Sendable {
         let size = fontSize(for: block)
 
         // 코드는 글자 폭이 일정해야 읽히므로 선택한 글꼴과 무관하게 고정폭을 쓴다.
-        if inline.contains(.code) {
-            return NSFont.monospacedSystemFont(ofSize: size * 0.95, weight: .regular)
+        // 크기는 본문보다 한 단계(1pt) 작게 잡는다 — 고정폭 글꼴은 같은 크기에서 더 커 보인다.
+        if inline.contains(.code) || block == .codeBlock {
+            return FontResolver.monospacedFont(size: max(9, size - 1))
         }
 
         var traits: NSFontTraitMask = []

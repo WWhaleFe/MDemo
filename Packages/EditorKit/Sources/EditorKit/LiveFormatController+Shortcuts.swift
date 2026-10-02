@@ -43,7 +43,9 @@ extension LiveFormatController {
     // MARK: - 글자 서식 (KEY-01, 02, 04, 05)
 
     /// 고른 구간의 서식을 켜고 끈다. 고른 것이 없으면 다음에 칠 글자에 적용된다.
-    func toggleInlineStyle(_ tag: InlineStyleTag) {
+    ///
+    /// 단축키와 서식 막대가 같은 길을 쓴다 — 결과가 갈라지지 않게 진입점을 하나로 둔다.
+    public func toggleInlineStyle(_ tag: InlineStyleTag) {
         guard let textView, let textStorage = textView.textStorage else { return }
 
         let selection = textView.selectedRange()
@@ -80,8 +82,13 @@ extension LiveFormatController {
         textView.typingAttributes[.font] = currentTheme.font(for: block, inline: updated)
         textView.typingAttributes[.strikethroughStyle] =
             updated.contains(.strikethrough) ? NSUnderlineStyle.single.rawValue : 0
-        textView.typingAttributes[.backgroundColor] =
-            updated.contains(.highlight) ? NSColor.systemYellow.withAlphaComponent(0.45) : NSColor.clear
+        if updated.contains(.highlight) {
+            let hex = textView.typingAttributes[.memoHighlightColor] as? String
+            textView.typingAttributes[.backgroundColor] = InlineColorPalette.highlightBackground(hex: hex)
+        } else {
+            textView.typingAttributes[.backgroundColor] = NSColor.clear
+            textView.typingAttributes[.memoHighlightColor] = nil
+        }
     }
 
     private func isEntireRange(_ range: NSRange, styledWith tag: InlineStyleTag, in textStorage: NSTextStorage) -> Bool {
@@ -111,16 +118,111 @@ extension LiveFormatController {
         }
 
         if styles.contains(.highlight) {
-            textStorage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.45), range: range)
+            // 구간 안에 형광펜 색이 여럿일 수 있다. 조각마다 제 색을 칠한다.
+            textStorage.enumerateAttribute(.memoHighlightColor, in: range) { value, subrange, _ in
+                textStorage.addAttribute(
+                    .backgroundColor,
+                    value: InlineColorPalette.highlightBackground(hex: value as? String),
+                    range: subrange
+                )
+            }
         } else {
             textStorage.removeAttribute(.backgroundColor, range: range)
+            textStorage.removeAttribute(.memoHighlightColor, range: range)
         }
+    }
+
+    // MARK: - 글자 색 · 형광펜 색
+
+    /// 고른 글자의 색을 바꾼다. nil이면 기본 글자색으로 되돌린다.
+    /// 고른 것이 없으면 다음에 칠 글자에 적용된다.
+    public func setTextColor(_ hex: String?) {
+        guard let textView, let textStorage = textView.textStorage else { return }
+        let hex = InlineColor.normalized(hex)
+
+        let selection = textView.selectedRange()
+        guard selection.length > 0 else {
+            textView.typingAttributes[.memoTextColor] = hex
+            textView.typingAttributes[.foregroundColor] = foregroundColor(hex: hex, block: blockAtCaret())
+            return
+        }
+        guard textView.shouldChangeText(in: selection, replacementString: nil) else { return }
+
+        beginFormatting()
+        defer { endFormatting() }
+
+        textStorage.beginEditing()
+        // 줄마다 블록이 다르다(인용은 흐리게, 체크된 항목은 더 흐리게). 줄 단위로 색을 입힌다.
+        textStorage.enumerateAttribute(.memoBlockStyle, in: selection) { value, subrange, _ in
+            let block = (value as? BlockStyleBox)?.value ?? .paragraph
+            if let hex {
+                textStorage.addAttribute(.memoTextColor, value: hex, range: subrange)
+            } else {
+                textStorage.removeAttribute(.memoTextColor, range: subrange)
+            }
+            textStorage.addAttribute(.foregroundColor, value: foregroundColor(hex: hex, block: block), range: subrange)
+        }
+        textStorage.endEditing()
+
+        textView.didChangeText()
+    }
+
+    /// 고른 글자에 형광펜을 칠한다. `hex`가 nil이면 기본 노랑.
+    public func setHighlightColor(_ hex: String?) {
+        applyHighlight(enabled: true, hex: InlineColor.normalized(hex))
+    }
+
+    /// 고른 글자의 형광펜을 지운다.
+    public func removeHighlight() {
+        applyHighlight(enabled: false, hex: nil)
+    }
+
+    private func applyHighlight(enabled: Bool, hex: String?) {
+        guard let textView, let textStorage = textView.textStorage else { return }
+
+        let selection = textView.selectedRange()
+        guard selection.length > 0 else {
+            let current = InlineStyleTag(rawValue: (textView.typingAttributes[.memoInlineStyle] as? Int) ?? 0)
+            let updated = enabled ? current.union(.highlight) : current.subtracting(.highlight)
+            textView.typingAttributes[.memoInlineStyle] = updated.rawValue
+            textView.typingAttributes[.memoHighlightColor] = enabled ? hex : nil
+            textView.typingAttributes[.backgroundColor] =
+                enabled ? InlineColorPalette.highlightBackground(hex: hex) : NSColor.clear
+            return
+        }
+        guard textView.shouldChangeText(in: selection, replacementString: nil) else { return }
+
+        beginFormatting()
+        defer { endFormatting() }
+
+        textStorage.beginEditing()
+        if enabled, let hex {
+            textStorage.addAttribute(.memoHighlightColor, value: hex, range: selection)
+        } else {
+            textStorage.removeAttribute(.memoHighlightColor, range: selection)
+        }
+        textStorage.enumerateAttribute(.memoInlineStyle, in: selection) { value, subrange, _ in
+            let current = InlineStyleTag(rawValue: (value as? Int) ?? 0)
+            let updated = enabled ? current.union(.highlight) : current.subtracting(.highlight)
+            applyInlineAttributes(updated, to: subrange, in: textStorage)
+        }
+        textStorage.endEditing()
+
+        textView.didChangeText()
+    }
+
+    /// 그 줄에 맞는 글자색. 인용은 흐리게, 체크된 항목은 더 흐리게 (CHK-02).
+    func foregroundColor(hex: String?, block: BlockStyle) -> NSColor {
+        var alpha = currentTextAlpha
+        if case .quote = block { alpha *= 0.7 }
+        if case .checkbox(_, true) = block { alpha *= 0.45 }
+        return InlineColorPalette.foreground(hex: hex, theme: currentTheme, alpha: alpha)
     }
 
     // MARK: - 블록 서식 (KEY-06, KEY-07)
 
     /// 현재 줄을 그 블록으로 바꾼다. 이미 같은 블록이면 본문으로 되돌린다.
-    func toggleBlock(_ block: BlockStyle) {
+    public func toggleBlock(_ block: BlockStyle) {
         guard let textView, let textStorage = textView.textStorage else { return }
 
         let text = textStorage.string as NSString

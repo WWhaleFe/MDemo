@@ -18,7 +18,8 @@ public final class MemoTextView: NSTextView {
     /// 이 결정을 바꾸려면 여기 한 곳만 고치면 된다 (설계서 §1 기술 스택).
     public static func makeTextKit1(frame: NSRect) -> MemoTextView {
         let textStorage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
+        // 코드 박스의 상자를 그리려면 줄 조각을 아는 레이아웃 매니저가 필요하다 (MD-10).
+        let layoutManager = MemoLayoutManager()
         textStorage.addLayoutManager(layoutManager)
 
         let container = NSTextContainer(size: NSSize(width: frame.width, height: .greatestFiniteMagnitude))
@@ -52,11 +53,34 @@ public final class MemoTextView: NSTextView {
     }
 
     /// 텍스트 알파 적용 (OPA-02). 창 전체 알파(window.alphaValue)는 건드리지 않는다.
+    ///
+    /// `textColor`에 넣으면 모든 글자가 한 색으로 덮인다 — 글자 색, 흐린 인용·체크 항목까지.
+    /// 그래서 글자마다 지금 색을 그대로 두고 진하기만 같은 비율로 바꾼다.
     public func applyTextAlpha(_ alpha: Double) {
+        let previous = currentTextAlpha
         currentTextAlpha = MemoMeta.clampTextAlpha(alpha)
-        let color = baseTextColor.withAlphaComponent(currentTextAlpha)
-        textColor = color
-        insertionPointColor = color
+        insertionPointColor = baseTextColor.withAlphaComponent(currentTextAlpha)
+
+        guard previous > 0, previous != currentTextAlpha else { return }
+        let ratio = currentTextAlpha / previous
+        func rescaled(_ color: NSColor) -> NSColor {
+            color.withAlphaComponent(min(1, color.alphaComponent * ratio))
+        }
+
+        if let textStorage, textStorage.length > 0 {
+            textStorage.beginEditing()
+            textStorage.enumerateAttribute(
+                .foregroundColor,
+                in: NSRange(location: 0, length: textStorage.length)
+            ) { value, range, _ in
+                guard let color = value as? NSColor else { return }
+                textStorage.addAttribute(.foregroundColor, value: rescaled(color), range: range)
+            }
+            textStorage.endEditing()
+        }
+        if let color = typingAttributes[.foregroundColor] as? NSColor {
+            typingAttributes[.foregroundColor] = rescaled(color)
+        }
     }
 
     public func applyBaseTextColor(_ color: NSColor) {
@@ -96,7 +120,7 @@ public final class MemoTextView: NSTextView {
     /// 앱이 그대로 종료된다. 그리기 경로를 아예 분리해 그런 겹침을 없앤다.
     private lazy var placeholderLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
-        label.textColor = NSColor.black.withAlphaComponent(0.28)
+        label.textColor = NSColor.black.withAlphaComponent(0.35)
         label.isEditable = false
         label.isSelectable = false
         label.drawsBackground = false
@@ -106,6 +130,16 @@ public final class MemoTextView: NSTextView {
     }()
 
     public var placeholderText: String = "" {
+        didSet { updatePlaceholder() }
+    }
+
+    /// 안내 문구에 쓸 글꼴.
+    ///
+    /// 편집기의 `font`를 그대로 쓰면 안 된다. 그 값은 창을 만든 직후에는 기본값(13pt)이었다가
+    /// 한 번이라도 입력이 오간 뒤에는 타이핑 속성의 글꼴(본문 크기)로 바뀐다.
+    /// 그래서 첫 화면의 안내만 작게 보이고, 썼다 지우면 커지는 어긋남이 생겼다.
+    /// 테마의 본문 글꼴을 여기에 못박아 두어 두 경우가 같은 크기로 보이게 한다.
+    public var placeholderFont: NSFont? {
         didSet { updatePlaceholder() }
     }
 
@@ -125,7 +159,7 @@ public final class MemoTextView: NSTextView {
         }
 
         placeholderLabel.stringValue = placeholderText
-        placeholderLabel.font = font ?? NSFont.systemFont(ofSize: 14)
+        placeholderLabel.font = placeholderFont ?? font ?? NSFont.systemFont(ofSize: 14)
         placeholderLabel.sizeToFit()
         placeholderLabel.setFrameOrigin(
             NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height)
@@ -197,6 +231,8 @@ public final class MemoTextView: NSTextView {
         let lines = MarkdownParser.parse(markdown)
         let attributed = AttributedTextBridge.attributedString(from: lines, theme: theme, textAlpha: textAlpha)
         textStorage?.setAttributedString(attributed)
+        // 새로 칠한 글자는 이 진하기로 그려져 있다. 다음 진하기 조절은 여기서부터 비율을 잰다.
+        currentTextAlpha = MemoMeta.clampTextAlpha(textAlpha)
         // 파일을 여는 것은 사용자의 편집이 아니므로 되돌리기 이력에서 제외한다.
         undoManager?.removeAllActions()
     }
@@ -210,6 +246,8 @@ public final class MemoTextView: NSTextView {
     /// 새로 입력하는 글자가 앞 글자의 서식을 물려받지 않게 한다.
     /// 제목 줄 끝에서 엔터를 치면 본문으로 돌아와야 한다 (TXT-05).
     public func resetTypingAttributes(theme: EditorTheme, textAlpha: Double, block: BlockStyle = .paragraph) {
+        // 안내 문구는 어떤 줄에 있든 본문 크기로 보여야 한다. `block`을 따르지 않는다.
+        placeholderFont = theme.font(for: .paragraph)
         typingAttributes = [
             .font: theme.font(for: block),
             .foregroundColor: theme.textColor.withAlphaComponent(textAlpha),

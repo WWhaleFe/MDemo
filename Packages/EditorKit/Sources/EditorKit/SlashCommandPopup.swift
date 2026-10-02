@@ -372,13 +372,17 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
             line.append(NSAttributedString(
                 string: keyword,
                 attributes: [
-                    .font: NSFont.systemFont(ofSize: 10, weight: isMatch ? .semibold : .regular),
-                    .foregroundColor: isMatch ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor,
+                    // 가장 흐린 회색(tertiary)은 반투명 팝업 위에서 거의 읽히지 않는다. 본문 색을 조금만 낮춘다.
+                    .font: NSFont.systemFont(ofSize: 11, weight: isMatch ? .semibold : .regular),
+                    .foregroundColor: isMatch ? NSColor.controlAccentColor : Self.hintColor,
                 ]
             ))
         }
         return line
     }
+
+    /// 보조 글자(검색어·단축키) 색. 제목보다 한 단계 연하지만, 배경 위에서 또렷이 읽히는 정도로 둔다.
+    private static let hintColor = NSColor.labelColor.withAlphaComponent(0.72)
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard commands.indices.contains(row) else { return nil }
@@ -408,8 +412,8 @@ final class SlashCommandPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // 몇 번 보다 보면 팝업을 열지 않고도 바로 치게 된다.
         if !command.shortcut.isEmpty {
             let shortcut = NSTextField(labelWithString: command.shortcut)
-            shortcut.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            shortcut.textColor = .tertiaryLabelColor
+            shortcut.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+            shortcut.textColor = Self.hintColor
             shortcut.alignment = .right
             shortcut.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(shortcut)

@@ -732,4 +732,220 @@ runner.test("들여쓴 체크박스도 단계가 보존된다 (CHK-03)") { t in
     }
 }
 
+runner.test("빈 메모 안내는 처음 열 때와 썼다 지운 뒤가 같은 크기다") { t in
+    MainActor.assumeIsolated {
+        // 창을 만드는 순서를 그대로 흉내 낸다 — 안내 문구를 먼저 걸고 테마를 나중에 입힌다.
+        let big = EditorTheme(baseFontSize: 24, textColor: .black)
+        let textView = MemoTextView.makeTextKit1(frame: NSRect(x: 0, y: 0, width: 300, height: 300))
+        textView.placeholderText = "/ 를 입력하면 서식 목록"
+        textView.loadMarkdown("", theme: big, textAlpha: 1.0)
+        textView.resetTypingAttributes(theme: big, textAlpha: 1.0)
+
+        let first = textView.placeholderFont?.pointSize
+        t.expectEqual(first, 24, "첫 화면의 안내가 본문 크기와 다르다: \(first.map(String.init) ?? "없음")")
+
+        // 한 글자 썼다가 지운 뒤에도 같아야 한다. 예전에는 이때만 커졌다.
+        textView.insertText("가", replacementRange: textView.selectedRange())
+        textView.setSelectedRange(NSRange(location: 0, length: (textView.string as NSString).length))
+        textView.delete(nil)
+        t.expectEqual(textView.placeholderFont?.pointSize, first, "썼다 지운 뒤 안내 크기가 달라졌다")
+        t.expect(textView.shouldShowPlaceholder, "빈 메모인데 안내가 보이지 않는다")
+    }
+}
+
+runner.test("단계를 내리면 그 단계에서 1번부터 다시 센다 (MD-03)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "1. 하나\n2. 둘\n3. 셋")
+
+        // 둘째 줄 끝에 커서를 두고 Tab.
+        let text = textView.string as NSString
+        let secondLine = text.range(of: "2. 둘")
+        textView.setSelectedRange(NSRange(location: NSMaxRange(secondLine), length: 0))
+        _ = controller.handleIndent(deeper: true)
+
+        // 화면에는 단계별 꼴로, 파일에는 표준 번호로.
+        t.expect(textView.string.contains("\ta. 둘"), "새 단계가 1번(a.)부터 시작하지 않았다:\n\(textView.string)")
+        t.expectEqual(textView.currentMarkdown(), "1. 하나\n  1. 둘\n2. 셋",
+                      "저장 결과가 어긋났다: \(textView.currentMarkdown())")
+    }
+}
+
+runner.test("단계를 올리면 윗 단계의 다음 번호를 이어받는다 (MD-03)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "1. 하나\n  1. 속\n  2. 속둘")
+
+        let text = textView.string as NSString
+        let target = text.range(of: "b. 속둘")
+        textView.setSelectedRange(NSRange(location: NSMaxRange(target), length: 0))
+        _ = controller.handleIndent(deeper: false)
+
+        t.expectEqual(textView.currentMarkdown(), "1. 하나\n  1. 속\n2. 속둘",
+                      "윗 단계로 올라온 항목이 이어지지 않았다: \(textView.currentMarkdown())")
+    }
+}
+
+runner.test("깊은 단계는 얕은 단계를 지날 때마다 새로 센다 (MD-03)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "1. 하나\n  1. 속\n2. 둘\n  5. 잘못된 번호")
+
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        controller.renumberOrderedList(
+            touching: 0,
+            textStorage: textView.textStorage!,
+            textView: textView
+        )
+
+        t.expectEqual(textView.currentMarkdown(), "1. 하나\n  1. 속\n2. 둘\n  1. 잘못된 번호",
+                      "두 번째 안쪽 목록이 1번부터 시작하지 않았다: \(textView.currentMarkdown())")
+    }
+}
+
+// MARK: - 코드 글꼴 (MD-09, MD-10)
+
+runner.test("코드는 고정폭 글꼴에 본문보다 1pt 작다 (MD-09, MD-10)") { t in
+    MainActor.assumeIsolated {
+        let big = EditorTheme(baseFontSize: 20, textColor: .black)
+        let body = big.font(for: .paragraph)
+        let codeBlock = big.font(for: .codeBlock)
+        let inlineCode = big.font(for: .paragraph, inline: .code)
+
+        t.expectEqual(body.pointSize, 20)
+        t.expectEqual(codeBlock.pointSize, 19, "코드 박스가 본문보다 1pt 작지 않다")
+        t.expectEqual(inlineCode.pointSize, 19, "인라인 코드가 본문보다 1pt 작지 않다")
+        t.expect(codeBlock.isFixedPitch, "코드가 고정폭 글꼴이 아니다: \(codeBlock.familyName ?? "?")")
+
+        // Consolas가 깔려 있으면 그것을, 없으면 대체 목록의 첫 번째를 쓴다.
+        let expected = FontResolver.preferredMonospacedFamilies.first { FontResolver.isAvailable($0) }
+        if let expected {
+            t.expectEqual(codeBlock.familyName, expected)
+        }
+    }
+}
+
+// MARK: - 표 (MD-14)
+
+runner.test("표를 넣으면 뼈대가 들어가고 커서는 첫 칸에 선다 (MD-14)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "")
+        controller.insertTable()
+
+        t.expectEqual(textView.currentMarkdown(), "| 항목 | 내용 |\n| --- | --- |\n|  |  |\n|  |  |",
+                      "표 뼈대가 저장 꼴과 다르다: \(textView.currentMarkdown())")
+        // 첫 칸의 안내 글자("항목")를 고른 상태여야, 이어 치면 그대로 갈아 끼워진다.
+        t.expectEqual(textView.selectedRange(), NSRange(location: 2, length: 2),
+                      "첫 칸의 안내 글자가 골라져 있지 않다: \(textView.selectedRange())")
+
+        textView.insertText("월", replacementRange: textView.selectedRange())
+        t.expect(textView.string.hasPrefix("| 월 |"), "이어 친 글자가 안내 글자를 갈아 끼우지 않았다: \(textView.string)")
+    }
+}
+
+runner.test("Tab으로 칸을 옮기고 마지막 칸에서는 행이 늘어난다 (MD-14)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "| A | B |\n| --- | --- |\n| 1 | 2 |")
+
+        // 첫 칸에 커서를 두고 Tab → 둘째 칸.
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+        _ = controller.handleIndent(deeper: true)
+        t.expectEqual(textView.selectedRange().location, 6, "둘째 칸으로 가지 않았다")
+
+        // 마지막 줄 마지막 칸에서 Tab → 새 행.
+        let text = textView.string as NSString
+        textView.setSelectedRange(NSRange(location: text.length - 2, length: 0))
+        _ = controller.handleIndent(deeper: true)
+        t.expectEqual(textView.currentMarkdown(),
+                      "| A | B |\n| --- | --- |\n| 1 | 2 |\n|  |  |",
+                      "행이 늘어나지 않았다: \(textView.currentMarkdown())")
+
+        // Shift+Tab은 앞 칸으로 되돌아간다.
+        let before = textView.selectedRange().location
+        _ = controller.handleIndent(deeper: false)
+        t.expect(textView.selectedRange().location < before, "앞 칸으로 돌아가지 않았다")
+    }
+}
+
+runner.test("표의 빈 행에서 엔터를 치면 표를 빠져나온다 (MD-14)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "| A | B |\n| --- | --- |\n|  |  |")
+
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length - 2, length: 0))
+        t.expect(controller.handleNewline(), "엔터를 가로채지 않았다")
+        t.expectEqual(textView.currentMarkdown(), "| A | B |\n| --- | --- |",
+                      "빈 행이 지워지지 않았다: \(textView.currentMarkdown())")
+    }
+}
+
+runner.test("표 안에서 엔터를 치면 같은 칸 수의 행이 이어진다 (MD-14)") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |")
+
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        t.expect(controller.handleNewline(), "엔터를 가로채지 않았다")
+        t.expectEqual(textView.currentMarkdown(),
+                      "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n|  |  |  |",
+                      "칸 수가 다른 행이 생겼다: \(textView.currentMarkdown())")
+    }
+}
+
+runner.test("한글 글꼴에도 기울임이 먹는다 (KEY-02)") { t in
+    let regular = theme.font(for: .paragraph)
+    let italic = theme.font(for: .paragraph, inline: .italic)
+    t.expect(FontResolver.isItalic(italic), "기울임 글꼴이 눕혀지지 않았다: \(italic)")
+    t.expect(!FontResolver.isItalic(regular), "기본 글꼴이 눕혀져 있다")
+    t.expectEqual(italic.pointSize, regular.pointSize, "기울이면서 글자 크기가 바뀌었다")
+    t.expect(FontResolver.isItalic(theme.font(for: .paragraph, inline: [.bold, .italic])), "굵게+기울임에서 기울임이 빠졌다")
+}
+
+runner.test("고른 글자에 글자 색을 입히면 파일에 색 태그로 남는다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "빨강 글자")
+        textView.setSelectedRange(NSRange(location: 0, length: 2))
+        controller.setTextColor("#D93025")
+        t.expectEqual(textView.currentMarkdown(), "<span style=\"color:#D93025\">빨강</span> 글자")
+
+        controller.setTextColor(nil)
+        t.expectEqual(textView.currentMarkdown(), "빨강 글자", "기본색으로 되돌리지 못했다")
+    }
+}
+
+runner.test("형광펜 색을 고르고 지울 수 있다") { t in
+    MainActor.assumeIsolated {
+        let (textView, controller) = makeEditor(loading: "형광 테스트")
+        textView.setSelectedRange(NSRange(location: 0, length: 2))
+        controller.setHighlightColor("#A7D3FF")
+        t.expectEqual(textView.currentMarkdown(), "<mark style=\"background:#A7D3FF\">형광</mark> 테스트")
+
+        controller.setHighlightColor(nil)
+        t.expectEqual(textView.currentMarkdown(), "==형광== 테스트", "기본 노랑은 ==로 남아야 한다")
+
+        controller.removeHighlight()
+        t.expectEqual(textView.currentMarkdown(), "형광 테스트")
+    }
+}
+
+runner.test("글자 투명도를 바꿔도 글자 색은 지켜진다 (OPA-02)") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "<span style=\"color:#1A73E8\">파랑</span>")
+        textView.applyTextAlpha(0.5)
+        textView.applyTextAlpha(1.0)
+        let color = textView.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        let blue = InlineColorPalette.color(fromHex: "#1A73E8")
+        t.expect(color?.usingColorSpace(.sRGB)?.blueComponent == blue?.usingColorSpace(.sRGB)?.blueComponent,
+                 "투명도를 바꾸자 글자 색이 사라졌다: \(String(describing: color))")
+        t.expectEqual(textView.currentMarkdown(), "<span style=\"color:#1A73E8\">파랑</span>")
+    }
+}
+
+runner.test("글머리 기호는 단계마다 다르게 보이고 파일에는 -로 남는다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "- 하나\n  - 둘\n    - 셋\n      - 넷")
+        let lines = textView.string.components(separatedBy: "\n")
+        t.expectEqual(lines[0], "• 하나")
+        t.expectEqual(lines[1], "\t◦ 둘")
+        t.expectEqual(lines[2], "\t\t▪ 셋")
+        t.expectEqual(lines[3], "\t\t\t• 넷", "네 번째 단계는 처음 기호로 돌아간다")
+        t.expectEqual(textView.currentMarkdown(), "- 하나\n  - 둘\n    - 셋\n      - 넷")
+    }
+}
+
 runner.finish()

@@ -15,6 +15,28 @@ public enum FontResolver {
         "AppleGothic",
     ]
 
+    /// 코드에 쓸 고정폭 글꼴 가족. 위에서부터 설치된 것을 찾아 쓴다.
+    ///
+    /// Consolas가 첫째다. 다만 Windows·Office 계열 글꼴이라 macOS에는 없는 경우가 많아,
+    /// 없으면 생김새가 가까운 순서로 내려간다.
+    public static let preferredMonospacedFamilies = [
+        "Consolas",
+        "Menlo",          // macOS 기본 고정폭
+        "SF Mono",
+        "Monaco",
+        "Courier New",
+    ]
+
+    /// 코드용 고정폭 글꼴 (MD-09, MD-10).
+    public static func monospacedFont(size: CGFloat) -> NSFont {
+        for family in preferredMonospacedFamilies {
+            if let font = NSFont(name: family, size: size) {
+                return font
+            }
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
     /// 실제로 쓸 기본 글꼴 가족. 하나도 없으면 nil(시스템 글꼴)을 뜻한다.
     public static func defaultFamily() -> String? {
         preferredFamilies.first { isAvailable($0) }
@@ -31,11 +53,45 @@ public enum FontResolver {
         for candidate in candidates {
             if let font = NSFont(name: candidate, size: size)
                 ?? NSFontManager.shared.font(withFamily: candidate, traits: [], weight: 5, size: size) {
-                return traits.isEmpty ? font : NSFontManager.shared.convert(font, toHaveTrait: traits)
+                return applying(traits, to: font)
             }
         }
-        let system = NSFont.systemFont(ofSize: size)
-        return traits.isEmpty ? system : NSFontManager.shared.convert(system, toHaveTrait: traits)
+        return applying(traits, to: NSFont.systemFont(ofSize: size))
+    }
+
+    /// 기울임 꼴이 없는 글꼴을 눕힐 기울기. 시스템의 기울임 꼴과 비슷한 약 12도다.
+    static let syntheticItalicSkew: CGFloat = 0.21
+
+    /// 굵게·기울임을 입힌다.
+    ///
+    /// 한글 글꼴(Apple SD Gothic Neo, 맑은 고딕 등)은 대부분 기울임 꼴이 없다.
+    /// 그런 글꼴에 기울임을 요청하면 시스템은 조용히 원래 글꼴을 돌려줘, 기울임이 먹지 않는다.
+    /// 그때는 글꼴 행렬로 글자를 직접 눕힌다.
+    private static func applying(_ traits: NSFontTraitMask, to base: NSFont) -> NSFont {
+        let manager = NSFontManager.shared
+        var font = base
+        // 한 번에 둘 다 요청하면 한쪽이 없을 때 둘 다 빠지는 경우가 있어 따로 입힌다.
+        if traits.contains(.boldFontMask) {
+            font = manager.convert(font, toHaveTrait: .boldFontMask)
+        }
+        guard traits.contains(.italicFontMask) else { return font }
+
+        let italic = manager.convert(font, toHaveTrait: .italicFontMask)
+        if manager.traits(of: italic).contains(.italicFontMask) {
+            return italic
+        }
+        // 글꼴 행렬은 크기까지 대신 정한다. 기울기만 넣으면 1pt 글꼴이 되므로 크기를 곱해 넣는다.
+        let size = font.pointSize
+        let descriptor = font.fontDescriptor.withMatrix(AffineTransform(
+            m11: size, m12: 0, m21: size * syntheticItalicSkew, m22: size, tX: 0, tY: 0
+        ))
+        return NSFont(descriptor: descriptor, size: size) ?? font
+    }
+
+    /// 글자가 눕혀져 그려지는지. 진짜 기울임 꼴이든, 행렬로 눕힌 것이든.
+    public static func isItalic(_ font: NSFont) -> Bool {
+        if NSFontManager.shared.traits(of: font).contains(.italicFontMask) { return true }
+        return font.matrix[2] != 0
     }
 
     /// 한글을 표시할 수 있는 설치 글꼴 목록. 글꼴 선택 메뉴에 쓴다.

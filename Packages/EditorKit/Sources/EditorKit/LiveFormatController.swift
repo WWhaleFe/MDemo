@@ -246,17 +246,15 @@ public final class LiveFormatController {
         let contentRange = NSRange(location: lineStart + prefixLength, length: contentLength)
         if checked {
             textStorage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: contentRange)
-            textStorage.addAttribute(
-                .foregroundColor,
-                value: currentTheme.textColor.withAlphaComponent(currentTextAlpha * 0.45),
-                range: contentRange
-            )
         } else {
             textStorage.removeAttribute(.strikethroughStyle, range: contentRange)
+        }
+        // 글자 색을 칠해 둔 곳은 그 색을 지킨 채 흐리기만 바꾼다.
+        textStorage.enumerateAttribute(.memoTextColor, in: contentRange) { value, subrange, _ in
             textStorage.addAttribute(
                 .foregroundColor,
-                value: currentTheme.textColor.withAlphaComponent(currentTextAlpha),
-                range: contentRange
+                value: foregroundColor(hex: value as? String, block: block),
+                range: subrange
             )
         }
     }
@@ -283,12 +281,18 @@ public final class LiveFormatController {
         if combined.contains(.strikethrough) {
             textStorage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: styledRange)
         }
+        if tag.contains(.highlight) {
+            // `==`로 친 형광은 기본 노랑이다. 앞 글자에서 물려받은 형광펜 색을 지운다.
+            textStorage.removeAttribute(.memoHighlightColor, range: styledRange)
+        }
         if combined.contains(.highlight) {
-            textStorage.addAttribute(
-                .backgroundColor,
-                value: NSColor.systemYellow.withAlphaComponent(0.45),
-                range: styledRange
-            )
+            textStorage.enumerateAttribute(.memoHighlightColor, in: styledRange) { value, subrange, _ in
+                textStorage.addAttribute(
+                    .backgroundColor,
+                    value: InlineColorPalette.highlightBackground(hex: value as? String),
+                    range: subrange
+                )
+            }
         }
 
         // 닫는 기호 뒤에 이어 쓰는 글자는 서식 없이 돌아가야 한다.
