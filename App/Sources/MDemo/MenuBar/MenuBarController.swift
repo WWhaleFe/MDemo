@@ -58,17 +58,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         updateChecker.onChange = { [weak self] in self?.refreshUpdateMenuState() }
     }
 
-    // MARK: - 업데이트 (GitHub 릴리스)
+    // MARK: - 버전 · 업데이트 (GitHub 릴리스)
+    //
+    // usagemeter와 같은 배치: 메인 메뉴 아래쪽, 종료 바로 위에 하위 메뉴 없이 둔다.
+    // 버전 / 확인 결과 / 업데이트 확인 / 최신 버전 다운로드 / 릴리스 페이지 열기.
 
     private let updateChecker: UpdateChecker
-    private var updateRootItem: NSMenuItem?
     private let updateStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var downloadUpdateItem: NSMenuItem?
     private var autoCheckUpdateItem: NSMenuItem?
 
-    private func buildUpdateMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
+    private func addUpdateSection(to menu: NSMenu) {
         menu.addItem(.info(NSAttributedString(
             string: "MDemo 버전 \(UpdateChecker.currentVersion) (빌드 \(UpdateChecker.currentBuild))",
             attributes: [
@@ -76,8 +76,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 .foregroundColor: NSColor.labelColor,
             ]
         )))
+        // 확인 결과 줄. 아직 확인하지 않았으면 감춘다.
         menu.addItem(updateStatusItem)
-        menu.addItem(.separator())
 
         let check = item(title: "업데이트 확인…", action: #selector(checkForUpdates), key: "")
         check.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
@@ -85,38 +85,48 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         let download = item(title: "최신 버전 다운로드", action: #selector(downloadUpdate), key: "")
         download.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
-        download.toolTip = "다운로드 폴더에 zip을 받고 Finder에서 보여 줍니다. 압축을 풀어 응용 프로그램으로 옮기면 설치됩니다."
+        download.toolTip = "최신 릴리스의 zip을 다운로드 폴더에 받고 Finder에서 보여 줍니다. 압축을 풀어 응용 프로그램으로 옮기면 설치됩니다."
         downloadUpdateItem = download
         menu.addItem(download)
 
-        menu.addItem(item(title: "릴리스 페이지 열기", action: #selector(openReleasesPage), key: ""))
-        menu.addItem(.separator())
+        let page = item(title: "릴리스 페이지 열기", action: #selector(openReleasesPage), key: "")
+        page.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
+        menu.addItem(page)
 
-        let auto = item(title: "자동으로 확인 (하루 한 번)", action: #selector(toggleAutoCheckUpdate), key: "")
+        let auto = item(title: "업데이트 자동 확인 (하루 한 번)", action: #selector(toggleAutoCheckUpdate), key: "")
         autoCheckUpdateItem = auto
         menu.addItem(auto)
-        return menu
     }
 
     private func refreshUpdateMenuState() {
-        updateStatusItem.setInfoText(NSAttributedString(
-            string: updateChecker.statusText,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
-                .foregroundColor: NSColor.labelColor,
-            ]
-        ))
-        downloadUpdateItem?.isEnabled = updateChecker.isUpdateAvailable
+        if let line = updateChecker.statusLine {
+            updateStatusItem.isHidden = false
+            updateStatusItem.setInfoText(NSAttributedString(
+                string: line,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                    .foregroundColor: NSColor.labelColor,
+                ]
+            ))
+        } else {
+            updateStatusItem.isHidden = true
+        }
+        downloadUpdateItem?.title = updateChecker.downloadItemTitle
+        downloadUpdateItem?.isEnabled = updateChecker.downloadState != .downloading
         autoCheckUpdateItem?.state = preferences.autoCheckUpdate ? .on : .off
-        updateRootItem?.title = updateChecker.isUpdateAvailable ? "업데이트  (새 버전 있음)" : "업데이트"
     }
 
     @objc private func checkForUpdates() {
         updateChecker.check(userInitiated: true)
     }
 
+    /// 받는 중이 아니면 언제든 누를 수 있다. 다 받았으면 Finder에서 다시 보여 주고, 실패했으면 릴리스 페이지를 연다.
     @objc private func downloadUpdate() {
-        updateChecker.downloadLatest()
+        switch updateChecker.downloadState {
+        case .done: updateChecker.revealDownload()
+        case .failed: NSWorkspace.shared.open(UpdateChecker.releasesPage)
+        default: updateChecker.downloadLatest()
+        }
     }
 
     @objc private func openReleasesPage() {
@@ -198,14 +208,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let syncItem = NSMenuItem(title: "iCloud 동기화", action: nil, keyEquivalent: "")
         syncItem.submenu = buildSyncMenu()
         menu.addItem(syncItem)
-        let updateItem = NSMenuItem(title: "업데이트", action: nil, keyEquivalent: "")
-        updateItem.submenu = buildUpdateMenu()
-        updateRootItem = updateItem
-        menu.addItem(updateItem)
         menu.addItem(.separator())
 
         // 메모리 최소화가 제1 요구사항이므로 사용량을 항상 확인할 수 있게 노출한다 (§4-5).
         menu.addItem(memoryItem)
+        menu.addItem(.separator())
+
+        addUpdateSection(to: menu)
         menu.addItem(.separator())
 
         menu.addItem(item(title: "종료", action: #selector(quit), key: "q"))

@@ -33,6 +33,10 @@ final class UpdateChecker: NSObject {
     private static let lastNotifiedKey = "update.lastNotifiedVersion"
 
     private(set) var state: State = .idle
+    /// 마지막으로 확인한 최신 릴리스의 zip 주소. 새 버전이 아니어도 "최신 버전 다운로드"에 쓴다.
+    private var latestZipURL: URL?
+    /// 확인이 끝난 뒤 이어서 할 일 (확인 전에 "최신 버전 다운로드"를 누른 경우).
+    private var afterCheck: (() -> Void)?
     private(set) var downloadState: DownloadState = .idle
     /// 상태가 바뀌면 부른다. 메뉴가 열려 있을 때 글자를 바로 고치기 위해 쓴다.
     var onChange: (() -> Void)?
@@ -71,8 +75,9 @@ final class UpdateChecker: NSObject {
     // MARK: - 확인
 
     /// `userInitiated`가 false면 새 버전이 있을 때만 알림을 띄운다 (같은 버전은 한 번만).
-    func check(userInitiated: Bool) {
+    func check(userInitiated: Bool, then completion: (() -> Void)? = nil) {
         guard state != .checking else { return }
+        afterCheck = completion
         setState(.checking)
 
         var request = URLRequest(url: Self.latestAPI, timeoutInterval: 15)
@@ -113,16 +118,22 @@ final class UpdateChecker: NSObject {
     }
 
     private func finishCheck(_ result: Result<Release, Error>, userInitiated: Bool) {
+        defer {
+            let next = afterCheck
+            afterCheck = nil
+            next?()
+        }
         switch result {
         case .failure(let error):
             setState(.failed(error.localizedDescription))
         case .success(let release):
             let latest = Self.normalize(release.tag_name)
+            let zip = release.assets.first { $0.browser_download_url.pathExtension == "zip" }?.browser_download_url
+            latestZipURL = zip
             guard Self.isNewer(latest, than: Self.currentVersion) else {
                 setState(.upToDate)
                 return
             }
-            let zip = release.assets.first { $0.browser_download_url.pathExtension == "zip" }?.browser_download_url
             setState(.available(version: latest, downloadURL: zip))
             if !userInitiated {
                 notifyOnce(version: latest)
@@ -149,13 +160,24 @@ final class UpdateChecker: NSObject {
 
     // MARK: - 내려받기
 
-    /// 최신 zip을 다운로드 폴더에 받고 Finder에서 보여 준다. 설치는 사용자가 한다.
+    /// 최신 릴리스의 zip을 다운로드 폴더에 받고 Finder에서 보여 준다. 설치는 사용자가 한다.
+    ///
+    /// 새 버전이 아니어도 받는다 (다시 설치하거나 다른 Mac에 옮길 때). 아직 확인 전이면 먼저 확인한다.
     func downloadLatest() {
-        guard case .available(_, let url?) = state else {
-            NSWorkspace.shared.open(Self.releasesPage)
+        guard downloadState != .downloading else { return }
+        guard let url = latestZipURL else {
+            if state == .checking { return }
+            check(userInitiated: true) { [weak self] in
+                guard let self else { return }
+                if self.latestZipURL != nil {
+                    self.downloadLatest()
+                } else {
+                    // 확인에 실패했거나 zip이 없는 릴리스다. 사용자가 직접 고르게 페이지를 연다.
+                    NSWorkspace.shared.open(Self.releasesPage)
+                }
+            }
             return
         }
-        guard downloadState != .downloading else { return }
         setDownloadState(.downloading)
 
         URLSession.shared.downloadTask(with: url) { [weak self] temporary, _, error in
@@ -224,26 +246,31 @@ final class UpdateChecker: NSObject {
         onChange?()
     }
 
-    /// 메뉴에 보일 한 줄 상태.
-    var statusText: String {
-        switch downloadState {
-        case .downloading: return "내려받는 중…"
-        case .done(let url): return "다운로드 폴더에 받았습니다: \(url.lastPathComponent)"
-        case .failed(let message): return "내려받지 못했습니다: \(message)"
-        case .idle: break
-        }
+    /// 받은 파일을 Finder에서 다시 보여 준다.
+    func revealDownload() {
+        guard case .done(let url) = downloadState else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// 메뉴의 확인 결과 줄. 아직 확인하지 않았으면 nil — 줄을 감춘다.
+    var statusLine: String? {
         switch state {
-        case .idle: return "아직 확인하지 않았습니다"
+        case .idle: return nil
         case .checking: return "확인하는 중…"
-        case .upToDate: return "최신 버전입니다"
-        case .available(let version, _): return "새 버전 \(version)이 있습니다"
-        case .failed(let message): return "확인하지 못했습니다: \(message)"
+        case .upToDate: return "✓ 최신 버전입니다"
+        case .available(let version, _): return "🔵 새 버전 v\(version)이 있습니다"
+        case .failed(let message): return "⚠️ 확인하지 못했습니다 (\(message))"
         }
     }
 
-    var isUpdateAvailable: Bool {
-        if case .available = state { return true }
-        return false
+    /// "최신 버전 다운로드" 항목 글자. 받는 과정을 그대로 보여 준다.
+    var downloadItemTitle: String {
+        switch downloadState {
+        case .idle: return "최신 버전 다운로드"
+        case .downloading: return "내려받는 중…"
+        case .done: return "다운로드 완료 — Finder에서 보기"
+        case .failed: return "내려받지 못했습니다 — 릴리스 페이지 열기"
+        }
     }
 }
 
