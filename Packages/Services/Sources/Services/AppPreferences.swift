@@ -106,6 +106,11 @@ public final class AppPreferences {
         didSet { store.set(autoEmptyTrash, forKey: Key.autoEmptyTrash) }
     }
 
+    /// GitHub 릴리스에서 새 버전을 저절로 확인할지. 켤 때와 하루에 한 번 확인한다.
+    public var autoCheckUpdate: Bool {
+        didSet { store.set(autoCheckUpdate, forKey: Key.autoCheckUpdate) }
+    }
+
     /// 휴지통 보관 기간(일).
     public static let trashRetentionDays = 30
 
@@ -135,6 +140,7 @@ public final class AppPreferences {
         static let autoSyncMinutes = "sync.autoMinutes"
         static let formatToolbarPosition = "memo.formatToolbarPosition"
         static let autoEmptyTrash = "trash.autoEmpty"
+        static let autoCheckUpdate = "update.autoCheck"
         static let rememberLastMemoSize = "memo.rememberLastSize"
         static let lastMemoWidth = "memo.lastWidth"
         static let lastMemoHeight = "memo.lastHeight"
@@ -154,6 +160,7 @@ public final class AppPreferences {
 
         // 저장된 값이 없으면 켜 둔다. 예전부터 30일이 지나면 비우던 동작 그대로다.
         self.autoEmptyTrash = store.object(forKey: Key.autoEmptyTrash) as? Bool ?? true
+        self.autoCheckUpdate = store.object(forKey: Key.autoCheckUpdate) as? Bool ?? true
 
         // 서식 막대는 위쪽이 기본이다. 글을 쓰는 자리(첫 줄) 바로 위에 있어야 눈이 덜 움직인다.
         self.formatToolbarPosition = FormatToolbarPosition(

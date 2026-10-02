@@ -19,6 +19,7 @@ final class AppContainer {
     let listWindow: MemoListWindowController
     let syncCoordinator: SyncCoordinator
     let hotkeys = GlobalHotkeyService()
+    let updateChecker: UpdateChecker
 
     init() {
         let repository: any MemoRepository
@@ -32,6 +33,7 @@ final class AppContainer {
         self.store = MemoStore(repository: repository)
         self.deviceState = DeviceStateStore(fileURL: DeviceStateStore.defaultFileURL())
         self.preferences = AppPreferences()
+        self.updateChecker = UpdateChecker(preferences: preferences)
 
         // 첫 실행에서는 이 화면에서 읽기 편한 값으로 시작한다.
         // 화면 밀도가 제각각이라 고정값을 쓰면 어느 화면에서는 반드시 너무 작거나 크다.

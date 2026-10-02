@@ -37,9 +37,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         store: MemoStore,
         preferences: AppPreferences,
         listWindow: MemoListWindowController,
-        syncCoordinator: SyncCoordinator
+        syncCoordinator: SyncCoordinator,
+        updateChecker: UpdateChecker
     ) {
         self.syncCoordinator = syncCoordinator
+        self.updateChecker = updateChecker
         self.windowRegistry = windowRegistry
         self.store = store
         self.preferences = preferences
@@ -52,6 +54,79 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             accessibilityDescription: "메모"
         )
         statusItem.menu = buildMenu()
+        // 확인 결과가 메뉴가 열려 있는 동안 도착해도 글자가 바로 바뀌게 한다.
+        updateChecker.onChange = { [weak self] in self?.refreshUpdateMenuState() }
+    }
+
+    // MARK: - 업데이트 (GitHub 릴리스)
+
+    private let updateChecker: UpdateChecker
+    private var updateRootItem: NSMenuItem?
+    private let updateStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
+    private var downloadUpdateItem: NSMenuItem?
+    private var autoCheckUpdateItem: NSMenuItem?
+
+    private func buildUpdateMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(.info(NSAttributedString(
+            string: "MDemo 버전 \(UpdateChecker.currentVersion) (빌드 \(UpdateChecker.currentBuild))",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )))
+        menu.addItem(updateStatusItem)
+        menu.addItem(.separator())
+
+        let check = item(title: "업데이트 확인…", action: #selector(checkForUpdates), key: "")
+        check.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        menu.addItem(check)
+
+        let download = item(title: "최신 버전 다운로드", action: #selector(downloadUpdate), key: "")
+        download.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        download.toolTip = "다운로드 폴더에 zip을 받고 Finder에서 보여 줍니다. 압축을 풀어 응용 프로그램으로 옮기면 설치됩니다."
+        downloadUpdateItem = download
+        menu.addItem(download)
+
+        menu.addItem(item(title: "릴리스 페이지 열기", action: #selector(openReleasesPage), key: ""))
+        menu.addItem(.separator())
+
+        let auto = item(title: "자동으로 확인 (하루 한 번)", action: #selector(toggleAutoCheckUpdate), key: "")
+        autoCheckUpdateItem = auto
+        menu.addItem(auto)
+        return menu
+    }
+
+    private func refreshUpdateMenuState() {
+        updateStatusItem.setInfoText(NSAttributedString(
+            string: updateChecker.statusText,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        ))
+        downloadUpdateItem?.isEnabled = updateChecker.isUpdateAvailable
+        autoCheckUpdateItem?.state = preferences.autoCheckUpdate ? .on : .off
+        updateRootItem?.title = updateChecker.isUpdateAvailable ? "업데이트  (새 버전 있음)" : "업데이트"
+    }
+
+    @objc private func checkForUpdates() {
+        updateChecker.check(userInitiated: true)
+    }
+
+    @objc private func downloadUpdate() {
+        updateChecker.downloadLatest()
+    }
+
+    @objc private func openReleasesPage() {
+        NSWorkspace.shared.open(UpdateChecker.releasesPage)
+    }
+
+    @objc private func toggleAutoCheckUpdate() {
+        preferences.autoCheckUpdate.toggle()
+        updateChecker.startAutomaticChecks()
+        refreshUpdateMenuState()
     }
 
     private func buildMenu() -> NSMenu {
@@ -123,6 +198,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let syncItem = NSMenuItem(title: "iCloud 동기화", action: nil, keyEquivalent: "")
         syncItem.submenu = buildSyncMenu()
         menu.addItem(syncItem)
+        let updateItem = NSMenuItem(title: "업데이트", action: nil, keyEquivalent: "")
+        updateItem.submenu = buildUpdateMenu()
+        updateRootItem = updateItem
+        menu.addItem(updateItem)
         menu.addItem(.separator())
 
         // 메모리 최소화가 제1 요구사항이므로 사용량을 항상 확인할 수 있게 노출한다 (§4-5).
@@ -517,6 +596,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             rememberLastSizeItem?.title = "새 메모를 마지막으로 맞춘 크기로  (지금 \(Int(last.width)) × \(Int(last.height)))"
         }
         refreshSyncMenuState()
+        refreshUpdateMenuState()
         launchAtLoginItem?.state = LaunchAtLoginService.isEnabled ? .on : .off
         if LaunchAtLoginService.isBlockedBySystemSettings {
             launchAtLoginItem?.title = "로그인할 때 자동 실행  (시스템 설정에서 허용 필요)"

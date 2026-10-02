@@ -14,8 +14,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store: container.store,
             preferences: container.preferences,
             listWindow: container.listWindow,
-            syncCoordinator: container.syncCoordinator
+            syncCoordinator: container.syncCoordinator,
+            updateChecker: container.updateChecker
         )
+
+        // 새 버전 확인 (켤 때 한 번, 그 뒤 하루에 한 번). 설정에서 끌 수 있다.
+        container.updateChecker.startAutomaticChecks()
 
         // 지난 실행에서 열려 있던 메모를 그대로 되살린다 (WIN-06).
         container.windowRegistry.restoreOpenMemos()
