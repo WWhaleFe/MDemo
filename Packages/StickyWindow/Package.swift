@@ -10,6 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../MemoCore"),
+        .package(path: "../MarkdownEngine"),
         .package(path: "../EditorKit"),
         .package(path: "../Services"),
         .package(path: "../TestKit"),
@@ -19,6 +20,7 @@ let package = Package(
             name: "StickyWindow",
             dependencies: [
                 .product(name: "MemoCore", package: "MemoCore"),
+                .product(name: "MarkdownEngine", package: "MarkdownEngine"),
                 .product(name: "EditorKit", package: "EditorKit"),
                 .product(name: "Services", package: "Services"),
             ]
@@ -27,6 +29,7 @@ let package = Package(
             name: "StickyWindowTests",
             dependencies: [
                 "StickyWindow",
+                .product(name: "MarkdownEngine", package: "MarkdownEngine"),
                 .product(name: "TestKit", package: "TestKit"),
             ],
             path: "Tests/StickyWindowTests"

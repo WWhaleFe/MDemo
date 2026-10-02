@@ -3,45 +3,38 @@ import SwiftUI
 
 /// 메모 하나의 겉모습을 바꾸는 패널 (WIN-11, OPA-01/02/03).
 ///
-/// 배경과 텍스트의 투명도를 따로 조절한다. 창 전체를 흐리게 만들면 글씨까지 읽기 어려워지므로,
+/// 배경과 텍스트의 투명도를 따로 둔다. 창 전체를 흐리게 만들면 글씨까지 읽기 어려워지므로,
 /// 배경만 비치게 하고 글씨는 또렷하게 두는 것이 이 앱의 방식이다.
+/// 배경 투명도는 머리 영역 슬라이더에서 바꾸므로, 이 패널에는 글자 투명도만 둔다.
 struct StickyAppearanceView: View {
     let initialColorHex: String
-    let initialBackgroundAlpha: Double
     let initialTextAlpha: Double
     let isPinned: Bool
 
     let onColorChange: (String) -> Void
-    let onBackgroundAlphaChange: (Double) -> Void
     let onTextAlphaChange: (Double) -> Void
     let onPinnedChange: (Bool) -> Void
 
     @State private var colorHex: String
-    @State private var backgroundAlpha: Double
     @State private var textAlpha: Double
     @State private var pinned: Bool
 
     init(
         colorHex: String,
-        backgroundAlpha: Double,
         textAlpha: Double,
         isPinned: Bool,
         onColorChange: @escaping (String) -> Void,
-        onBackgroundAlphaChange: @escaping (Double) -> Void,
         onTextAlphaChange: @escaping (Double) -> Void,
         onPinnedChange: @escaping (Bool) -> Void
     ) {
         self.initialColorHex = colorHex
-        self.initialBackgroundAlpha = backgroundAlpha
         self.initialTextAlpha = textAlpha
         self.isPinned = isPinned
         self.onColorChange = onColorChange
-        self.onBackgroundAlphaChange = onBackgroundAlphaChange
         self.onTextAlphaChange = onTextAlphaChange
         self.onPinnedChange = onPinnedChange
 
         _colorHex = State(initialValue: colorHex)
-        _backgroundAlpha = State(initialValue: backgroundAlpha)
         _textAlpha = State(initialValue: textAlpha)
         _pinned = State(initialValue: isPinned)
     }
@@ -97,18 +90,12 @@ struct StickyAppearanceView: View {
     private var opacitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sliderRow(
-                title: "배경 투명도",
-                value: $backgroundAlpha,
-                range: MemoMeta.backgroundAlphaRange,
-                onChange: onBackgroundAlphaChange
-            )
-            sliderRow(
                 title: "글자 투명도",
                 value: $textAlpha,
                 range: MemoMeta.textAlphaRange,
                 onChange: onTextAlphaChange
             )
-            Text("배경만 비치게 하고 글씨는 또렷하게 둘 수 있습니다.")
+            Text("배경 투명도는 메모 위쪽 슬라이더에서 바꿉니다.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

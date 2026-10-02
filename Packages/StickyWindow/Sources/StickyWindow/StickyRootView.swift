@@ -54,18 +54,11 @@ public final class StickyRootView: NSView {
     }
 }
 
-/// 창 상단 손잡이 영역. 여기를 잡으면 창이 끌리고, 두 번 누르면 접힌다 (WIN-08).
+/// 창 상단 손잡이 영역. 여기를 잡으면 창이 끌린다.
+///
+/// 예전에는 두 번 누르면 접혔다. 그 자리는 이제 제목을 쓰는 칸이라(TXT-06),
+/// 접기는 머리 영역 오른쪽의 버튼으로 옮겼다 (WIN-08).
 public final class StickyHeaderView: NSView {
-    public var onDoubleClick: (() -> Void)?
-
-    public override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 {
-            onDoubleClick?()
-            return
-        }
-        super.mouseDown(with: event)
-    }
-
     public override func mouseDragged(with event: NSEvent) {
         window?.performDrag(with: event)
     }
