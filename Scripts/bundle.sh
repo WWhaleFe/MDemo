@@ -10,7 +10,10 @@ set -euo pipefail
 CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/Scripts/toolchain.sh"
-APP_NAME="MemoApp"
+# SwiftPM 제품 이름(실행 파일)과 사용자에게 보이는 앱 이름이 다르다.
+# 앱 이름 MemoApp은 다른 앱과 겹쳐 MDemo로 바꿨다. 코드·패키지 이름은 그대로 둔다.
+PRODUCT_NAME="MemoApp"
+APP_NAME="MDemo"
 APP_DIR="$ROOT/build/$APP_NAME.app"
 
 cd "$ROOT"
@@ -32,8 +35,10 @@ BIN_PATH="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path)"
 echo "▸ 번들 조립 중…"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-cp "$BIN_PATH/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
+cp "$BIN_PATH/$PRODUCT_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ROOT/App/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+# 앱 아이콘. 원본 PNG를 바꿨다면 Scripts/make-icon.sh로 다시 만든다.
+cp "$ROOT/App/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # 유료 개발자 계정이 없으므로 임시(ad-hoc) 서명을 쓴다.
 # 계정을 확보하면 Developer ID 서명 + 공증으로 이 줄만 바꾸면 된다.
