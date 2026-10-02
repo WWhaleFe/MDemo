@@ -7,6 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // ⌘C · ⌘V 같은 편집 단축키는 메인 메뉴가 있어야 동작한다 (EditMenu 참고).
+        EditMenu.install()
+
         let container = AppContainer()
         self.container = container
         self.menuBarController = MenuBarController(
