@@ -47,7 +47,7 @@ final class MemoLayoutManager: NSLayoutManager {
             let full = NSRect(
                 x: origin.x + container.lineFragmentPadding,
                 y: origin.y + usedRect.minY,
-                width: container.size.width - container.lineFragmentPadding * 2,
+                width: self.bandWidth(in: container),
                 height: usedRect.height
             )
 
@@ -66,6 +66,16 @@ final class MemoLayoutManager: NSLayoutManager {
         if let pending = band {
             Self.draw(pending.rect, style: pending.style)
         }
+    }
+
+    /// 바탕 띠의 폭. 줄바꿈을 끄면 글 상자 폭이 끝없이 넓어지므로 그때는 텍스트 뷰 폭을 따른다.
+    private func bandWidth(in container: NSTextContainer) -> CGFloat {
+        if !container.widthTracksTextView, let textView = container.textView {
+            // 그리기는 늘 메인 스레드에서 일어난다.
+            let inset = MainActor.assumeIsolated { textView.bounds.width - textView.textContainerInset.width * 2 }
+            return inset - container.lineFragmentPadding * 2
+        }
+        return container.size.width - container.lineFragmentPadding * 2
     }
 
     private func bandStyle(at location: Int, in textStorage: NSTextStorage) -> BandStyle? {

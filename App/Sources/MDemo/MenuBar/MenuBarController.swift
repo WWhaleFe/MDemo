@@ -21,6 +21,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private let memoryItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var hoverOpaqueItem: NSMenuItem?
+    private var wrapsLinesItem: NSMenuItem?
     private var autoEmptyTrashItem: NSMenuItem?
     private var rememberLastSizeItem: NSMenuItem?
     private let syncStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
@@ -185,6 +186,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         hoverItem.toolTip = "투명하게 둔 메모를 읽을 때만 또렷해집니다"
         hoverOpaqueItem = hoverItem
         menu.addItem(hoverItem)
+
+        let wrapItem = item(title: "자동 줄바꿈", action: #selector(toggleWrapsLines), key: "")
+        wrapItem.toolTip = "긴 줄을 창 폭에 맞춰 접습니다. 끄면 한 줄로 이어지고 가로로 스크롤합니다"
+        wrapsLinesItem = wrapItem
+        menu.addItem(wrapItem)
 
         let helpItem = NSMenuItem(title: "서식 넣는 법", action: nil, keyEquivalent: "")
         helpItem.submenu = buildFormattingHelpMenu()
@@ -599,6 +605,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshMemoSizeMenuState()
         refreshToolbarMenuState()
         hoverOpaqueItem?.state = preferences.hoverOpaque ? .on : .off
+        wrapsLinesItem?.state = preferences.wrapsLines ? .on : .off
         autoEmptyTrashItem?.state = preferences.autoEmptyTrash ? .on : .off
         rememberLastSizeItem?.state = preferences.rememberLastMemoSize ? .on : .off
         if let last = preferences.lastMemoSize {
@@ -636,6 +643,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleHoverOpaque() {
         preferences.hoverOpaque.toggle()
+        windowRegistry.applyPreferencesToOpenWindows()
+    }
+
+    @objc private func toggleWrapsLines() {
+        preferences.wrapsLines.toggle()
         windowRegistry.applyPreferencesToOpenWindows()
     }
 

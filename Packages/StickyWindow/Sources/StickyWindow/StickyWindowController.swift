@@ -72,6 +72,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     private var expandedHeight: CGFloat?
     private var isCollapsed = false
 
+    /// 자동 줄바꿈. 끄면 긴 줄이 창 밖으로 이어지고 가로로 스크롤해서 본다.
+    private var wrapsLines: Bool
+
     private func configure(
         _ button: NSButton,
         symbol: String,
@@ -149,6 +152,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         frame: NSRect,
         theme: EditorTheme,
         toolbarPosition: FormatToolbarPosition = .top,
+        wrapsLines: Bool = true,
         store: MemoStore,
         deviceState: DeviceStateStore
     ) {
@@ -158,6 +162,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         self.store = store
         self.deviceState = deviceState
         self.toolbarPosition = toolbarPosition
+        self.wrapsLines = wrapsLines
         self.panel = StickyPanel(contentRect: frame)
         self.rootView = StickyRootView(frame: NSRect(origin: .zero, size: frame.size))
         self.scrollView = NSScrollView()
@@ -278,13 +283,21 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         scrollView.autohidesScrollers = true
         scrollView.documentView = textView
 
-        // NSTextView는 스크롤 뷰 안에서 오토레이아웃 대신 리사이징 마스크로 다뤄야 안정적이다.
-        textView.autoresizingMask = [.width]
+        // 본문 폭은 보이는 자리가 바뀔 때마다 직접 맞춘다.
+        // 리사이징 마스크에 맡기면 스크롤 뷰가 폭 0에서 자랄 때 그만큼이 창 폭에 더해져,
+        // 본문이 창보다 두 배 가까이 넓어지고 긴 줄이 창 밖에서 접혔다.
+        textView.autoresizingMask = []
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
+        scrollView.contentView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(visibleAreaDidResize),
+            name: NSView.frameDidChangeNotification,
+            object: scrollView.contentView
+        )
+        applyLineWrapping()
 
         rootView.addSubview(header)
         rootView.addSubview(scrollView)
@@ -731,6 +744,48 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         hideToolbarHint()
     }
 
+    /// 설정에서 자동 줄바꿈을 켜고 껐을 때.
+    public func setLineWrapping(_ enabled: Bool) {
+        guard enabled != wrapsLines else { return }
+        wrapsLines = enabled
+        applyLineWrapping()
+    }
+
+    public var isLineWrapping: Bool { wrapsLines }
+
+    /// 줄바꿈 방식에 맞춰 글 상자와 가로 스크롤을 바꾼다.
+    private func applyLineWrapping() {
+        guard let container = textView.textContainer else { return }
+        scrollView.hasHorizontalScroller = !wrapsLines
+        textView.isHorizontallyResizable = !wrapsLines
+        container.widthTracksTextView = wrapsLines
+        if !wrapsLines {
+            container.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        }
+        fitTextViewToVisibleArea()
+        if wrapsLines {
+            // 끈 채로 옆으로 밀어 두었던 자리가 남으면 접힌 글의 왼쪽이 잘려 보인다.
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: scrollView.contentView.bounds.minY))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    @objc private func visibleAreaDidResize(_ notification: Notification) {
+        fitTextViewToVisibleArea()
+    }
+
+    /// 본문 폭을 창에서 보이는 폭에 맞춘다.
+    /// 줄바꿈을 끈 때는 보이는 폭보다 좁아지지만 않게 하고, 긴 줄만큼 넓어지는 것은 텍스트 뷰에 맡긴다.
+    private func fitTextViewToVisibleArea() {
+        let visibleWidth = scrollView.contentSize.width
+        textView.minSize = NSSize(width: wrapsLines ? 0 : visibleWidth, height: 0)
+        if wrapsLines {
+            textView.setFrameSize(NSSize(width: visibleWidth, height: textView.frame.height))
+        } else {
+            textView.sizeToFit()
+        }
+    }
+
     /// 설정에서 막대 자리를 바꿨을 때 (FMT-02, SET-08).
     public func setToolbarPosition(_ position: FormatToolbarPosition) {
         guard position != toolbarPosition else { return }
@@ -1092,6 +1147,16 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     public var currentFrame: NSRect { panel.frame }
+
+    /// 글이 실제로 차지한 폭과 창에서 보이는 폭. 줄바꿈이 제대로 되는지 확인할 때 쓴다.
+    public var textWidths: (used: CGFloat, visible: CGFloat) {
+        guard let layoutManager = textView.layoutManager, let container = textView.textContainer else {
+            return (0, 0)
+        }
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container).width + textView.textContainerInset.width * 2
+        return (used, scrollView.contentSize.width)
+    }
 
     /// 가장자리를 끌어 크기를 바꾼 것과 같은 결과를 낸다. 시험용.
     public func resizeAsUser(to size: NSSize) {

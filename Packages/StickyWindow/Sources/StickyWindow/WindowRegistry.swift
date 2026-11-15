@@ -94,6 +94,7 @@ public final class WindowRegistry {
             frame: frame,
             theme: currentTheme,
             toolbarPosition: preferences.formatToolbarPosition,
+            wrapsLines: preferences.wrapsLines,
             store: store,
             deviceState: deviceState
         )
@@ -125,6 +126,7 @@ public final class WindowRegistry {
             controller.applyTheme(theme)
             controller.setHoverOpaqueEnabled(preferences.hoverOpaque)
             controller.setToolbarPosition(preferences.formatToolbarPosition)
+            controller.setLineWrapping(preferences.wrapsLines)
         }
     }
 
@@ -233,6 +235,10 @@ public final class WindowRegistry {
 
     public func frame(of id: MemoID) -> NSRect? {
         controllers[id]?.currentFrame
+    }
+
+    public func textWidths(of id: MemoID) -> (used: CGFloat, visible: CGFloat)? {
+        controllers[id]?.textWidths
     }
 
     public func windowLevel(of id: MemoID) -> NSWindow.Level? {

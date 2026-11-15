@@ -13,9 +13,19 @@
 (0.9.0까지 이름은 MemoApp이었다. 다른 앱과 겹쳐 저장소·코드·앱 식별자·저장 폴더를 모두 MDemo로 바꿨다.
 예전 버전의 메모와 설정은 MDemo를 처음 켤 때 새 자리로 복사된다. 원본은 지우지 않는다.)
 
-## ⬇️ 다운로드 (macOS)
+## ⬇️ 설치 (macOS)
 
-[최신 릴리스](https://github.com/WWhaleFe/MDemo/releases/latest)에서 `MDemo-vX.Y.Z.zip`을 받아
+Homebrew로 설치하는 것이 가장 간단하다. 첫 실행 차단(Gatekeeper)도 알아서 풀어 준다.
+
+```sh
+brew install --cask wwhalefe/tap/mdemo
+brew update && brew upgrade --cask mdemo   # 업데이트
+```
+
+Homebrew 6 이상에서 `untrusted tap` 오류가 나면 먼저 `brew trust --cask wwhalefe/tap/mdemo`를 실행한다.
+업데이트한 뒤에는 메뉴바에서 MDemo를 종료하고 다시 열어야 새 버전이 뜬다.
+
+직접 받으려면 [최신 릴리스](https://github.com/WWhaleFe/MDemo/releases/latest)에서 `MDemo-vX.Y.Z.zip`을 받아
 압축을 풀고 **응용 프로그램** 폴더로 옮긴다. `.dmg`를 받았다면 열어서 Applications로 끌어다 놓는다.
 
 - 유니버설(Apple Silicon + Intel), macOS 14 이상.
@@ -50,6 +60,7 @@
   다 받은 뒤 다시 누르면 Finder에서 다시 보여 주고, 실패했으면 릴리스 페이지를 연다.
   임시 서명 앱이라 자동으로 바꿔 끼우지 않는다 — 압축을 풀어 응용 프로그램에 덮어쓰면 된다.
 - **릴리스 페이지 열기** — 버전별 변경 내용과 파일을 브라우저에서 본다.
+- Homebrew로 설치했다면 zip을 받는 대신 `brew update && brew upgrade --cask mdemo`로 올린다.
 - **업데이트 자동 확인** — 켤 때 한 번, 그 뒤 하루에 한 번 확인한다. 새 버전은 버전마다 한 번만 알린다.
 - 메모와 설정은 앱 밖(`~/Library/Application Support/MDemo/Data`, 사용자 기본값)에 있어서
   앱을 바꿔도 그대로 남는다.
@@ -63,6 +74,9 @@
 2. `make test && make dist` — `build/dist/MDemo-vX.Y.Z.zip`과 `.dmg`가 생긴다.
 3. 커밋: `vX.Y.Z: 바뀐 점 요약`
 4. 태그와 릴리스: `gh release create vX.Y.Z build/dist/MDemo-vX.Y.Z.zip build/dist/MDemo-vX.Y.Z.dmg --title "MDemo vX.Y.Z" --notes-file <노트>`
+5. Homebrew: [WWhaleFe/homebrew-tap](https://github.com/WWhaleFe/homebrew-tap)이 30분마다 최신 릴리스를 확인해
+   `Casks/mdemo.rb`의 버전과 sha256을 저절로 맞춘다. 손댈 것은 없다.
+   단, zip 이름(`MDemo-vX.Y.Z.zip`)과 그 안의 `MDemo.app`, 최소 macOS(14)가 바뀌면 cask도 함께 고쳐야 한다.
 
 앱의 업데이트 확인은 태그(`v` 뒤의 숫자)와 앱 버전을 비교하고, 릴리스의 `.zip`을 내려받는다.
 그래서 태그 이름과 zip 첨부는 이 꼴을 지켜야 한다.
@@ -73,12 +87,12 @@
 - 아키텍처 · 개발 프로세스: [memo-app-architecture.md](memo-app-architecture.md)
 - 마일스톤 측정 기록: [docs/measurements.md](docs/measurements.md)
 
-현재 상태: **v0.9.1 (테스트 배포)**
+현재 상태: **v0.9.2 (테스트 배포)**
 
 동작하는 것: 메뉴바 상주, 플로팅 스티키 창(크기 조절·투명도·배경색·접기·제목), 마크다운 자동 저장,
 입력 중 서식 변환과 서식 막대(제목·목록·체크박스·인용·코드 박스·표·굵게·기울임·취소선·글자 색·형광펜),
 슬래시 명령, 리스트 창(그룹·검색·정렬·복수 선택·휴지통), iCloud 스냅숏 동기화,
-노션과 서식째 복사 · 붙여넣기, 편집 단축키(⌘C · ⌘V · ⌘X · ⌘A · ⌘Z),
+노션과 서식째 복사 · 붙여넣기, 자동 줄바꿈(끄면 가로 스크롤), 편집 단축키(⌘C · ⌘V · ⌘X · ⌘A · ⌘Z),
 서식·전역 단축키, 로그인 시 자동 실행, 백업, GitHub 릴리스 업데이트 확인.
 
 아직 없는 것: 이미지 첨부, 알람.

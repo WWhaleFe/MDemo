@@ -359,4 +359,49 @@ runner.test("크기를 맞추면 그 크기로 새 메모가 열리고, 기능�
     }
 }
 
+runner.test("자동 줄바꿈이 켜져 있으면 긴 줄이 창 폭 안에서 접힌다") { t in
+    try MainActor.assumeIsolated {
+        let (registry, _, root) = try makeRegistry()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let id = registry.createMemo()
+        registry.insertText(String(repeating: "가로로 아주 긴 문장 ", count: 40), in: id)
+        guard let widths = registry.textWidths(of: id) else {
+            t.expect(false, "창을 찾지 못했다")
+            return
+        }
+        t.expect(widths.visible > 0, "보이는 폭이 0이다")
+        t.expect(widths.used <= widths.visible + 1, "글이 창 밖으로 나갔다: \(widths.used) > \(widths.visible)")
+    }
+}
+
+runner.test("자동 줄바꿈은 기본으로 켜져 있고, 끄면 긴 줄이 한 줄로 이어진다") { t in
+    try MainActor.assumeIsolated {
+        let (registry, _, root, preferences) = try makeRegistryWithPreferences()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        t.expect(preferences.wrapsLines, "기본값은 켜짐이어야 한다")
+        let id = registry.createMemo()
+        registry.insertText(String(repeating: "가로로 아주 긴 문장 ", count: 40), in: id)
+
+        preferences.wrapsLines = false
+        registry.applyPreferencesToOpenWindows()
+        if let widths = registry.textWidths(of: id) {
+            t.expect(widths.used > widths.visible * 2, "끄면 한 줄로 길게 이어져야 한다: \(widths.used)")
+        }
+
+        preferences.wrapsLines = true
+        registry.applyPreferencesToOpenWindows()
+        if let widths = registry.textWidths(of: id) {
+            t.expect(widths.used <= widths.visible + 1, "다시 켜면 창 폭 안에서 접혀야 한다: \(widths.used)")
+        }
+
+        // 창을 넓히거나 좁혀도 본문이 창 폭을 따라간다.
+        registry.simulateUserResize(id: id, to: NSSize(width: 300, height: 400))
+        if let widths = registry.textWidths(of: id) {
+            t.expect(widths.used <= widths.visible + 1, "창을 줄였더니 글이 밖으로 나갔다: \(widths.used) > \(widths.visible)")
+        }
+    }
+}
+
 runner.finish()
