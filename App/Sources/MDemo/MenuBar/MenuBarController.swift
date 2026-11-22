@@ -50,13 +50,40 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "note.text",
-            accessibilityDescription: "메모"
-        )
+        statusItem.button?.image = Self.menuBarIcon()
         statusItem.menu = buildMenu()
         // 확인 결과가 메뉴가 열려 있는 동안 도착해도 글자가 바로 바뀌게 한다.
         updateChecker.onChange = { [weak self] in self?.refreshUpdateMenuState() }
+    }
+
+    /// 메뉴바 아이콘. 앱 아이콘과 같은 모양(둥근 메모 카드, 글줄 셋, 짧은 줄 끝의 점)을
+    /// 템플릿 이미지로 그려 시스템 기호(note.text)와 구분되게 한다.
+    /// 템플릿이라 메뉴바의 밝은 · 어두운 모양에 맞춰 macOS가 색을 입힌다.
+    static func menuBarIcon() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
+            NSColor.black.set()
+            let card = NSBezierPath(
+                roundedRect: NSRect(x: 1.75, y: 1.75, width: 14.5, height: 14.5),
+                xRadius: 4.25, yRadius: 4.25
+            )
+            card.lineWidth = 1.5
+            card.stroke()
+            for (y, width) in [(CGFloat(5.4), CGFloat(8)), (8.2, 8)] {
+                NSBezierPath(
+                    roundedRect: NSRect(x: 5, y: y, width: width, height: 1.6),
+                    xRadius: 0.8, yRadius: 0.8
+                ).fill()
+            }
+            NSBezierPath(
+                roundedRect: NSRect(x: 5, y: 11, width: 3.6, height: 1.6),
+                xRadius: 0.8, yRadius: 0.8
+            ).fill()
+            NSBezierPath(ovalIn: NSRect(x: 10, y: 10.1, width: 3.4, height: 3.4)).fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "MDemo"
+        return image
     }
 
     // MARK: - 버전 · 업데이트 (GitHub 릴리스)

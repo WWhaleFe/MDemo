@@ -9,7 +9,7 @@
 # 원본은 캔버스를 꽉 채운 불투명한 정사각 그림이어야 한다. 바깥에 투명한 여백이나
 # 둥근 모서리가 있으면 macOS 26은 아이콘을 회색 판 위에 작게 얹어 보여 준다.
 # 꽉 찬 그림을 주면 macOS가 자기 틀(둥근 사각형)로 잘라 보여 준다.
-# 지금 AppIcon.png는 MDemo_icon.png의 둥근 사각형 안쪽(x 180, y 168, 664×664)을 잘라 키운 것이다.
+# 지금 AppIcon.png는 Scripts/draw-icon.swift가 코드로 그린 것이다(무채색 + 라임 한 가지).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

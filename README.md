@@ -127,6 +127,10 @@ make dist      # 배포 파일 build/dist/MDemo-vX.Y.Z.zip · .dmg
 
 앱은 Dock에 뜨지 않는다(LSUIElement). 종료는 메뉴바 아이콘 → 종료.
 
+앱 아이콘은 코드로 그린다. 고친 뒤 `swift Scripts/draw-icon.swift && Scripts/make-icon.sh`로
+`AppIcon.png`와 `AppIcon.icns`를 함께 만든다. 메뉴바 아이콘은 `MenuBarController.menuBarIcon()`에서
+같은 모양을 템플릿 이미지로 그린다.
+
 메모리 측정용으로 실행과 동시에 메모를 띄우려면:
 
 ```bash
