@@ -9,7 +9,8 @@ public struct MemoMeta: Hashable, Sendable, Codable {
     ///
     /// - v1 → v2: `title` 추가. 없던 파일은 제목이 비어 있는 것으로 읽고,
     ///   본문 첫 줄을 대신 보여 준다. 버리는 값이 없으므로 되돌릴 수도 있다.
-    public static let currentSchemaVersion = 2
+    /// - v2 → v3: `links` 추가. 없으면 빈 배열로 읽으며, 기존 값은 그대로라 되돌릴 수 있다.
+    public static let currentSchemaVersion = 3
 
     public var schemaVersion: Int
     public var id: MemoID
@@ -39,6 +40,9 @@ public struct MemoMeta: Hashable, Sendable, Codable {
     /// 리스트 창은 이 값이 있는 메모에 표시를 붙여 사용자가 정리할 수 있게 한다.
     public var conflictOf: MemoID?
 
+    /// 출발 메모에 기록한 연결 (설계서 §4, DOC-02).
+    public var links: [MemoLink]
+
     public init(
         schemaVersion: Int = MemoMeta.currentSchemaVersion,
         id: MemoID,
@@ -51,7 +55,8 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         isPinned: Bool = true,
         created: Date = Date(),
         modified: Date = Date(),
-        conflictOf: MemoID? = nil
+        conflictOf: MemoID? = nil,
+        links: [MemoLink] = []
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -65,6 +70,7 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         self.created = created
         self.modified = modified
         self.conflictOf = conflictOf
+        self.links = links
     }
 
     /// 창을 완전히 잃어버리는 사고를 막기 위한 알파 하한선 (OPA-03).

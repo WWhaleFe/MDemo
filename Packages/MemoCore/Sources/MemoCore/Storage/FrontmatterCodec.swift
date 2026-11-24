@@ -82,7 +82,7 @@ public enum FrontmatterCodec {
         }
 
         // 옛 파일도 지금 스키마로 올려서 읽는다.
-        // v1 → v2는 제목이 하나 늘어난 것뿐이라, 없으면 비워 두면 그대로 맞는다.
+        // v1 → v2 제목과 v2 → v3 연결은 없으면 각각 빈 값으로 읽는다.
         let fileVersion = fields[Key.schemaVersion.rawValue].flatMap { Int(unquote($0)) }
             ?? MemoMeta.currentSchemaVersion
         let schemaVersion = max(fileVersion, MemoMeta.currentSchemaVersion)
@@ -108,7 +108,8 @@ public enum FrontmatterCodec {
             isPinned: parseBool(fields[Key.pinned.rawValue]) ?? true,
             created: created,
             modified: modified,
-            conflictOf: fields[Key.conflictOf.rawValue].map(unquote).map(MemoID.init(rawValue:))
+            conflictOf: fields[Key.conflictOf.rawValue].map(unquote).map(MemoID.init(rawValue:)),
+            links: parseLinks(fields[Key.links.rawValue])
         )
     }
 
@@ -137,6 +138,10 @@ public enum FrontmatterCodec {
             lines.append("\(Key.conflictOf.rawValue): \(conflictOf.rawValue)")
         }
 
+        if !meta.links.isEmpty {
+            lines.append("\(Key.links.rawValue): " + meta.links.map { "\($0.kind.rawValue):\($0.to.rawValue)" }.joined(separator: ","))
+        }
+
         // 모르는 필드를 마지막에 되돌려 놓는다 (상위 버전 호환).
         lines.append(contentsOf: document.unknownFrontmatterLines)
 
@@ -160,6 +165,21 @@ public enum FrontmatterCodec {
         case created
         case modified
         case conflictOf
+        case links
+    }
+
+    /// 잘못된 항목만 건너뛰고 첫 등장 순서대로 중복을 합친다 (DOC-02).
+    private static func parseLinks(_ value: String?) -> [MemoLink] {
+        guard let value else { return [] }
+        var seen = Set<MemoLink>()
+        return unquote(value).components(separatedBy: ",").compactMap { item in
+            let parts = item.components(separatedBy: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2, let kind = MemoLinkKind(rawValue: parts[0]) else { return nil }
+            let id = MemoID(rawValue: parts[1])
+            guard id.isValid else { return nil }
+            let link = MemoLink(to: id, kind: kind)
+            return seen.insert(link).inserted ? link : nil
+        }
     }
 
     private static func splitKeyValue(_ line: String) -> (key: String, value: String)? {

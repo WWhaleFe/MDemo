@@ -65,6 +65,7 @@ public struct SyncService: Sendable {
     private static let trashFolder = "trash"
     private static let memoFileName = "memo.md"
     private static let groupsFileName = "groups.json"
+    private static let boardFileName = "board.json"
 
     public init(localRoot: URL, remoteRoot: URL, stateURL: URL) {
         self.localRoot = localRoot
@@ -120,6 +121,7 @@ public struct SyncService: Sendable {
         }
 
         try mergeGroups(mode: mode)
+        try syncBoard(mode: mode, state: &state)
         saveState(state)
         return report
     }
@@ -286,6 +288,40 @@ public struct SyncService: Sendable {
 
         if mode != .pull { try writeGroups(merged, at: remoteRoot) }
         if mode != .push { try writeGroups(merged, at: localRoot) }
+    }
+
+    /// 보드 배치는 파일 수정 시각이 최신인 쪽을 원자적으로 복사한다 (설계서 §4, SYNC-06).
+    private func syncBoard(mode: SyncMode, state: inout [String: Date]) throws {
+        let local = localRoot.appendingPathComponent(Self.boardFileName)
+        let remote = remoteRoot.appendingPathComponent(Self.boardFileName)
+        func modified(_ url: URL) -> Date? {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+        let localDate = modified(local)
+        let remoteDate = modified(remote)
+        let source: URL
+        let destination: URL
+        let date: Date
+        switch (localDate, remoteDate) {
+        case (let left?, let right?) where left == right:
+            state[Self.boardFileName] = left
+            return
+        case (let left?, let right?) where left > right:
+            guard mode != .pull else { return }
+            (source, destination, date) = (local, remote, left)
+        case (let left?, nil):
+            guard mode != .pull else { return }
+            (source, destination, date) = (local, remote, left)
+        case (_, let right?):
+            guard mode != .push else { return }
+            (source, destination, date) = (remote, local, right)
+        case (nil, nil):
+            return
+        }
+        try Data(contentsOf: source).write(to: destination, options: .atomic)
+        // 복사로 수정 시각이 바뀌면 다음 동기화에서 역방향 복사가 반복된다.
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: destination.path)
+        state[Self.boardFileName] = date
     }
 
     // MARK: - 파일 다루기

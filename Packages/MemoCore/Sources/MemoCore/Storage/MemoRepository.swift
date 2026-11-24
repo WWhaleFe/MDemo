@@ -68,8 +68,18 @@ public protocol MemoRepository: Sendable {
     func loadGroups() throws -> [String]
     func saveGroups(_ groups: [String]) throws
 
+    /// 메모 파일과 독립적으로 공유할 보드 배치 (설계서 §4).
+    func loadBoardLayout() throws -> BoardLayout
+    func saveBoardLayout(_ layout: BoardLayout) throws
+
     // MARK: - 검색 (SRC-01)
 
     /// 본문에서 찾는다. 파일을 한 건씩 열어 보고 바로 버려 메모리에 쌓지 않는다.
     func searchBodies(matching query: String, in ids: [MemoID]) throws -> Set<MemoID>
+}
+
+/// 보드 저장을 지원하지 않는 저장소도 기존대로 사용할 수 있다.
+public extension MemoRepository {
+    func loadBoardLayout() throws -> BoardLayout { .empty }
+    func saveBoardLayout(_ layout: BoardLayout) throws {}
 }

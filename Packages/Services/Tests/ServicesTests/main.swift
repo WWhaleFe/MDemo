@@ -377,4 +377,41 @@ runner.test("예전 MemoApp 폴더와 설정을 MDemo로 한 번만 옮겨 온�
     t.expectEqual(defaults.object(forKey: "memo.hoverOpaque") as? Bool, true, "두 번째 실행에서 설정을 되돌렸다")
 }
 
+runner.test("board.json은 한쪽만 있으면 복사하고 양쪽이면 최신 파일로 맞춘다 (SYNC-06)") { t in
+    try MainActor.assumeIsolated {
+        let (mini, book, base) = try makeTwoDevices()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let id = MemoID.generate()
+        let local = mini.root.appendingPathComponent("board.json")
+        let remote = mini.sync.remoteRoot.appendingPathComponent("board.json")
+        mini.store.setBoardPlacement(.init(x: 10, y: 20), for: id)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: local.path)
+        _ = try mini.sync.sync(mode: .push)
+        t.expectEqual(try Data(contentsOf: local), try Data(contentsOf: remote))
+        _ = try book.sync.sync(mode: .pull)
+        book.store.reloadBoardLayout()
+        t.expectEqual(book.store.boardLayout, mini.store.boardLayout)
+        let remoteRepository = try FileMemoRepository(rootDirectory: mini.sync.remoteRoot)
+        let newer = BoardLayout(placements: [id.rawValue: .init(x: 30, y: 40)])
+        try remoteRepository.saveBoardLayout(newer)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: remote.path)
+        _ = try mini.sync.sync(mode: .push)
+        t.expectEqual(try remoteRepository.loadBoardLayout(), newer, "push가 최신 원격 파일을 덮어썼다")
+        _ = try mini.sync.sync()
+        mini.store.reloadBoardLayout()
+        t.expectEqual(mini.store.boardLayout, newer)
+        mini.store.setBentoSpan(.wide, for: id)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 300)], ofItemAtPath: local.path)
+        _ = try mini.sync.sync(mode: .pull)
+        t.expectEqual(try remoteRepository.loadBoardLayout(), newer)
+        _ = try mini.sync.sync()
+        t.expectEqual(try remoteRepository.loadBoardLayout(), mini.store.boardLayout)
+        let stamp = try remote.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        _ = try mini.sync.sync()
+        t.expectEqual(try remote.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, stamp)
+        let state = try JSONDecoder().decode([String: Date].self, from: Data(contentsOf: mini.root.appendingPathComponent("sync-state.json")))
+        t.expectEqual(state["board.json"], Date(timeIntervalSince1970: 300))
+    }
+}
+
 runner.finish()

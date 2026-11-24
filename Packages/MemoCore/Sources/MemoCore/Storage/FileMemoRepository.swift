@@ -197,6 +197,29 @@ public struct FileMemoRepository: MemoRepository {
         let target = trashDirectory(for: id)
         guard FileManager.default.fileExists(atPath: target.path) else { return }
         try FileManager.default.removeItem(at: target)
+        // 휴지통 안의 다른 메모도 복원했을 때 끊어진 연결이 남지 않게 한다 (TRS-04).
+        for folder in [Self.memosFolder, Self.trashFolder] {
+            let entries = try FileManager.default.contentsOfDirectory(
+                at: rootDirectory.appendingPathComponent(folder), includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            for entry in entries where MemoID(rawValue: entry.lastPathComponent).isValid {
+                let url = entry.appendingPathComponent(Self.memoFileName)
+                guard let text = try? String(contentsOf: url, encoding: .utf8),
+                      var document = try? FrontmatterCodec.decode(fileContents: text),
+                      document.meta.links.contains(where: { $0.to == id }) else { continue }
+                let deletedAt = folder == Self.trashFolder
+                    ? (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                    : nil
+                document.meta.links.removeAll { $0.to == id }
+                document.meta.modified = Date()
+                try Data(FrontmatterCodec.encode(document).utf8).write(to: url, options: .atomic)
+                // 연결 정리로 휴지통 보관 기간이 다시 시작되지 않게 한다 (TRS-03).
+                if let deletedAt {
+                    try FileManager.default.setAttributes([.modificationDate: deletedAt], ofItemAtPath: entry.path)
+                }
+            }
+        }
     }
 
     public func emptyTrash(deletedBefore date: Date?) throws {
@@ -214,7 +237,7 @@ public struct FileMemoRepository: MemoRepository {
                     .contentModificationDate ?? Date()
                 guard deletedAt < date else { continue }
             }
-            try? FileManager.default.removeItem(at: entry)
+            try? permanentlyDelete(id: MemoID(rawValue: entry.lastPathComponent))
         }
     }
 
@@ -235,6 +258,21 @@ public struct FileMemoRepository: MemoRepository {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         try encoder.encode(groups).write(to: groupsFileURL, options: .atomic)
+    }
+
+    // MARK: - 보드 배치 (설계서 §4)
+
+    public func loadBoardLayout() throws -> BoardLayout {
+        guard let data = try? Data(contentsOf: rootDirectory.appendingPathComponent("board.json")),
+              let layout = try? JSONDecoder().decode(BoardLayout.self, from: data)
+        else { return .empty }
+        return layout
+    }
+
+    public func saveBoardLayout(_ layout: BoardLayout) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(layout).write(to: rootDirectory.appendingPathComponent("board.json"), options: .atomic)
     }
 
     // MARK: - 본문 검색 (SRC-01)

@@ -604,4 +604,140 @@ runner.test("기기별 창 상태는 따로 저장되고 다시 읽힌다") { t 
     t.expectEqual(reopened.state(for: id)?.displayID, "MAIN")
 }
 
+// MARK: - 연결과 보드 배치 (설계서 §4)
+
+runner.test("연결 프론트매터 왕복과 v2 호환, 잘못된 항목 건너뛰기 (DOC-02)") { t in
+    let id = MemoID.generate()
+    let target = MemoID.generate()
+    let links = [MemoLink(to: target, kind: .flow), MemoLink(to: target, kind: .related)]
+    let date = Date(timeIntervalSince1970: 100)
+    let document = MemoDocument(meta: MemoMeta(id: id, created: date, modified: date, links: links), body: "본문")
+    let encoded = FrontmatterCodec.encode(document)
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: encoded), document)
+    let old = "---\nschemaVersion: 2\nid: \(id.rawValue)\n---\n본문"
+    let decoded = try FrontmatterCodec.decode(fileContents: old)
+    t.expectEqual(decoded.meta.links, [])
+    t.expectEqual(decoded.meta.schemaVersion, 3)
+    t.expect(!FrontmatterCodec.encode(decoded).contains("links:"))
+    let malformed = old.replacingOccurrences(of: "\n---\n", with:
+        "\nlinks: flow: \(target.rawValue), garbage, related:no, other:\(target.rawValue), flow:\(target.rawValue), related:\(target.rawValue), flow:\(target.rawValue):extra\n---\n")
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: malformed).meta.links, links)
+}
+
+runner.test("연결 교체와 해제는 양방향이고 자기 연결은 무시한다 (설계서 §4)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let a = store.createMemo().id
+        let b = store.createMemo().id
+        store.link(from: a, to: a, kind: .flow)
+        t.expectEqual(store.loadDocument(id: a)?.meta.links, [])
+        store.link(from: a, to: b, kind: .flow)
+        store.link(from: b, to: a, kind: .related)
+        t.expectEqual(store.loadDocument(id: a)?.meta.links, [])
+        t.expectEqual(store.loadDocument(id: b)?.meta.links, [MemoLink(to: a, kind: .related)])
+        t.expectEqual(store.edges, [MemoEdge(from: b, to: a, kind: .related)])
+        t.expectEqual(store.linkCount(of: a), 1)
+        store.unlink(a, b)
+        t.expectEqual(store.edges, [])
+        t.expectEqual(store.loadDocument(id: b)?.meta.links, [])
+    }
+}
+
+runner.test("연결은 휴지통에서 숨고 복원되며 영구 삭제하면 정리된다 (TRS-02, TRS-04)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let a = store.createMemo().id
+        let b = store.createMemo().id
+        let c = store.createMemo().id
+        store.link(from: a, to: b, kind: .flow)
+        store.link(from: c, to: b, kind: .related)
+        store.moveToTrash(id: b)
+        t.expectEqual(store.edges, [])
+        t.expectEqual(store.loadDocument(id: a)?.meta.links.count, 1)
+        store.restoreFromTrash(id: b)
+        t.expectEqual(store.edges.count, 2)
+        store.moveToTrash(ids: [b, c])
+        let cFolder = root.appendingPathComponent("trash/\(c.rawValue)")
+        let deletedAt = Date(timeIntervalSince1970: 100)
+        try FileManager.default.setAttributes([.modificationDate: deletedAt], ofItemAtPath: cFolder.path)
+        store.permanentlyDelete(id: b)
+        t.expectEqual(store.loadDocument(id: a)?.meta.links, [])
+        t.expectEqual(try cFolder.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, deletedAt)
+        store.restoreFromTrash(id: c)
+        t.expectEqual(store.loadDocument(id: c)?.meta.links, [])
+        store.updateMeta(id: a) { $0.links = [MemoLink(to: .generate(), kind: .flow)] }
+        t.expectEqual(store.edges, [])
+    }
+}
+
+runner.test("흐름은 분기 깊이 우선, 순환과 여러 시작점을 생성순으로 정렬한다 (설계서 §4)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let ids = (0..<10).map { _ in MemoID.generate() }
+    let targets = [[2, 1], [3], [], [], [6], [4], [5], [3], [], []]
+    for index in ids.indices {
+        let meta = MemoMeta(id: ids[index], created: Date(timeIntervalSince1970: Double(index)),
+            modified: Date(timeIntervalSince1970: Double(index)),
+            links: targets[index].map { MemoLink(to: ids[$0], kind: .flow) })
+        try repository.save(MemoDocument(meta: meta, body: ""))
+    }
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        store.link(from: ids[8], to: ids[9], kind: .related)
+        let flows = store.flows
+        t.expectEqual(flows.count, 2)
+        t.expectEqual(flows[0].memoIDs, [ids[4], ids[5], ids[6]])
+        t.expectEqual(flows[1].memoIDs, [ids[0], ids[1], ids[3], ids[2], ids[7]])
+        t.expectEqual(flows[1].id, ids[0])
+        t.expectEqual(store.flow(containing: ids[3]), flows[1])
+        t.expectNil(store.flow(containing: ids[8]))
+        store.updateMeta(id: ids[3]) { $0.links = [MemoLink(to: ids[0], kind: .flow)] }
+        t.expectEqual(store.flow(containing: ids[0])?.memoIDs, [ids[7], ids[3], ids[0], ids[1], ids[2]])
+    }
+}
+
+runner.test("외부 파일의 같은 쌍 연결은 종류와 방향에 관계없이 하나로 그린다 (설계서 §4)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = MemoID.generate()
+    let b = MemoID.generate()
+    try repository.save(MemoDocument(meta: MemoMeta(id: a, links: [MemoLink(to: b, kind: .flow), MemoLink(to: b, kind: .related)]), body: ""))
+    try repository.save(MemoDocument(meta: MemoMeta(id: b, links: [MemoLink(to: a, kind: .flow)]), body: ""))
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        t.expectEqual(store.edges.count, 1)
+    }
+}
+
+runner.test("보드 배치는 저장과 재시작을 거치며 깨진 파일은 빈 값으로 읽힌다 (설계서 §4)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    t.expectEqual(try repository.loadBoardLayout(), .empty)
+    try MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let a = MemoID.generate()
+        let b = MemoID.generate()
+        store.setBoardPlacement(.init(x: -10, y: 20), for: a)
+        store.setBoardPlacements([a: .init(x: 30, y: 40), b: .init(x: 50, y: 60)])
+        store.setBentoSpan(.large, for: a)
+        let restarted = MemoStore(repository: repository)
+        t.expectEqual(restarted.boardLayout, store.boardLayout)
+        t.expectEqual(restarted.boardLayout.placement(for: a), .init(x: 30, y: 40))
+        t.expectEqual(restarted.boardLayout.placement(for: b), .init(x: 50, y: 60))
+        t.expectEqual(restarted.boardLayout.bentoSpan(for: a), .large)
+        store.setBentoSpan(nil, for: a)
+        restarted.reloadBoardLayout()
+        t.expectNil(restarted.boardLayout.bentoSpan(for: a))
+        try Data("깨진 JSON".utf8).write(to: root.appendingPathComponent("board.json"))
+        restarted.reloadBoardLayout()
+        t.expectEqual(restarted.boardLayout, .empty)
+    }
+    t.expectEqual(BoardLayout.BentoSpan.allCases.map(\.columns), [1, 2, 1, 2])
+    t.expectEqual(BoardLayout.BentoSpan.allCases.map(\.rows), [1, 1, 2, 2])
+}
+
 runner.finish()

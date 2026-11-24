@@ -17,12 +17,16 @@ public final class MemoStore {
     /// 휴지통 목록. 리스트 창에서 휴지통을 볼 때만 채운다 (TRS-02).
     public private(set) var trashed: [MemoSummary] = []
 
+    /// 메모 내용과 별도로 저장하는 공유 배치 (설계서 §4).
+    public private(set) var boardLayout: BoardLayout = .empty
+
     @ObservationIgnored private let repository: any MemoRepository
 
     public init(repository: any MemoRepository) {
         self.repository = repository
         reloadSummaries()
         reloadGroups()
+        reloadBoardLayout()
     }
 
     public func reloadSummaries() {
@@ -92,6 +96,121 @@ public final class MemoStore {
     /// 재시작 시 다시 띄울 메모들 (WIN-06).
     public var openMemos: [MemoSummary] {
         summaries.filter { $0.meta.isOpen }
+    }
+
+    // MARK: - 보드 배치와 연결 (설계서 §4)
+
+    public func reloadBoardLayout() {
+        boardLayout = (try? repository.loadBoardLayout()) ?? .empty
+    }
+
+    public func setBoardPlacement(_ placement: BoardLayout.Placement, for id: MemoID) {
+        setBoardPlacements([id: placement])
+    }
+
+    /// 자동 정리 결과를 한 번만 기록한다.
+    public func setBoardPlacements(_ placements: [MemoID: BoardLayout.Placement]) {
+        for (id, placement) in placements { boardLayout.placements[id.rawValue] = placement }
+        try? repository.saveBoardLayout(boardLayout)
+    }
+
+    public func setBentoSpan(_ span: BoardLayout.BentoSpan?, for id: MemoID) {
+        boardLayout.bentoSpans[id.rawValue] = span
+        try? repository.saveBoardLayout(boardLayout)
+    }
+
+    /// 한 쌍에는 종류와 방향에 관계없이 연결 하나만 남긴다.
+    public func link(from: MemoID, to: MemoID, kind: MemoLinkKind) {
+        guard from != to, summaries.contains(where: { $0.id == from }),
+              summaries.contains(where: { $0.id == to }) else { return }
+        if summaries.first(where: { $0.id == to })?.meta.links.contains(where: { $0.to == from }) == true {
+            updateMeta(id: to) { $0.links.removeAll { $0.to == from } }
+        }
+        updateMeta(id: from) {
+            $0.links.removeAll { $0.to == to }
+            $0.links.append(MemoLink(to: to, kind: kind))
+        }
+    }
+
+    public func unlink(_ a: MemoID, _ b: MemoID) {
+        for (source, target) in [(a, b), (b, a)] {
+            if summaries.first(where: { $0.id == source })?.meta.links.contains(where: { $0.to == target }) == true {
+                updateMeta(id: source) { $0.links.removeAll { $0.to == target } }
+            }
+        }
+    }
+
+    public var edges: [MemoEdge] {
+        let ids = Set(summaries.map(\.id))
+        var seen = Set<[String]>()
+        var result: [MemoEdge] = []
+        // 외부 파일의 중복도 한 쌍으로 합친다. ID순으로 골라 결과를 안정시킨다.
+        for summary in summaries.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
+            for link in summary.meta.links where link.to != summary.id && ids.contains(link.to) {
+                let pair = [summary.id.rawValue, link.to.rawValue].sorted()
+                guard seen.insert(pair).inserted else { continue }
+                result.append(MemoEdge(from: summary.id, to: link.to, kind: link.kind))
+            }
+        }
+        return result
+    }
+
+    public func linkCount(of id: MemoID) -> Int {
+        edges.count { $0.from == id || $0.to == id }
+    }
+
+    public var flows: [MemoFlow] {
+        let metas = Dictionary(summaries.map { ($0.id, $0.meta) }, uniquingKeysWith: { first, _ in first })
+        func createdBefore(_ a: MemoID, _ b: MemoID) -> Bool {
+            if metas[a]!.created != metas[b]!.created { return metas[a]!.created < metas[b]!.created }
+            return a.rawValue < b.rawValue
+        }
+        var adjacent: [MemoID: Set<MemoID>] = [:]
+        var outgoing: [MemoID: [MemoID]] = [:]
+        var incoming = Set<MemoID>()
+        for edge in edges where edge.kind == .flow {
+            adjacent[edge.from, default: []].insert(edge.to)
+            adjacent[edge.to, default: []].insert(edge.from)
+            outgoing[edge.from, default: []].append(edge.to)
+            incoming.insert(edge.to)
+        }
+        var remaining = Set(adjacent.keys)
+        var result: [MemoFlow] = []
+        for seed in remaining.sorted(by: createdBefore) where remaining.contains(seed) {
+            var component = Set<MemoID>()
+            var pending = [seed]
+            while let id = pending.popLast() {
+                guard component.insert(id).inserted else { continue }
+                pending.append(contentsOf: adjacent[id] ?? [])
+            }
+            remaining.subtract(component)
+            guard component.count >= 2 else { continue }
+            var visited = Set<MemoID>()
+            var ordered: [MemoID] = []
+            // 명시적 스택으로 깊이 우선 탐색해 긴 흐름에서도 호출 스택이 넘치지 않게 한다.
+            func visit(_ start: MemoID) {
+                var stack = [start]
+                while let id = stack.popLast() {
+                    guard visited.insert(id).inserted else { continue }
+                    ordered.append(id)
+                    stack.append(contentsOf: (outgoing[id] ?? []).sorted(by: createdBefore).reversed())
+                }
+            }
+            for root in component.filter({ !incoming.contains($0) }).sorted(by: createdBefore) { visit(root) }
+            // 시작점에서 닿지 못한 순환 메모는 생성순으로 뒤에 붙인다.
+            ordered.append(contentsOf: component.subtracting(visited).sorted(by: createdBefore))
+            result.append(MemoFlow(id: ordered[0], memoIDs: ordered))
+        }
+        return result.sorted {
+            if metas[$0.id]!.modified != metas[$1.id]!.modified {
+                return metas[$0.id]!.modified > metas[$1.id]!.modified
+            }
+            return $0.id.rawValue < $1.id.rawValue
+        }
+    }
+
+    public func flow(containing id: MemoID) -> MemoFlow? {
+        flows.first { $0.memoIDs.contains(id) }
     }
 
     // MARK: - 그룹 (LST-02, LST-03)
@@ -176,14 +295,26 @@ public final class MemoStore {
 
     public func permanentlyDelete(ids: [MemoID]) {
         guard !ids.isEmpty else { return }
+        var removed = Set<MemoID>()
         for id in ids {
-            try? repository.permanentlyDelete(id: id)
+            do {
+                try repository.permanentlyDelete(id: id)
+                removed.insert(id)
+            } catch {
+                // 지우지 못한 메모의 연결은 복원을 위해 남긴다 (TRS-04).
+                continue
+            }
+        }
+        reloadSummaries()
+        for summary in summaries where summary.meta.links.contains(where: { removed.contains($0.to) }) {
+            updateMeta(id: summary.id) { $0.links.removeAll { removed.contains($0.to) } }
         }
         reloadTrash()
     }
 
     public func emptyTrash() {
         try? repository.emptyTrash(deletedBefore: nil)
+        reloadSummaries()
         reloadTrash()
     }
 
@@ -192,6 +323,7 @@ public final class MemoStore {
         guard days > 0 else { return }
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         try? repository.emptyTrash(deletedBefore: cutoff)
+        reloadSummaries()
         reloadTrash()
     }
 
