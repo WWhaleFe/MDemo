@@ -21,10 +21,18 @@ final class AppContainer {
     let hotkeys = GlobalHotkeyService()
     let updateChecker: UpdateChecker
 
+    /// 개발·스크린샷용: `--data-dir=<폴더>`로 켜면 실제 데이터 대신 그 폴더만 읽고 쓴다.
+    /// 예전 데이터 옮기기와 동기화는 하지 않는다. 실제 메모를 건드리지 않고 시험 메모로 화면을 찍을 때 쓴다.
+    static let dataDirectoryOverride: URL? = CommandLine.arguments
+        .first { $0.hasPrefix("--data-dir=") }
+        .map { URL(fileURLWithPath: String($0.dropFirst("--data-dir=".count)), isDirectory: true) }
+
     init() {
+        let overrideRoot = Self.dataDirectoryOverride
         // 앱 이름이 MemoApp에서 MDemo로 바뀌며 저장 폴더와 앱 식별자가 달라졌다.
         // 예전 메모·설정을 새 자리로 복사한다. 반드시 데이터 폴더를 만들기 전에 해야 한다 —
         // 저장소가 빈 새 폴더를 먼저 만들면 옮겨 올 자리가 "이미 있음"으로 보여 건너뛴다.
+        if overrideRoot == nil {
         let migration = LegacyMigration.run(
             applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
             iCloudDrive: SyncService.iCloudDriveRoot(),
@@ -34,17 +42,20 @@ final class AppContainer {
         if !migration.errors.isEmpty {
             NSLog("MDemo: 예전 데이터를 옮기지 못한 항목이 있습니다 — %@", migration.errors.joined(separator: "; "))
         }
+        }
 
         let repository: any MemoRepository
         do {
-            repository = try FileMemoRepository(rootDirectory: FileMemoRepository.defaultRootDirectory())
+            repository = try FileMemoRepository(rootDirectory: overrideRoot ?? FileMemoRepository.defaultRootDirectory())
         } catch {
             // 데이터 폴더를 만들지 못하면 메모를 저장할 수 없다. 조용히 실패하면 더 위험하다.
             fatalError("데이터 폴더를 만들 수 없습니다: \(error)")
         }
 
         self.store = MemoStore(repository: repository)
-        self.deviceState = DeviceStateStore(fileURL: DeviceStateStore.defaultFileURL())
+        self.deviceState = DeviceStateStore(
+            fileURL: overrideRoot.map { $0.appendingPathComponent("device-state.json") } ?? DeviceStateStore.defaultFileURL()
+        )
         self.preferences = AppPreferences()
         self.updateChecker = UpdateChecker(preferences: preferences)
 
@@ -70,7 +81,8 @@ final class AppContainer {
                 isVisible: { [registry] id in registry.isVisible(id: id) },
                 open: { [registry] ids in registry.openMemos(ids: ids) },
                 hide: { [registry] ids in registry.hideMemos(ids: ids) },
-                arrange: { [registry] byGroup in registry.arrangeOpenWindows(byGroup: byGroup) }
+                arrange: { [registry] byGroup in registry.arrangeOpenWindows(byGroup: byGroup) },
+                arrangeInOrder: { [registry] ids in registry.arrangeWindows(inOrder: ids) }
             ),
             onOpenMemo: { [registry] id in registry.openMemo(id: id) },
             onCreateMemo: { [registry] in registry.createMemo() }

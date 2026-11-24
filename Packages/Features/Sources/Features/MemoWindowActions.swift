@@ -17,16 +17,20 @@ public struct MemoWindowActions {
     /// 떠 있는 창을 격자로 늘어놓는다. `byGroup`이면 그룹마다 줄을 나눈다 (LST-06, LST-11).
     public var arrange: (_ byGroup: Bool) -> Void
 
+    public var arrangeInOrder: ([MemoID]) -> Void
+
     public init(
         isVisible: @escaping (MemoID) -> Bool = { _ in false },
         open: @escaping ([MemoID]) -> Void = { _ in },
         hide: @escaping ([MemoID]) -> Void = { _ in },
-        arrange: @escaping (_ byGroup: Bool) -> Void = { _ in }
+        arrange: @escaping (_ byGroup: Bool) -> Void = { _ in },
+        arrangeInOrder: @escaping ([MemoID]) -> Void = { _ in }
     ) {
         self.isVisible = isVisible
         self.open = open
         self.hide = hide
         self.arrange = arrange
+        self.arrangeInOrder = arrangeInOrder
     }
 
     /// 창 계층이 없는 자리에서 쓰는 빈 구현.

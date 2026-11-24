@@ -50,7 +50,7 @@ final class SyncCoordinator {
         self.windowRegistry = windowRegistry
         self.preferences = preferences
 
-        if let remoteRoot = SyncService.defaultRemoteRoot() {
+        if AppContainer.dataDirectoryOverride == nil, let remoteRoot = SyncService.defaultRemoteRoot() {
             self.service = SyncService(
                 localRoot: FileMemoRepository.defaultRootDirectory(),
                 remoteRoot: remoteRoot,

@@ -1,538 +1,407 @@
+import AppKit
 import MemoCore
 import SwiftUI
 
-/// 모든 메모를 한눈에 보는 관리 창 (LST-01).
-///
-/// 왼쪽에 그룹, 오른쪽에 목록. 위에 검색과 정렬.
-/// 메모를 두 번 누르면 그 메모 창이 화면에 뜬다 (LST-04).
 public struct MemoListView: View {
     @Bindable private var model: MemoListModel
-
-    /// 메모를 열어 달라는 요청. 창을 다루는 일은 이 계층 밖에서 한다.
     private let onOpenMemo: (MemoID) -> Void
     private let onCreateMemo: () -> Void
+    @AppStorage("memoList.viewMode") private var savedMode = MemoListModel.ViewMode.list.rawValue
+    @State private var isConfirmingBulkOpen = false
+    @State private var pendingPermanentDelete: [MemoID] = []
+    @State private var addingGroup = false
+    @State private var groupName = ""
+    @State private var anchor: MemoID?
+    @State private var boardTarget: MemoID?
+    @FocusState private var searchFocused: Bool
+    @FocusState private var cardsFocused: Bool
 
-    public init(
-        model: MemoListModel,
-        onOpenMemo: @escaping (MemoID) -> Void,
-        onCreateMemo: @escaping () -> Void
-    ) {
+    public init(model: MemoListModel, onOpenMemo: @escaping (MemoID) -> Void, onCreateMemo: @escaping () -> Void) {
         self._model = Bindable(model)
         self.onOpenMemo = onOpenMemo
         self.onCreateMemo = onCreateMemo
     }
-
-    /// 한꺼번에 띄우기 전 확인. 창 하나마다 본문이 메모리에 올라온다 (§4-5).
-    @State private var isConfirmingBulkOpen = false
-
-    /// 영구 삭제 전 확인. 되돌릴 수 없으므로 개수와 함께 한 번 묻는다.
-    @State private var pendingPermanentDelete: [MemoID] = []
+    private var mode: MemoListModel.ViewMode { MemoListModel.ViewMode(rawValue: savedMode) ?? .list }
 
     public var body: some View {
+        let memos = model.visibleMemos
+        let index = model.linkIndex
         VStack(spacing: 0) {
-            // 버튼 줄은 창 전체 폭에 둔다. 왼쪽 목록에도 함께 걸리는 동작(모두 띄우기 등)이라
-            // 오른쪽 목록 위에만 두면 어디에 걸리는 동작인지 헷갈린다.
-            commandBar
-            Divider()
-
-            NavigationSplitView {
+            toolbar
+            Rectangle().fill(ListTheme.hairline).frame(height: 1)
+            HStack(spacing: 0) {
                 sidebar
-            } detail: {
-                memoList
+                Rectangle().fill(ListTheme.hairline).frame(width: 1)
+                VStack(spacing: 0) {
+                    if mode == .board && !model.isShowingTrash {
+                        BoardView(model: model, memos: memos, index: index, target: $boardTarget,
+                                  onOpen: { openMemos([$0]) }, onCreate: onCreateMemo, menu: { id in AnyView(rowMenu(for: menuTargets(id), index: index)) })
+                    } else {
+                        contentHeader(count: memos.count)
+                        if memos.isEmpty { emptyState }
+                        else if mode == .list || model.isShowingTrash && mode == .board { rows(memos, index: index) }
+                        else { cards(memos, index: index) }
+                    }
+                    selectionBar(index: index)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle("메모 목록")
+        .font(.system(size: 13)).foregroundStyle(ListTheme.ink).tint(ListTheme.ink).background(ListTheme.windowBg)
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear { model.refresh() }
-        .confirmationDialog(
-            "메모 \(model.visibleMemos.count)개를 모두 띄울까요?",
-            isPresented: $isConfirmingBulkOpen,
-            titleVisibility: .visible
-        ) {
+        .onChange(of: model.scope) { _, _ in anchor = nil }
+        .background {
+            Button("검색") { searchFocused = true }.keyboardShortcut("f").hidden()
+        }
+        .confirmationDialog("메모 \(model.visibleMemos.count)개를 모두 띄울까요?", isPresented: $isConfirmingBulkOpen, titleVisibility: .visible) {
             Button("모두 띄우기") { model.showAll() }
             Button("취소", role: .cancel) {}
-        } message: {
-            Text("창 하나마다 본문이 메모리에 올라옵니다. 화면이 가득 찰 수 있습니다.")
-        }
-        .confirmationDialog(
-            "메모 \(pendingPermanentDelete.count)개를 영구 삭제할까요?",
-            isPresented: Binding(
-                get: { !pendingPermanentDelete.isEmpty },
-                set: { if !$0 { pendingPermanentDelete = [] } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("영구 삭제", role: .destructive) {
-                model.deletePermanently(pendingPermanentDelete)
-                pendingPermanentDelete = []
-            }
-            Button("취소", role: .cancel) { pendingPermanentDelete = [] }
-        } message: {
-            Text("첨부 이미지까지 함께 지워지며 되돌릴 수 없습니다.")
-        }
+        } message: { Text("창 하나마다 본문이 메모리에 올라옵니다. 화면이 가득 찰 수 있습니다") }
+        .confirmationDialog("메모 \(pendingPermanentDelete.count)개를 영구 삭제할까요?", isPresented: Binding(
+            get: { !pendingPermanentDelete.isEmpty }, set: { if !$0 { pendingPermanentDelete = [] } }), titleVisibility: .visible) {
+                Button("영구 삭제", role: .destructive) { model.deletePermanently(pendingPermanentDelete); pendingPermanentDelete = [] }
+                Button("취소", role: .cancel) { pendingPermanentDelete = [] }
+            } message: { Text("첨부 이미지까지 함께 지워지며 되돌릴 수 없습니다") }
     }
 
-    // MARK: - 위: 버튼 줄 (LST-06, LST-09 ~ LST-11)
-
-    private var commandBar: some View {
-        HStack(spacing: 8) {
-            Button(action: onCreateMemo) {
-                Label("새 메모", systemImage: "square.and.pencil")
-            }
-            .help("새 메모 (어디서든 ⌘⇧N)")
-
-            Divider().frame(height: 16)
-
-            Button {
-                if model.needsBulkOpenConfirmation {
-                    isConfirmingBulkOpen = true
+    private var toolbar: some View {
+        HStack(spacing: 12) {
+            Color.clear.frame(minWidth: 72, idealWidth: 208, maxWidth: 208).layoutPriority(-2)
+            HStack(spacing: 0) {
+                ForEach(MemoListModel.ViewMode.allCases, id: \.self) { item in
+                    Button { savedMode = item.rawValue } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: item.symbol).font(.system(size: 16))
+                            Text(item.label).font(.system(size: 13, weight: mode == item ? .semibold : .regular))
+                        }.padding(.horizontal, 8).frame(height: 28)
+                            .background(mode == item ? ListTheme.card : .clear, in: RoundedRectangle(cornerRadius: 8))
+                            .shadow(color: mode == item ? .black.opacity(0.08) : .clear, radius: 2, y: 1)
+                    }.buttonStyle(.plain)
+                }
+            }.padding(3).background(ListTheme.track, in: RoundedRectangle(cornerRadius: 10))
+            Spacer(minLength: 0)
+            Menu {
+                Button("지금 목록 모두 띄우기") {
+                    if model.needsBulkOpenConfirmation { isConfirmingBulkOpen = true } else { model.showAll() }
+                }.disabled(model.isShowingTrash || model.visibleMemos.isEmpty)
+                Button("모두 내리기") { model.hideAll() }
+                Button("고른 메모 띄우기") { model.showSelection() }.disabled(model.isShowingTrash || model.selection.isEmpty)
+                Divider()
+                Button("창 나열") { model.arrangeWindows(byGroup: false) }
+                Button("그룹별로 나열") { model.arrangeWindows(byGroup: true) }
+            } label: { Label("창", systemImage: "macwindow.on.rectangle") }.fixedSize().menuStyle(.borderlessButton)
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(ListTheme.muted)
+                TextField("검색", text: $model.query).textFieldStyle(.plain).focused($searchFocused)
+                if model.query.isEmpty {
+                    Text("⌘F").font(.system(size: 12)).foregroundStyle(ListTheme.muted).padding(2).background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 4))
                 } else {
-                    model.showAll()
+                    Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(ListTheme.muted)
                 }
-            } label: {
-                Label("모두 띄우기", systemImage: "rectangle.stack")
-            }
-            .disabled(model.isShowingTrash || model.visibleMemos.isEmpty)
-            .help("지금 목록에 있는 메모를 모두 화면에 띄웁니다")
-
-            Button {
-                model.hideAll()
-            } label: {
-                Label("모두 숨기기", systemImage: "eye.slash")
-            }
-            .help("화면에서만 내립니다. 메모는 그대로 남습니다")
-
-            Button {
-                model.showSelection()
-            } label: {
-                Label("선택 띄우기", systemImage: "rectangle.badge.checkmark")
-            }
-            .disabled(model.isShowingTrash || model.selection.isEmpty)
-            .help("고른 메모만 화면에 띄웁니다")
-
-            Divider().frame(height: 16)
-
-            sortControls
-
-            Divider().frame(height: 16)
-
-            Button {
-                model.arrangeWindows(byGroup: false)
-            } label: {
-                Label("창 나열", systemImage: "square.grid.2x2")
-            }
-            .help("떠 있는 창을 화면에 격자로 늘어놓습니다")
-
-            Button {
-                model.arrangeWindows(byGroup: true)
-            } label: {
-                Label("그룹 나열", systemImage: "square.grid.3x1.below.line.grid.1x2")
-            }
-            .help("그룹마다 줄을 나눠 늘어놓습니다")
-
-            Spacer(minLength: 8)
-
-            searchField
-        }
-        .buttonStyle(.bordered)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+            }.padding(.horizontal, 8).frame(width: 220, height: 32)
+                .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(ListTheme.hairline))
+                .layoutPriority(-1)
+            Button(action: onCreateMemo) {
+                Label("새 메모", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(ListTheme.card)
+                    .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).fixedSize().help("새 메모 (어디서든 ⌘⇧N)")
+        }.padding(.horizontal, 12).frame(height: 52)
     }
-
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("검색어를 입력하세요", text: $model.query)
-                .textFieldStyle(.plain)
-            if !model.query.isEmpty {
-                Button {
-                    model.query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.quaternary.opacity(0.5), in: Capsule())
-        .frame(minWidth: 160, idealWidth: 240)
-    }
-
-    private var sortControls: some View {
-        HStack(spacing: 4) {
-            Picker("정렬", selection: $model.sortOrder.key) {
-                ForEach(MemoSortKey.allCases, id: \.self) { key in
-                    Text(key.label).tag(key)
-                }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 96)
-
-            Button {
-                model.sortOrder.ascending.toggle()
-            } label: {
-                Image(systemName: model.sortOrder.ascending ? "arrow.up" : "arrow.down")
-            }
-            .help(model.sortOrder.ascending ? "오름차순" : "내림차순")
-        }
-    }
-
-    // MARK: - 왼쪽: 그룹 (LST-02, LST-03)
 
     private var sidebar: some View {
-        List(selection: sidebarSelection) {
-            Section("보기") {
-                rows(model.viewSidebarItems)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(model.viewSidebarItems, id: \.scope) { item in sidebarRow(item.scope, title: item.scope.title, count: item.count) }
+                    HStack {
+                        Text("모음").font(.system(size: 12, weight: .medium)).foregroundStyle(ListTheme.muted)
+                        Spacer()
+                        Button { addingGroup.toggle() } label: { Image(systemName: "plus") }.buttonStyle(.plain)
+                            .popover(isPresented: $addingGroup) {
+                                HStack {
+                                    TextField("새 그룹", text: $groupName).onSubmit(addGroup)
+                                    Button("추가", action: addGroup).disabled(groupName.trimmingCharacters(in: .whitespaces).isEmpty)
+                                }.padding(16).frame(width: 260)
+                            }
+                    }.padding(.top, 20).padding(.bottom, 6).padding(.horizontal, 8)
+                    ForEach(model.groupSidebarItems, id: \.scope) { item in sidebarRow(item.scope, title: item.scope.title, count: item.count) }
+                    Text("흐름").font(.system(size: 12, weight: .medium)).foregroundStyle(ListTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, 20).padding(.bottom, 6)
+                    ForEach(model.flowSidebarItems, id: \.scope) { item in sidebarRow(item.scope, title: item.title, count: item.count) }
+                    if model.flowSidebarItems.isEmpty {
+                        Text("보드에서 메모를 이어 보세요").font(.system(size: 12)).foregroundStyle(ListTheme.muted).padding(.horizontal, 8)
+                    }
+                }
             }
-            Section("그룹") {
-                rows(model.groupSidebarItems)
-            }
-            Section {
-                sidebarRow(scope: .trash, count: model.store.trashed.count)
-                    .tag(MemoListModel.Scope.trash)
-            }
-        }
-        .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 280)
-        .safeAreaInset(edge: .bottom) {
-            GroupEditor(store: model.store)
-                .padding(8)
-        }
+            sidebarRow(.trash, title: "휴지통", count: model.store.trashed.count)
+        }.padding(12).frame(width: 232).background(ListTheme.sidebarBg)
     }
 
-    private func rows(_ items: [(scope: MemoListModel.Scope, count: Int)]) -> some View {
-        ForEach(items.indices, id: \.self) { index in
-            let item = items[index]
-            sidebarRow(scope: item.scope, count: item.count)
-                .tag(item.scope)
-        }
-    }
-
-    private var sidebarSelection: Binding<MemoListModel.Scope?> {
-        Binding(
-            get: { model.scope },
-            set: { newValue in
-                guard let newValue else { return }
-                model.prepare(for: newValue)
+    private func sidebarRow(_ scope: MemoListModel.Scope, title: String, count: Int) -> some View {
+        SidebarButton(selected: model.scope == scope, action: { model.prepare(for: scope) }) {
+            HStack(spacing: 8) {
+                Group {
+                    if scope == .visible { LimeDot() }
+                    else if case .flow = scope { FlowSymbol().stroke(ListTheme.ink, lineWidth: 1.5).frame(height: 12) }
+                    else { Image(systemName: sidebarIcon(scope)) }
+                }.frame(width: 16)
+                Text(title).lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted)
             }
-        )
-    }
-
-    private func sidebarRow(scope: MemoListModel.Scope, count: Int) -> some View {
-        HStack {
-            Image(systemName: iconName(for: scope))
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
-            Text(scope.title)
-            Spacer()
-            Text("\(count)")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
-        }
-        .contextMenu {
+        }.contextMenu {
             if case .group(let name) = scope {
                 Button("그룹 삭제", role: .destructive) {
                     model.store.deleteGroup(name)
                     if model.scope == scope { model.prepare(for: .all) }
                 }
             }
-            if case .trash = scope, !model.store.trashed.isEmpty {
-                Button("휴지통 비우기", role: .destructive) {
-                    model.store.emptyTrash()
-                }
-            }
+            if scope == .trash { Button("휴지통 비우기", role: .destructive) { model.store.emptyTrash() }.disabled(model.store.trashed.isEmpty) }
         }
     }
-
-    private func iconName(for scope: MemoListModel.Scope) -> String {
+    private func sidebarIcon(_ scope: MemoListModel.Scope) -> String {
         switch scope {
-        case .all: return "tray.full"
-        case .visible: return "eye"
-        case .hidden: return "eye.slash"
-        case .group: return "folder"
-        case .ungrouped: return "tray"
-        case .trash: return "trash"
+        case .all: "tray.full"
+        case .visible: "circle.fill"
+        case .hidden: "rectangle.on.rectangle.slash"
+        case .group: "folder"
+        case .ungrouped: "tray"
+        case .trash: "trash"
+        case .flow: "line.diagonal"
         }
     }
+    private func addGroup() {
+        let name = groupName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        model.store.createGroup(named: name); groupName = ""; addingGroup = false
+    }
 
-    // MARK: - 오른쪽: 목록 (LST-01, SRC-*)
+    private func contentHeader(count: Int) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(model.scopeTitle).font(.system(size: 20, weight: .bold)).lineLimit(1)
+            Text("\(count)").font(.system(size: 13).monospacedDigit()).foregroundStyle(ListTheme.muted)
+            Spacer()
+            if mode == .bento { Text("연결이 많고 최근에 고친 메모일수록 크게").font(.system(size: 12)).foregroundStyle(ListTheme.muted) }
+            Menu {
+                Picker("정렬", selection: $model.sortOrder.key) {
+                    ForEach(MemoSortKey.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                Button(model.sortOrder.ascending ? "내림차순" : "오름차순") { model.sortOrder.ascending.toggle() }
+            } label: {
+                Text(model.sortOrder.key == .modified ? "최근 수정 순" : model.sortOrder.key.label + " 순")
+            }.menuStyle(.borderlessButton).fixedSize()
+        }.padding(.horizontal, 32).padding(.vertical, 24)
+    }
 
-    /// 여러 개 고르기 (LST-05).
-    ///
-    /// ⌘ 클릭으로 하나씩 더하고 빼고, ⇧ 클릭으로 사이를 한꺼번에 고른다. ⌘A는 전체.
-    /// ⌃ 클릭도 ⌘ 클릭처럼 하나씩 고른다 (MemoListWindowController 참고).
-    /// 줄마다 탭 동작을 걸면 이 클릭들을 가로채므로, 두 번 누르기와 우클릭 메뉴는
-    /// 목록 전체에 한 번만 건다.
-    private var memoList: some View {
-        VStack(spacing: 0) {
-            if model.visibleMemos.isEmpty {
-                emptyState
-            } else {
-                List(model.visibleMemos, selection: $model.selection) { memo in
-                    MemoRow(
-                        memo: memo,
-                        showsDeletedDate: model.isShowingTrash,
-                        isOnScreen: model.isShowingTrash ? nil : model.windowActions.isVisible(memo.id),
-                        onToggleOnScreen: { model.toggleVisibility(of: memo.id) }
-                    )
-                        .tag(memo.id)
-                }
-                .listStyle(.inset)
-                .contextMenu(forSelectionType: MemoID.self) { ids in
-                    rowMenu(for: model.targets(for: ids))
-                } primaryAction: { ids in
-                    // 두 번 누르거나 엔터: 고른 메모를 모두 연다. 휴지통에서는 열 수 없다.
-                    guard !model.isShowingTrash else { return }
-                    openMemos(model.targets(for: ids))
-                }
-                .onDeleteCommand {
-                    // Delete 키: 목록에서는 휴지통으로, 휴지통에서는 영구 삭제(확인 후).
-                    let ids = model.orderedSelection
-                    guard !ids.isEmpty else { return }
-                    if model.isShowingTrash {
-                        pendingPermanentDelete = ids
-                    } else {
-                        model.moveToTrash(ids)
+    private func sections(_ memos: [MemoSummary]) -> [(String, [MemoSummary])] {
+        if case .flow = model.scope { return [("", memos)] }
+        if model.sortOrder.key != .modified { return [("", memos)] }
+        let calendar = Calendar.current
+        let now = Date()
+        func bucket(_ memo: MemoSummary) -> String {
+            let date = model.isShowingTrash ? memo.deletedAt ?? memo.meta.modified : memo.meta.modified
+            if calendar.isDateInToday(date) { return "오늘" }
+            if calendar.isDateInYesterday(date) { return "어제" }
+            if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) { return "이번 주" }
+            if calendar.isDate(date, equalTo: now, toGranularity: .month) { return "이번 달" }
+            return "이전"
+        }
+        let groups = Dictionary(grouping: memos, by: bucket)
+        let names = model.sortOrder.ascending ? ["이전", "이번 달", "이번 주", "어제", "오늘"] : ["오늘", "어제", "이번 주", "이번 달", "이전"]
+        return names.compactMap { name in groups[name].map { (name, $0) } }
+    }
+
+    private func rows(_ memos: [MemoSummary], index: MemoListModel.LinkIndex) -> some View {
+        List(selection: $model.selection) {
+            ForEach(sections(memos), id: \.0) { title, items in
+                Section {
+                    ForEach(items) { memo in
+                        HStack(spacing: 12) {
+                            MemoColorChip(memo: memo)
+                            HStack(spacing: 4) {
+                                Text(memo.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                                if memo.meta.conflictOf != nil { ConflictChip() }
+                            }.frame(maxWidth: 240, alignment: .leading)
+                            Text(memo.listPreview.replacingOccurrences(of: "\n", with: " ")).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                            MemoLinkChip(id: memo.id, index: index).frame(width: 136, alignment: .leading)
+                            Group { if !model.isShowingTrash && model.windowActions.isVisible(memo.id) { LimeDot() } else { Color.clear } }.frame(width: 8, height: 8)
+                            VStack(alignment: .trailing, spacing: 0) {
+                                Text(memo.listDate(trash: model.isShowingTrash))
+                                if let group = memo.meta.group { Text(group).lineLimit(1) }
+                            }.font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted).frame(width: 56, alignment: .trailing)
+                        }.frame(height: 48).tag(memo.id).listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                            .listRowSeparatorTint(ListTheme.hairline)
                     }
+                } header: {
+                    if !title.isEmpty { Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(ListTheme.muted) }
                 }
             }
-            selectionBar
-        }
+        }.listStyle(.plain).scrollContentBackground(.hidden)
+            .contextMenu(forSelectionType: MemoID.self) { ids in rowMenu(for: model.targets(for: ids), index: index) } primaryAction: { ids in
+                if !model.isShowingTrash { openMemos(model.targets(for: ids)) }
+            }
+            .onDeleteCommand(perform: deleteSelected)
     }
 
-    /// 아래 줄: 몇 개를 골랐는지, 고른 것에 바로 할 수 있는 일.
-    /// 버튼 줄까지 눈을 옮기지 않고 고른 자리 가까이에서 처리하게 한다.
-    @ViewBuilder
-    private var selectionBar: some View {
-        let ids = model.orderedSelection
-        let note = trashNote
-        if !ids.isEmpty || note != nil {
-            Divider()
-            HStack(spacing: 8) {
-                if ids.isEmpty {
-                    if let note {
-                        Label(note, systemImage: "clock.arrow.circlepath")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+    private func cards(_ memos: [MemoSummary], index: MemoListModel.LinkIndex) -> some View {
+        let spans = model.bentoSpans(for: memos)
+        return ScrollView {
+            Group {
+                if mode == .bento {
+                    BentoLayout {
+                        ForEach(memos) { memo in card(memo, index: index, span: spans[memo.id] ?? .small).bentoSpan(spans[memo.id] ?? .small) }
+                        if canCreateTile { newTile.bentoSpan(.small) }
                     }
                 } else {
-                    Text("\(ids.count)개 선택됨")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    Button("선택 해제") { model.selection = [] }
-                        .buttonStyle(.link)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 16)], spacing: 16) {
+                        ForEach(memos) { memo in card(memo, index: index, span: .small).frame(height: 176) }
+                        if canCreateTile { newTile.frame(height: 176) }
+                    }
                 }
-                Spacer()
-                if !ids.isEmpty {
-                    if model.isShowingTrash {
-                        Button {
-                            model.restore(ids)
-                        } label: {
-                            Label("복원", systemImage: "arrow.uturn.backward")
-                        }
-                        Button(role: .destructive) {
-                            pendingPermanentDelete = ids
-                        } label: {
-                            Label("영구 삭제", systemImage: "trash.slash")
-                        }
-                    } else {
-                        Button {
-                            openMemos(ids)
-                        } label: {
-                            Label("열기", systemImage: "macwindow")
-                        }
-                        Button(role: .destructive) {
-                            model.moveToTrash(ids)
-                        } label: {
-                            Label("휴지통으로", systemImage: "trash")
+            }.padding(.horizontal, 32).padding(.bottom, 32)
+        }.focusable().focused($cardsFocused).focusEffectDisabled()
+            .background(ListKeyboardCommands(selectAll: { model.selectAllVisible() }, delete: deleteSelected,
+                                             open: { if !model.isShowingTrash { openMemos(model.orderedSelection) } }))
+            .onDeleteCommand(perform: deleteSelected)
+            .onKeyPress(.return) { if !model.isShowingTrash { openMemos(model.orderedSelection) }; return .handled }
+            .onKeyPress("a", phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return .ignored }
+                model.selectAllVisible(); return .handled
+            }
+    }
+    private func card(_ memo: MemoSummary, index: MemoListModel.LinkIndex, span: BoardLayout.BentoSpan) -> some View {
+        MemoCardView(memo: memo, index: index, visible: !model.isShowingTrash && model.windowActions.isVisible(memo.id), trash: model.isShowingTrash, span: span, select: { model.selection = [$0] })
+            .modifier(CardSurface(selected: model.selection.contains(memo.id)))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .onTapGesture(count: 2) { if !model.isShowingTrash { openMemos([memo.id]) } }
+            .onTapGesture { select(memo.id) }
+            .contextMenu {
+                rowMenu(for: menuTargets(memo.id), index: index)
+                if mode == .bento {
+                    Divider()
+                    Menu("크기") {
+                        Button("자동") { model.setBentoSpan(nil, for: memo.id) }
+                        ForEach(BoardLayout.BentoSpan.allCases, id: \.self) { span in
+                            Button(spanLabel(span)) { model.setBentoSpan(span, for: memo.id) }
                         }
                     }
                 }
             }
-            .buttonStyle(.bordered)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+    }
+    private var canCreateTile: Bool { !model.isShowingTrash && model.query.isEmpty }
+    private var newTile: some View {
+        Button(action: onCreateMemo) { Label("새 메모", systemImage: "plus").frame(maxWidth: .infinity, maxHeight: .infinity) }
+            .buttonStyle(.plain).foregroundStyle(ListTheme.muted).background(PlaceholderSurface())
+    }
+    private func spanLabel(_ span: BoardLayout.BentoSpan) -> String {
+        switch span { case .small: "작게"; case .wide: "가로로 길게"; case .tall: "세로로 길게"; case .large: "크게" }
+    }
+    private func select(_ id: MemoID) {
+        cardsFocused = true
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        let ids = model.visibleMemos.map(\.id)
+        if flags.contains(.shift), let anchor, let start = ids.firstIndex(of: anchor), let end = ids.firstIndex(of: id) {
+            model.selection.formUnion(ids[min(start, end)...max(start, end)])
+        } else if flags.contains(.command) || flags.contains(.control) {
+            if !model.selection.insert(id).inserted { model.selection.remove(id) }
+            anchor = id
+        } else { model.selection = [id]; anchor = id }
+    }
+    private func menuTargets(_ id: MemoID) -> [MemoID] { model.selection.contains(id) ? model.orderedSelection : [id] }
+
+    @ViewBuilder private func selectionBar(index: MemoListModel.LinkIndex) -> some View {
+        let ids = model.orderedSelection
+        if !ids.isEmpty || model.isShowingTrash {
+            VStack(spacing: 8) {
+                if ids.count == 1, let id = ids.first, let context = index.flowByMemo[id] {
+                    HStack {
+                        FlowChips(flow: context.flow, current: id, index: index, select: { model.selection = [$0] })
+                        Button("보드에서 보기") { savedMode = "board"; boardTarget = id }
+                    }
+                }
+                HStack(spacing: 8) {
+                    if !ids.isEmpty {
+                        Text("\(ids.count)개 선택됨").monospacedDigit().foregroundStyle(ListTheme.muted)
+                        Button("선택 해제") { model.selection = [] }
+                    }
+                    Spacer()
+                    if !ids.isEmpty {
+                        if model.isShowingTrash {
+                            Button("복원") { model.restore(ids) }
+                            Button("영구 삭제", role: .destructive) { pendingPermanentDelete = ids }
+                        } else {
+                            Button("열기") { openMemos(ids) }
+                            Button("휴지통으로", role: .destructive) { model.moveToTrash(ids) }
+                        }
+                    }
+                }
+                if model.isShowingTrash {
+                    Text(model.trashRetentionDays().map { "휴지통에 들어간 지 \($0)일이 지나면 자동으로 지워집니다" } ?? "자동 비우기가 꺼져 있습니다. 직접 비울 때까지 남습니다")
+                        .font(.system(size: 12)).foregroundStyle(ListTheme.muted).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.buttonStyle(.bordered).padding(12).background(ListTheme.windowBg)
+                .overlay(alignment: .top) { Rectangle().fill(ListTheme.hairline).frame(height: 1) }
         }
     }
-
-    /// 휴지통에서만 보이는 안내. 자동 비우기가 꺼져 있으면 그렇다고 알린다.
-    private var trashNote: String? {
-        guard model.isShowingTrash else { return nil }
-        if let days = model.trashRetentionDays() {
-            return "휴지통에 들어간 지 \(days)일이 지나면 자동으로 지워집니다"
-        }
-        return "자동 비우기가 꺼져 있습니다. 직접 비울 때까지 남습니다"
-    }
-
-    /// 하나면 그 창을 앞으로 가져오고, 여럿이면 모두 띄운다.
-    private func openMemos(_ ids: [MemoID]) {
-        if ids.count == 1, let id = ids.first {
-            onOpenMemo(id)
-            model.noteWindowStateChanged()
-        } else {
-            model.open(ids)
-        }
-    }
-
     private var emptyState: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 12) {
             Spacer()
-            Text(model.query.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다")
-                .foregroundStyle(.secondary)
-            if model.query.isEmpty, !model.isShowingTrash {
-                Button("새 메모 만들기", action: onCreateMemo)
-                    .buttonStyle(.link)
-            }
+            Text(model.query.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다").foregroundStyle(ListTheme.muted)
+            if !model.isShowingTrash { Button("새 메모 만들기", action: onCreateMemo).buttonStyle(.link).tint(ListTheme.ink) }
             Spacer()
-        }
-        .frame(maxWidth: .infinity)
+        }.frame(maxWidth: .infinity)
     }
-
-    /// 우클릭 메뉴. 여러 개를 골라 두었으면 그 전부에 적용된다.
-    @ViewBuilder
-    private func rowMenu(for ids: [MemoID]) -> some View {
-        let suffix = ids.count > 1 ? " (\(ids.count)개)" : ""
-        if ids.isEmpty {
-            EmptyView()
-        } else if model.isShowingTrash {
-            Button("복원" + suffix) {
-                model.restore(ids)
-            }
-            Button("영구 삭제" + suffix + "…", role: .destructive) {
-                pendingPermanentDelete = ids
-            }
-        } else {
-            Button("열기" + suffix) { openMemos(ids) }
-            Divider()
-            Menu("그룹으로 이동" + suffix) {
-                Button("그룹 없음") { model.assign(ids, to: nil) }
-                ForEach(model.store.groups, id: \.self) { group in
-                    Button(group) { model.assign(ids, to: group) }
-                }
-            }
-            Divider()
-            Button("휴지통으로 이동" + suffix, role: .destructive) {
-                model.moveToTrash(ids)
-            }
-        }
+    private func deleteSelected() {
+        let ids = model.orderedSelection
+        guard !ids.isEmpty else { return }
+        if model.isShowingTrash { pendingPermanentDelete = ids } else { model.moveToTrash(ids) }
     }
-}
-
-/// 목록 한 줄 (LST-01).
-private struct MemoRow: View {
-    let memo: MemoSummary
-    let showsDeletedDate: Bool
-    /// 창이 화면에 떠 있는가. 휴지통에서는 뜻이 없으므로 nil.
-    let isOnScreen: Bool?
-    let onToggleOnScreen: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let isOnScreen {
-                // 한 줄에서 바로 띄우고 내릴 수 있어야 목록과 화면을 오가지 않는다 (LST-10).
-                Button(action: onToggleOnScreen) {
-                    Image(systemName: isOnScreen ? "eye" : "eye.slash")
-                        .foregroundStyle(isOnScreen ? Color.accentColor : Color.secondary.opacity(0.6))
+    private func openMemos(_ ids: [MemoID]) {
+        if ids.count == 1, let id = ids.first { onOpenMemo(id); model.noteWindowStateChanged() }
+        else { model.open(ids) }
+    }
+    @ViewBuilder private func rowMenu(for ids: [MemoID], index: MemoListModel.LinkIndex) -> some View {
+        if !ids.isEmpty {
+            if model.isShowingTrash {
+                Button("복원") { model.restore(ids) }
+                Button("영구 삭제…", role: .destructive) { pendingPermanentDelete = ids }
+            } else {
+                Button("열기") { openMemos(ids) }
+                Button("화면에 띄우기") { model.open(ids) }
+                Button("화면에서 내리기") { model.windowActions.hide(ids); model.noteWindowStateChanged() }
+                Menu("그룹으로 이동") {
+                    Button("미분류") { model.assign(ids, to: nil) }
+                    ForEach(model.store.groups, id: \.self) { group in Button(group) { model.assign(ids, to: group) } }
                 }
-                .buttonStyle(.plain)
-                .frame(width: 18)
-                .help(isOnScreen ? "화면에서 내리기" : "화면에 띄우기")
-            }
-
-            RoundedRectangle(cornerRadius: 3)
-                .fill(color)
-                .frame(width: 4)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Text(memo.title)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-
-                    // 두 기기에서 동시에 고쳐 갈라져 나온 사본 (SYNC-06).
-                    // 어느 쪽도 버리지 않았다는 표시이자, 정리해 달라는 신호다.
-                    if memo.meta.conflictOf != nil {
-                        Text("충돌 사본")
-                            .font(.caption2)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.orange.opacity(0.22), in: Capsule())
-                            .foregroundStyle(.orange)
-                            .help("다른 기기에서 같은 메모를 함께 고쳐 사본이 만들어졌습니다")
+                if ids.count == 1, let id = ids.first {
+                    let edges = index.edges.filter { $0.from == id || $0.to == id }
+                    if !edges.isEmpty {
+                        Menu("연결") {
+                            ForEach(edges, id: \.self) { edge in
+                                Button("\(index.summaries[edge.from == id ? edge.to : edge.from]?.title ?? "메모")와 연결 끊기") { model.unlink(edge.from, edge.to) }
+                            }
+                        }
                     }
                 }
-
-                if !previewText.isEmpty {
-                    Text(previewText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(dateText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let group = memo.meta.group {
-                    Text(group)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                Divider()
+                Button("휴지통으로 이동", role: .destructive) { model.moveToTrash(ids) }
             }
         }
-        .padding(.vertical, 3)
-    }
-
-    /// 제목으로 쓴 첫 줄은 미리보기에서 뺀다. 같은 글자가 두 번 보이면 지저분하다.
-    private var previewText: String {
-        memo.preview
-            .components(separatedBy: "\n")
-            .dropFirst()
-            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
-    }
-
-    private var dateText: String {
-        let date = showsDeletedDate ? (memo.deletedAt ?? memo.meta.modified) : memo.meta.modified
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M월 d일"
-        return formatter.string(from: date)
-    }
-
-    private var color: Color {
-        guard let rgb = MemoColor.components(fromHex: memo.meta.colorHex) else { return .gray }
-        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 }
 
-/// 그룹 추가 (LST-02).
-private struct GroupEditor: View {
-    let store: MemoStore
-    @State private var newGroupName = ""
-
+private struct SidebarButton<Content: View>: View {
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+    @State private var hovered = false
     var body: some View {
-        HStack(spacing: 6) {
-            TextField("새 그룹", text: $newGroupName)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(addGroup)
-            Button(action: addGroup) {
-                Image(systemName: "plus")
-            }
-            .buttonStyle(.borderless)
-            .disabled(newGroupName.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-    }
-
-    private func addGroup() {
-        store.createGroup(named: newGroupName)
-        newGroupName = ""
+        Button(action: action) {
+            content().font(.system(size: 13, weight: selected ? .semibold : .regular))
+                .padding(.horizontal, 8).frame(height: 32)
+                .background(selected ? ListTheme.card : hovered ? ListTheme.ink.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                .shadow(color: selected ? .black.opacity(0.04) : .clear, radius: 2, y: 1)
+        }.buttonStyle(.plain).onHover { hovered = $0 }
     }
 }

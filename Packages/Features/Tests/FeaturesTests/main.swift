@@ -291,4 +291,143 @@ runner.test("우클릭한 줄이 선택에 들어 있으면 선택 전체가 대
     }
 }
 
+runner.test("흐름 범위는 연결 순서를 지키고 검색과 사라진 흐름을 처리한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<3).map { _ in model.store.createMemo().id }
+        for (i, id) in ids.enumerated() { model.store.saveBody(id: id, body: "단계 \(i)") }
+        model.link(from: ids[2], to: ids[0], kind: .flow)
+        model.link(from: ids[0], to: ids[1], kind: .flow)
+        model.prepare(for: .flow(ids[2]))
+        model.sortOrder = .init(key: .title, ascending: true)
+        t.expectEqual(model.visibleMemos.map(\.id), [ids[2], ids[0], ids[1]])
+        t.expectEqual(model.scopeTitle, "단계 2")
+        let item = model.flowSidebarItems.first
+        t.expectEqual(item?.scope, .flow(ids[2]))
+        t.expectEqual(item?.title, "단계 2")
+        t.expectEqual(item?.count, 3)
+        t.expectEqual(model.flowContext(of: ids[0])?.index, 1)
+        model.query = "단계 0"
+        t.expectEqual(model.visibleMemos.map(\.id), [ids[0]])
+        model.unlink(ids[2], ids[0])
+        t.expectEqual(model.visibleMemos.count, 0)
+        t.expectEqual(model.linkIndex.linkCount[ids[2]], nil)
+    }
+}
+
+runner.test("벤토는 연결 점수와 최근 수정 보너스를 쓰고 수동 크기를 우선한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, windows, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<6).map { _ in model.store.createMemo().id }
+        model.link(from: ids[0], to: ids[1], kind: .related)
+        model.link(from: ids[0], to: ids[2], kind: .related)
+        windows.onScreen = [ids[0]]
+        var memos = model.store.summaries
+        let date = Date(timeIntervalSince1970: 1_000_000)
+        for i in memos.indices {
+            memos[i].meta.modified = date.addingTimeInterval(Double(i))
+            if memos[i].id == ids[3] { memos[i].preview = "할 일\n- [ ] 가\n- [x] 나\n- [ ] 다" }
+        }
+        // 체크박스 카드는 최근 수정 상위 세 개에서 제외한다.
+        let taskIndex = memos.firstIndex { $0.id == ids[3] }!
+        memos[taskIndex].meta.modified = .distantPast
+        let spans = model.bentoSpans(for: memos)
+        t.expectEqual(spans[ids[0]], .large)
+        t.expectEqual(spans[ids[3]], .tall)
+        t.expectEqual(spans.values.filter { $0 == .wide }.count, 2)
+        model.setBentoSpan(.small, for: ids[0])
+        t.expectEqual(model.bentoSpans(for: memos)[ids[0]], .small)
+        model.setBentoSpan(nil, for: ids[0])
+        t.expectEqual(model.bentoSpans(for: memos)[ids[0]], .large)
+    }
+}
+
+runner.test("연결 없는 벤토도 최근 수정 순위와 표시 상태로 점수를 매긴다") { t in
+    try MainActor.assumeIsolated {
+        let (model, windows, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<4).map { _ in model.store.createMemo().id }
+        var memos = ids.compactMap { id in model.store.summaries.first { $0.id == id } }
+        for i in memos.indices { memos[i].meta.modified = Date(timeIntervalSince1970: Double(100 - i)) }
+        t.expectEqual(model.bentoSpans(for: memos)[ids[0]], .large)
+        windows.onScreen = [ids[1]]
+        t.expectEqual(model.bentoSpans(for: memos)[ids[1]], .large)
+        t.expectEqual(model.bentoSpans(for: [])[ids[0]], nil)
+    }
+}
+
+runner.test("보드 기본 배치는 저장하지 않고 네 열로 채우며 저장값 아래에 놓는다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for _ in 0..<6 { model.store.createMemo() }
+        let memos = model.visibleMemos
+        let placements = model.boardPlacements(for: memos)
+        t.expectEqual(placements[memos[0].id], .init(x: 40, y: 100))
+        t.expectEqual(placements[memos[3].id], .init(x: 820, y: 100))
+        t.expectEqual(placements[memos[4].id], .init(x: 40, y: 280))
+        t.expect(model.store.boardLayout.placements.isEmpty)
+        model.store.setBoardPlacement(.init(x: -120, y: 500), for: memos[0].id)
+        let saved = model.boardPlacements(for: memos)
+        t.expectEqual(saved[memos[0].id], .init(x: -120, y: 500))
+        t.expectEqual(saved[memos[1].id], .init(x: 40, y: 680))
+        t.expectEqual(model.boardPlacements(for: []).count, 0)
+        model.moveCard(memos[1].id, to: .init(x: 53, y: 109))
+        t.expectEqual(model.store.boardLayout.placement(for: memos[1].id), .init(x: 60, y: 100))
+    }
+}
+
+runner.test("자동 정리는 흐름마다 한 줄을 만들고 관련 연결을 위치에 쓰지 않는다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<7).map { _ in model.store.createMemo().id }
+        model.link(from: ids[0], to: ids[1], kind: .flow)
+        model.link(from: ids[1], to: ids[2], kind: .flow)
+        model.link(from: ids[3], to: ids[4], kind: .flow)
+        model.link(from: ids[5], to: ids[6], kind: .related)
+        let memos = ids.compactMap { id in model.store.summaries.first { $0.id == id } }
+        let positions = model.autoArrangedPlacements(for: memos)
+        for (row, flow) in model.linkIndex.flows.enumerated() {
+            for (column, id) in flow.memoIDs.enumerated() {
+                t.expectEqual(positions[id], .init(x: 40 + Double(column) * 280, y: 100 + Double(row) * 180))
+            }
+        }
+        t.expectEqual(positions[ids[5]], .init(x: 40, y: 460))
+        t.expectEqual(positions[ids[6]], .init(x: 300, y: 460))
+        var ordered: [MemoID] = []
+        model.windowActions.arrangeInOrder = { ordered = $0 }
+        let revision = model.windowStateRevision
+        let flow = model.linkIndex.flows.first { $0.id == ids[0] }!
+        model.arrangeFlow(flow)
+        t.expectEqual(ordered, [ids[0], ids[1], ids[2]])
+        t.expectEqual(model.windowStateRevision, revision + 1)
+    }
+}
+
+runner.test("보기는 목록 그리드 벤토 보드 네 가지다") { t in
+    t.expectEqual(MemoListModel.ViewMode.allCases.map(\.rawValue), ["list", "grid", "bento", "board"])
+    t.expectEqual(MemoListModel.ViewMode.allCases.map(\.label), ["목록", "그리드", "벤토", "보드"])
+}
+
+runner.test("보드 붙여넣기는 본문과 그룹을 보존하고 위치와 선택을 기록한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        model.store.createGroup(named: "작업")
+        model.prepare(for: .group("작업"))
+        model.pasteMemo("붙인 제목\n붙인 본문", at: .init(x: 53, y: 91))
+        let memo = model.visibleMemos.first!
+        t.expectEqual(memo.title, "붙인 제목")
+        t.expectEqual(model.store.loadDocument(id: memo.id)?.body, "붙인 제목\n붙인 본문")
+        t.expectEqual(memo.meta.group, "작업")
+        t.expectEqual(model.selection, [memo.id])
+        t.expectEqual(model.store.boardLayout.placement(for: memo.id), .init(x: 60, y: 100))
+        let restarted = MemoStore(repository: try FileMemoRepository(rootDirectory: root))
+        t.expectEqual(restarted.boardLayout.placement(for: memo.id), .init(x: 60, y: 100))
+    }
+}
+
 runner.finish()

@@ -58,12 +58,15 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
 
         let window = NSWindow(
             // 버튼 줄이 한 줄에 다 들어가는 너비로 연다.
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "메모 목록"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.minSize = NSSize(width: 820, height: 520)
         window.contentView = NSHostingView(rootView: view)
         window.delegate = self
         window.isReleasedWhenClosed = false

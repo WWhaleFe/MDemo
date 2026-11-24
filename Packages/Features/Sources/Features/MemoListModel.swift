@@ -14,20 +14,22 @@ public final class MemoListModel {
         case all
         /// 지금 화면에 떠 있는 메모 (LST-09).
         case visible
-        /// 화면에 없는 메모 — 내려 둔 것과 한 번도 열지 않은 것 (LST-09).
+        /// 화면에 없는 메모 - 내려 둔 것과 한 번도 열지 않은 것 (LST-09).
         case hidden
         case group(String)
         case ungrouped
         case trash
+        case flow(MemoID)
 
         public var title: String {
             switch self {
-            case .all: return "전체"
-            case .visible: return "보이는 메모"
-            case .hidden: return "숨겨진 메모"
+            case .all: return "모든 메모"
+            case .visible: return "화면에 뜬 메모"
+            case .hidden: return "내려 둔 메모"
             case .group(let name): return name
-            case .ungrouped: return "그룹 없음"
+            case .ungrouped: return "미분류"
             case .trash: return "휴지통"
+            case .flow: return "흐름"
             }
         }
     }
@@ -75,6 +77,10 @@ public final class MemoListModel {
             base = query.trimmingCharacters(in: .whitespaces).isEmpty
                 ? matching
                 : matching.filter { MemoSearch.matches($0, query: query) }
+        case .flow(let id):
+            guard let flow = linkIndex.flows.first(where: { $0.id == id }) else { return [] }
+            let byID = Dictionary(uniqueKeysWithValues: store.summaries.map { ($0.id, $0) })
+            return flow.memoIDs.compactMap { byID[$0] }.filter { MemoSearch.matches($0, query: query) }
         case .trash:
             let needle = query.trimmingCharacters(in: .whitespaces)
             base = needle.isEmpty ? store.trashed : store.trashed.filter { MemoSearch.matches($0, query: needle) }
@@ -89,13 +95,13 @@ public final class MemoListModel {
 
     /// 왼쪽 목록에 표시할 항목들.
     ///
-    /// 세 묶음으로 나눈다 — 보기(전체·보이는·숨겨진), 그룹, 휴지통.
+    /// 세 묶음으로 나눈다 - 보기(전체·보이는·숨겨진), 그룹, 휴지통.
     /// 한 줄로 늘어놓으면 성격이 다른 항목이 뒤섞여 무엇을 고르는 것인지 알기 어렵다.
     public var sidebarItems: [(scope: Scope, count: Int)] {
         viewSidebarItems + groupSidebarItems + [(.trash, store.trashed.count)]
     }
 
-    /// 보기 묶음 — 전체 / 보이는 메모 / 숨겨진 메모 (LST-09).
+    /// 보기 묶음 - 전체 / 보이는 메모 / 숨겨진 메모 (LST-09).
     public var viewSidebarItems: [(scope: Scope, count: Int)] {
         _ = windowStateRevision
         let visibleCount = store.summaries.filter { windowActions.isVisible($0.id) }.count
@@ -127,6 +133,7 @@ public final class MemoListModel {
     public func refresh() {
         store.reloadSummaries()
         store.reloadGroups()
+        store.reloadBoardLayout()
         if isShowingTrash {
             store.reloadTrash()
         }
@@ -246,4 +253,158 @@ public final class MemoListModel {
     public func noteWindowStateChanged() {
         windowStateRevision &+= 1
     }
+
+    public enum ViewMode: String, CaseIterable {
+        case list, grid, bento, board
+        public var label: String {
+            switch self {
+            case .list: "목록"
+            case .grid: "그리드"
+            case .bento: "벤토"
+            case .board: "보드"
+            }
+        }
+        public var symbol: String {
+            switch self {
+            case .list: "list.bullet"
+            case .grid: "square.grid.2x2"
+            case .bento: "rectangle.3.group"
+            case .board: "point.3.connected.trianglepath.dotted"
+            }
+        }
+    }
+
+    public struct LinkIndex {
+        public var edges: [MemoEdge] = []
+        public var flows: [MemoFlow] = []
+        public var flowByMemo: [MemoID: (flow: MemoFlow, index: Int)] = [:]
+        public var linkCount: [MemoID: Int] = [:]
+        public var summaries: [MemoID: MemoSummary] = [:]
+        public func title(of flow: MemoFlow) -> String { summaries[flow.id]?.title ?? "흐름" }
+    }
+
+    @ObservationIgnored private var indexedSummaries: [MemoSummary]?
+    @ObservationIgnored private var cachedLinks = LinkIndex()
+
+    /// 연결 계산은 요약이 바뀔 때만 수행한다. 카드는 이 인덱스를 공유한다.
+    public var linkIndex: LinkIndex {
+        let summaries = store.summaries
+        if indexedSummaries != summaries {
+            var index = LinkIndex()
+            index.edges = store.edges
+            index.flows = store.flows
+            index.summaries = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
+            for edge in index.edges {
+                index.linkCount[edge.from, default: 0] += 1
+                index.linkCount[edge.to, default: 0] += 1
+            }
+            for flow in index.flows {
+                for (offset, id) in flow.memoIDs.enumerated() { index.flowByMemo[id] = (flow, offset) }
+            }
+            indexedSummaries = summaries
+            cachedLinks = index
+        }
+        return cachedLinks
+    }
+
+    public var scopeTitle: String {
+        if case .flow(let id) = scope, let flow = linkIndex.flows.first(where: { $0.id == id }) {
+            return linkIndex.title(of: flow)
+        }
+        return scope.title
+    }
+
+    public var flowSidebarItems: [(scope: Scope, title: String, count: Int)] {
+        let index = linkIndex
+        return index.flows.map { (.flow($0.id), index.title(of: $0), $0.memoIDs.count) }
+    }
+
+    public func flowContext(of id: MemoID) -> (flow: MemoFlow, index: Int)? { linkIndex.flowByMemo[id] }
+
+    public func bentoSpans(for memos: [MemoSummary]) -> [MemoID: BoardLayout.BentoSpan] {
+        let index = linkIndex
+        let recent = memos.sorted {
+            $0.meta.modified == $1.meta.modified ? $0.id.rawValue < $1.id.rawValue : $0.meta.modified > $1.meta.modified
+        }
+        let bonuses = Dictionary(uniqueKeysWithValues: recent.prefix(3).enumerated().map { ($0.element.id, 3 - $0.offset) })
+        func score(_ memo: MemoSummary) -> Int {
+            (index.linkCount[memo.id] ?? 0) * 3 + (windowActions.isVisible(memo.id) ? 2 : 0) + (bonuses[memo.id] ?? 0)
+        }
+        let ranked = memos.sorted {
+            score($0) == score($1) ? $0.id.rawValue < $1.id.rawValue : score($0) > score($1)
+        }
+        let ranks = Dictionary(uniqueKeysWithValues: ranked.enumerated().map { ($0.element.id, $0.offset) })
+        return Dictionary(uniqueKeysWithValues: memos.map { memo in
+            let span: BoardLayout.BentoSpan
+            if let manual = store.boardLayout.bentoSpan(for: memo.id) { span = manual }
+            else if ranks[memo.id] == 0 && score(memo) > 0 { span = .large }
+            else if (ranks[memo.id] ?? 3) < 3 { span = .wide }
+            else if Self.checklist(memo).count >= 3 { span = .tall }
+            else { span = .small }
+            return (memo.id, span)
+        })
+    }
+
+    public func boardPlacements(for memos: [MemoSummary]) -> [MemoID: BoardLayout.Placement] {
+        var result: [MemoID: BoardLayout.Placement] = [:]
+        for memo in memos { result[memo.id] = store.boardLayout.placement(for: memo.id) }
+        let startY = result.values.map { $0.y + 180 }.max() ?? 100
+        var offset = 0
+        for memo in memos where result[memo.id] == nil {
+            result[memo.id] = .init(x: 40 + Double(offset % 4) * 260, y: startY + Double(offset / 4) * 180)
+            offset += 1
+        }
+        return result
+    }
+
+    public func autoArrangedPlacements(for memos: [MemoSummary]) -> [MemoID: BoardLayout.Placement] {
+        let included = Set(memos.map(\.id))
+        var result: [MemoID: BoardLayout.Placement] = [:]
+        var row = 0
+        for flow in linkIndex.flows {
+            let ids = flow.memoIDs.filter { included.contains($0) }
+            guard !ids.isEmpty else { continue }
+            for (column, id) in ids.enumerated() {
+                result[id] = .init(x: 40 + Double(column) * 280, y: 100 + Double(row) * 180)
+            }
+            row += 1
+        }
+        for (offset, memo) in memos.filter({ result[$0.id] == nil }).enumerated() {
+            result[memo.id] = .init(x: 40 + Double(offset % 4) * 260, y: 100 + Double(row + offset / 4) * 180)
+        }
+        return result
+    }
+
+    public func link(from: MemoID, to: MemoID, kind: MemoLinkKind) { store.link(from: from, to: to, kind: kind) }
+    public func unlink(_ a: MemoID, _ b: MemoID) { store.unlink(a, b) }
+    public func openFlow(_ flow: MemoFlow) { open(flow.memoIDs) }
+    public func arrangeFlow(_ flow: MemoFlow) {
+        windowActions.arrangeInOrder(flow.memoIDs)
+        noteWindowStateChanged()
+    }
+    public func setBentoSpan(_ span: BoardLayout.BentoSpan?, for id: MemoID) { store.setBentoSpan(span, for: id) }
+    public func moveCard(_ id: MemoID, to placement: BoardLayout.Placement) { moveCards([id: placement]) }
+    public func moveCards(_ placements: [MemoID: BoardLayout.Placement]) {
+        store.setBoardPlacements(placements.mapValues {
+            .init(x: ($0.x / 20).rounded() * 20, y: ($0.y / 20).rounded() * 20)
+        })
+    }
+    public func autoArrange(_ memos: [MemoSummary]) { store.setBoardPlacements(autoArrangedPlacements(for: memos)) }
+    public func pasteMemo(_ body: String, at placement: BoardLayout.Placement) {
+        let group: String?
+        if case .group(let name) = scope { group = name } else { group = nil }
+        let meta = store.createMemo(group: group)
+        store.saveBody(id: meta.id, body: body)
+        moveCard(meta.id, to: placement)
+        selection = [meta.id]
+    }
+
+    public static func checklist(_ memo: MemoSummary) -> [(text: String, checked: Bool)] {
+        memo.preview.components(separatedBy: "\n").compactMap { line in
+            let text = line.trimmingCharacters(in: .whitespaces)
+            guard text.hasPrefix("- [ ] ") || text.hasPrefix("- [x] ") || text.hasPrefix("- [X] ") else { return nil }
+            return (String(text.dropFirst(6)), !text.hasPrefix("- [ ] "))
+        }
+    }
+
 }

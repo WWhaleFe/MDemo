@@ -419,6 +419,31 @@ public final class WindowRegistry {
         }
     }
 
+    /// 주어진 순서대로 왼쪽 위에서부터 창 크기를 유지하며 줄을 바꿔 놓는다.
+    public func arrangeWindows(inOrder ids: [MemoID]) {
+        openMemos(ids: ids)
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let gap: CGFloat = 12
+        var x = screen.minX + gap
+        var top = screen.maxY - gap
+        var rowHeight: CGFloat = 0
+        var seen = Set<MemoID>()
+        for id in ids where seen.insert(id).inserted {
+            guard let controller = controllers[id] else { continue }
+            let size = controller.currentFrame.size
+            let width = min(size.width, screen.width - 2 * gap)
+            if x + width > screen.maxX - gap && x > screen.minX + gap {
+                x = screen.minX + gap
+                top -= rowHeight + gap
+                rowHeight = 0
+            }
+            controller.setFrame(NSRect(x: x, y: top - size.height, width: width, height: size.height))
+            x += width + gap
+            rowHeight = max(rowHeight, size.height)
+        }
+        onWindowStateChange?()
+    }
+
     /// 한 번에 감췄다 보였다 한다 (SYS-04).
     /// 화면을 잠깐 치우고 싶을 때 쓰는 기능이라, 상태를 기억했다가 되돌린다.
     public func toggleAllHidden() {
