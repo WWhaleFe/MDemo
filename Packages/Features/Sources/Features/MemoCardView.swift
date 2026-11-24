@@ -3,8 +3,12 @@ import SwiftUI
 
 extension MemoSummary {
     var listPreview: String {
-        preview.components(separatedBy: "\n").dropFirst().filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.joined(separator: "\n")
+        cleanedPreview()
     }
+    func cleanedPreview(singleLine: Bool = false) -> String {
+        cleanedMemoPreview(preview, singleLine: singleLine)
+    }
+
     func listDate(trash: Bool) -> String {
         let date = trash ? (deletedAt ?? meta.modified) : meta.modified
         let formatter = DateFormatter()
@@ -12,6 +16,22 @@ extension MemoSummary {
         formatter.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M월 d일"
         return formatter.string(from: date)
     }
+}
+
+/// 목록과 카드에서 같은 규칙으로 마크다운 기호를 걷어 낸다.
+func cleanedMemoPreview(_ preview: String, singleLine: Bool = false, excludingTitle: Bool = true) -> String {
+    preview.components(separatedBy: "\n").dropFirst(excludingTitle ? 1 : 0).compactMap { line -> String? in
+        var text = line.trimmingCharacters(in: .whitespaces)
+        guard !text.hasPrefix("```") else { return nil }
+        let prefix = #"^(?:[-*+]\s+\[[ xX]\]\s*|[-*+]\s+|\d+\.\s+|>\s*|#+\s*)"#
+        while let range = text.range(of: prefix, options: .regularExpression) {
+            text.removeSubrange(range)
+        }
+        for marker in ["**", "__", "~~", "`", "*", "_"] {
+            text = text.replacingOccurrences(of: marker, with: "")
+        }
+        return text.isEmpty ? nil : text
+    }.joined(separator: singleLine ? " · " : "\n")
 }
 
 struct MemoColorChip: View {
@@ -40,7 +60,8 @@ struct MemoLinkChip: View {
         if let context = index.flowByMemo[id] {
             HStack(spacing: 4) {
                 FlowSymbol().stroke(ListTheme.text2, lineWidth: 1.5).frame(width: 16, height: 12)
-                Text("\(index.title(of: context.flow)) \(context.index + 1)/\(context.flow.memoIDs.count)").lineLimit(1)
+                Text(index.title(of: context.flow)).lineLimit(1).truncationMode(.tail)
+                Text("\(context.index + 1)/\(context.flow.memoIDs.count)").monospacedDigit().fixedSize()
             }.font(.system(size: 12)).foregroundStyle(ListTheme.text2)
                 .padding(4).background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 4))
         } else if let count = index.linkCount[id], count > 0 {
@@ -124,7 +145,7 @@ struct MemoCardView: View {
                 ForEach(Array(tasks.prefix(6).enumerated()), id: \.offset) { _, task in
                     HStack(spacing: 8) {
                         Image(systemName: task.checked ? "checkmark.square.fill" : "square").font(.system(size: 14)).foregroundStyle(ListTheme.ink)
-                        Text(task.text).font(.system(size: 13)).foregroundStyle(ListTheme.text2).lineLimit(1)
+                        Text(cleanedMemoPreview(task.text, excludingTitle: false)).font(.system(size: 13)).foregroundStyle(ListTheme.text2).lineLimit(1)
                     }
                 }
                 if tasks.isEmpty { preview }
@@ -139,7 +160,7 @@ struct MemoCardView: View {
             }
             HStack(spacing: 4) {
                 if board {
-                    Text("연결 \(index.linkCount[memo.id] ?? 0)")
+                    MemoLinkChip(id: memo.id, index: index)
                 } else if span != .large || index.flowByMemo[memo.id] == nil { MemoLinkChip(id: memo.id, index: index) }
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 0) {

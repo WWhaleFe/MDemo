@@ -1,4 +1,4 @@
-import Features
+@testable import Features
 import Foundation
 import MemoCore
 import TestKit
@@ -428,6 +428,13 @@ runner.test("보드 붙여넣기는 본문과 그룹을 보존하고 위치와 �
         let restarted = MemoStore(repository: try FileMemoRepository(rootDirectory: root))
         t.expectEqual(restarted.boardLayout.placement(for: memo.id), .init(x: 60, y: 100))
     }
+}
+
+runner.test("미리보기는 마크다운 기호를 지우고 줄 표시 방식을 나눈다") { t in
+    let source = "제목\n- [ ] **준비**\n- [x] __완료__\n* 항목\n+ 추가\n12. 순서\n> 인용\n### 소제목\n```swift\n`코드` ~~취소~~ *기울임*\n```"
+    let lines = ["준비", "완료", "항목", "추가", "순서", "인용", "소제목", "코드 취소 기울임"]
+    t.expectEqual(cleanedMemoPreview(source), lines.joined(separator: "\n"))
+    t.expectEqual(cleanedMemoPreview(source, singleLine: true), lines.joined(separator: " · "))
 }
 
 runner.finish()

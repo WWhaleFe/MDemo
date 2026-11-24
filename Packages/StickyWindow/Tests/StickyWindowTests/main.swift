@@ -144,7 +144,7 @@ runner.test("창을 닫으면 컨트롤러가 해제된다 (NFR-10)") { t in
         t.expectEqual(registry.openCount, 1)
 
         registry.closeMemo(id: id)
-        t.expectEqual(registry.openCount, 0, "닫았는데 컨트롤러가 남아 있다 — 본문이 메모리에 계속 있다는 뜻")
+        t.expectEqual(registry.openCount, 0, "닫았는데 컨트롤러가 남아 있다, 본문이 메모리에 계속 있다는 뜻")
     }
 }
 
@@ -249,7 +249,7 @@ runner.test("띄우기와 숨기기는 창을 지우지 않는다 (LST-10)") { t
 
         registry.hideMemos(ids: [id])
         t.expect(!registry.isVisible(id: id), "숨겨지지 않았다")
-        t.expectEqual(registry.openCount, 1, "숨기기가 창을 해제했다 — 다시 띄울 때 파일을 또 읽게 된다")
+        t.expectEqual(registry.openCount, 1, "숨기기가 창을 해제했다, 다시 띄울 때 파일을 또 읽게 된다")
 
         registry.openMemos(ids: [id])
         t.expect(registry.isVisible(id: id), "다시 띄워지지 않았다")
@@ -295,7 +295,7 @@ runner.test("버튼 이름표가 떠도 창 크기는 그대로다 (FMT-05)") { 
         let (registry, _, root, preferences) = try makeRegistryWithPreferences()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        // 아래쪽 막대에서 오른쪽 끝 버튼 — 창이 갑자기 넓어지던 자리다.
+        // 아래쪽 막대에서 오른쪽 끝 버튼, 창이 갑자기 넓어지던 자리다.
         preferences.formatToolbarPosition = .bottom
         let id = registry.createMemo()
         let before = registry.frame(of: id)
@@ -401,6 +401,36 @@ runner.test("자동 줄바꿈은 기본으로 켜져 있고, 끄면 긴 줄이 �
         if let widths = registry.textWidths(of: id) {
             t.expect(widths.used <= widths.visible + 1, "창을 줄였더니 글이 밖으로 나갔다: \(widths.used) > \(widths.visible)")
         }
+    }
+}
+
+runner.test("흐름 줄은 이웃 메모와 연결 해제를 반영한다") { t in
+    try MainActor.assumeIsolated {
+        let (registry, store, root) = try makeRegistry()
+        defer { registry.closeAll(); try? FileManager.default.removeItem(at: root) }
+        let first = registry.createMemo()
+        let middle = registry.createMemo()
+        let last = registry.createMemo()
+        t.expectEqual(registry.flowStripState(of: first)?.isVisible, false)
+        store.link(from: first, to: middle, kind: .flow)
+        store.link(from: middle, to: last, kind: .flow)
+        registry.refreshFlowStrips()
+        t.expectEqual(registry.flowStripState(of: middle)?.isVisible, true)
+        t.expectEqual(registry.flowStripState(of: middle)?.previous, first)
+        t.expectEqual(registry.flowStripState(of: middle)?.next, last)
+        t.expectEqual(registry.flowStripState(of: first)?.previous, nil)
+        t.expectEqual(registry.flowStripState(of: last)?.next, nil)
+        registry.toggleCollapsed(id: middle)
+        t.expectEqual(registry.flowStripState(of: middle)?.isVisible, false)
+        registry.toggleCollapsed(id: middle)
+        t.expectEqual(registry.flowStripState(of: middle)?.isVisible, true)
+        store.unlink(first, middle)
+        registry.refreshFlowStrips()
+        t.expectEqual(registry.flowStripState(of: first)?.isVisible, false)
+        t.expectEqual(registry.flowStripState(of: middle)?.previous, nil)
+        store.unlink(middle, last)
+        registry.refreshFlowStrips()
+        t.expectEqual(registry.flowStripState(of: middle)?.isVisible, false)
     }
 }
 

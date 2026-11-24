@@ -317,6 +317,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             store.reloadGroups()
             windowRegistry.reconcileOpenWindows(with: store)
             listWindow.refreshIfOpen()
+            windowRegistry.refreshFlowStrips()
             showInfo("복원했습니다", detail: "메모 \(store.summaries.count)개")
         } catch {
             showError("복원에 실패했습니다", error: error)
@@ -337,6 +338,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             imported += 1
         }
         listWindow.refreshIfOpen()
+        windowRegistry.refreshFlowStrips()
         showInfo("가져왔습니다", detail: "메모 \(imported)개")
     }
 
@@ -455,7 +457,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     /// 누를 수 없는 안내 줄 (MenuInfoView 참고).
-    /// 이름은 조금 굵게, 설명은 보통 굵기로 — 둘 다 본문 색이라 흐려지지 않는다. 설명은 탭으로 줄을 맞춘다.
+    /// 이름은 조금 굵게, 설명은 보통 굵기로, 둘 다 본문 색이라 흐려지지 않는다. 설명은 탭으로 줄을 맞춘다.
     private func infoItem(_ label: String, detail: String = "") -> NSMenuItem {
         let paragraph = NSMutableParagraphStyle()
         paragraph.tabStops = [NSTextTab(textAlignment: .left, location: Self.infoDetailColumn)]
@@ -526,7 +528,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             }
         }
         if resolved == nil, let fallback = FontResolver.defaultFamily() {
-            fontMenu.items.first?.title = "자동 — \(fallback)"
+            fontMenu.items.first?.title = "자동, \(fallback)"
         }
     }
 
@@ -665,6 +667,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if preferences.autoEmptyTrash {
             store.emptyTrash(olderThan: AppPreferences.trashRetentionDays)
             listWindow.refreshIfOpen()
+            windowRegistry.refreshFlowStrips()
         }
     }
 
@@ -692,6 +695,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func newMemo() {
         windowRegistry.createMemo()
         listWindow.refreshIfOpen()
+        windowRegistry.refreshFlowStrips()
     }
 
     @objc private func showList() {

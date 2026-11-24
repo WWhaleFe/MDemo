@@ -121,7 +121,8 @@ struct BoardView: View {
                 model.pasteMemo(text, at: .init(x: center.x - 100, y: center.y - 60)); return .handled
             }
             .onChange(of: target) { _, id in if let id { center(on: id, size: geo.size, positions: positions) } }
-            .onAppear { if let target { center(on: target, size: geo.size, positions: positions) } }
+            .onAppear { initialFit(size: geo.size, positions: positions) }
+            .onChange(of: model.scope) { _, _ in initialFit(size: geo.size, positions: positions) }
         }
     }
 
@@ -272,9 +273,17 @@ struct BoardView: View {
         zoom = min(2, max(0.4, value))
         pan = CGSize(width: center.x - before.x * zoom, height: center.y - before.y * zoom)
     }
+    private func initialFit(size: CGSize, positions: [MemoID: BoardLayout.Placement]) {
+        zoom = 1
+        pan = .zero
+        if let bounds = allBounds(positions), !CGRect(origin: .zero, size: size).insetBy(dx: 40, dy: 80).contains(bounds) {
+            fit(size: size, positions: positions)
+        }
+        if let target { center(on: target, size: size, positions: positions) }
+    }
     private func fit(size: CGSize, positions: [MemoID: BoardLayout.Placement]) {
         guard let bounds = allBounds(positions) else { return }
-        zoom = min(2, max(0.4, min((size.width - 80) / bounds.width, (size.height - 160) / bounds.height)))
+        zoom = min(1, max(0.01, min((size.width - 80) / bounds.width, (size.height - 160) / bounds.height)))
         pan = CGSize(width: size.width / 2 - bounds.midX * zoom, height: size.height / 2 - bounds.midY * zoom)
     }
     private func center(on id: MemoID, size: CGSize, positions: [MemoID: BoardLayout.Placement]) {

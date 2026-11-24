@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import MemoCore
 import Services
+import Observation
 
 /// 열려 있는 스티키 창을 관리한다 (WIN-01, WIN-05/06).
 ///
@@ -23,6 +24,36 @@ public final class WindowRegistry {
         self.store = store
         self.deviceState = deviceState
         self.preferences = preferences
+        observeFlowChanges()
+    }
+
+    private func observeFlowChanges() {
+        withObservationTracking {
+            _ = store.summaries
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.refreshFlowStrips()
+                self?.observeFlowChanges()
+            }
+        }
+    }
+
+    public func refreshFlowStrips() {
+        guard !controllers.isEmpty else { return }
+        let summaries = Dictionary(uniqueKeysWithValues: store.summaries.map { ($0.id, $0) })
+        var flows: [MemoID: MemoFlow] = [:]
+        for flow in store.flows {
+            for id in flow.memoIDs { flows[id] = flow }
+        }
+        for (id, controller) in controllers {
+            controller.updateFlowStrip(flow: flows[id], summaries: summaries) { [weak self] target in
+                self?.openMemo(id: target)
+            }
+        }
+    }
+
+    public func flowStripState(of id: MemoID) -> (isVisible: Bool, previous: MemoID?, next: MemoID?)? {
+        controllers[id]?.flowStripState
     }
 
     public var openCount: Int { controllers.count }
@@ -111,6 +142,7 @@ public final class WindowRegistry {
         }
         controller.setHoverOpaqueEnabled(preferences.hoverOpaque)
         controllers[meta.id] = controller
+        refreshFlowStrips()
         controller.show()
         // 접힌 채로 닫았다면 그대로 되살린다 (WIN-08).
         controller.restoreCollapsedStateIfNeeded()
@@ -132,7 +164,7 @@ public final class WindowRegistry {
 
     /// 글자 크기를 한 단계 올리거나 내린다 (TXT-03).
     ///
-    /// 서식 막대의 A- / A+ 버튼이 쓴다. 단계는 메뉴의 글자 크기 목록과 같은 것을 쓴다 —
+    /// 서식 막대의 A- / A+ 버튼이 쓴다. 단계는 메뉴의 글자 크기 목록과 같은 것을 쓴다.
     /// 두 곳에서 다른 값이 나오면 설정이 어긋나 보인다.
     public func stepFontSize(by delta: Int) {
         let steps = EditorTheme.fontSizeSteps

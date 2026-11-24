@@ -15,6 +15,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     public private(set) var meta: MemoMeta
 
     private let panel: StickyPanel
+    private let flowStrip = FlowStripView(frame: .zero)
+    private var hasFlow = false
     private let rootView: StickyRootView
     private let textView: MemoTextView
     private let scrollView: NSScrollView
@@ -511,7 +513,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 지금 누르면 무엇이 일어날지 버튼이 말해 준다.
     ///
     /// 창을 접는다는 뜻이 분명한 그림을 쓰고,
-    /// 시스템에 없는 이름이면 화살표로 물러선다 — 빈 버튼이 남는 것보다 낫다.
+    /// 시스템에 없는 이름이면 화살표로 물러선다, 빈 버튼이 남는 것보다 낫다.
     private func updateFoldButtonImage() {
         let size = Self.closeButtonSize(for: Self.chromeFontSize)
         foldButton.image = Self.symbolImage(
@@ -559,7 +561,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         //
         // 오토레이아웃으로 붙이면 이름표의 너비가 창 크기에 끼어든다.
         // 창의 크기는 레이아웃 엔진에서 우선순위 500짜리 변수라, 그보다 높은 제약이 걸리면
-        // 창이 스스로 늘어난다 — 오른쪽 끝 버튼에 마우스를 올렸을 때 창이 갑자기 넓어지던 원인이다.
+        // 창이 스스로 늘어난다, 오른쪽 끝 버튼에 마우스를 올렸을 때 창이 갑자기 넓어지던 원인이다.
         // 좌표로 두면 이름표가 창 크기에 아무 영향도 주지 않는다.
         let available = rootView.bounds
         let size = toolbarHintLabel.update(
@@ -652,6 +654,18 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     // MARK: - 서식 막대 자리 (FMT-01, FMT-02)
 
+    func updateFlowStrip(flow: MemoFlow?, summaries: [MemoID: MemoSummary], onOpen: @escaping (MemoID) -> Void) {
+        let changed = hasFlow != (flow != nil)
+        hasFlow = flow != nil
+        flowStrip.update(flow: flow, current: memoID, summaries: summaries)
+        flowStrip.onOpen = onOpen
+        if changed { layoutSections() }
+    }
+
+    var flowStripState: (isVisible: Bool, previous: MemoID?, next: MemoID?) {
+        (!flowStrip.isHidden && hasFlow, flowStrip.previous, flowStrip.next)
+    }
+
     /// 머리 영역·서식 막대·본문의 세로 배치를 다시 잡는다.
     ///
     /// 막대는 위·아래를 오갈 수 있으므로, 자리와 얽힌 제약만 따로 모아 통째로 갈아 끼운다.
@@ -663,6 +677,13 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
         // 접혀 있는 동안에는 막대도 배치에서 빼야 한다.
         // 감추기만 하면 제약이 그대로 남아, 창이 제목 줄 높이까지 줄어들지 않는다 (WIN-08).
+        let showFlow = hasFlow && !isCollapsed
+        if flowStrip.superview == nil {
+            flowStrip.translatesAutoresizingMaskIntoConstraints = false
+            rootView.addSubview(flowStrip, positioned: .below, relativeTo: resizeOverlay)
+        }
+        flowStrip.isHidden = !showFlow
+        let bottom = showFlow ? flowStrip.topAnchor : rootView.bottomAnchor
         let position: FormatToolbarPosition = isCollapsed ? .hidden : toolbarPosition
 
         if position == .hidden {
@@ -684,7 +705,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             // 창 가장자리 띠(크기 조절 자리)에는 본문도 스크롤 막대도 두지 않는다.
             // 겹치면 가장자리에 댄 마우스를 본문이 가로채 글자 커서로 바뀐다.
             scrollView.bottomAnchor.constraint(
-                equalTo: position == .bottom ? formatToolbar.topAnchor : rootView.bottomAnchor,
+                equalTo: position == .bottom ? formatToolbar.topAnchor : bottom,
                 // 접혀 있을 때는 본문이 없으므로 여백도 두지 않는다. 두면 접힌 창이 그만큼 커진다.
                 constant: position == .bottom ? -2 : (isCollapsed ? 0 : -ResizeOverlayView.edgeThickness)
             ),
@@ -713,7 +734,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
                 formatToolbar.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
                 formatToolbar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
                 formatToolbar.bottomAnchor.constraint(
-                    equalTo: rootView.bottomAnchor,
+                    equalTo: bottom,
                     constant: -ResizeOverlayView.reservedInset
                 ),
             ]
@@ -722,7 +743,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             constraints += [
                 formatToolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
                 formatToolbar.bottomAnchor.constraint(
-                    equalTo: rootView.bottomAnchor,
+                    equalTo: bottom,
                     constant: -ResizeOverlayView.reservedInset
                 ),
                 // 옆 가장자리도 크기 조절 자리라 그만큼 안으로 들인다.
@@ -738,6 +759,14 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             ]
         }
 
+        if showFlow {
+            constraints += [
+                flowStrip.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+                flowStrip.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+                flowStrip.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+                flowStrip.heightAnchor.constraint(equalToConstant: 36),
+            ]
+        }
         sectionConstraints = constraints
         NSLayoutConstraint.activate(constraints)
         // 이름표는 막대를 따라다닌다. 자리가 바뀌면 떠 있던 것을 지운다.
@@ -1035,7 +1064,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         store?.updateMeta(id: memoID) { $0.isPinned = isPinned }
     }
 
-    /// 핀 아이콘만 지금 상태에 맞춘다. 파일은 건드리지 않는다 —
+    /// 핀 아이콘만 지금 상태에 맞춘다. 파일은 건드리지 않는다.
     /// 글자 크기를 바꿀 때마다 메모의 수정 시각이 갱신되면 헛된 동기화 충돌이 생긴다.
     private func updatePinImage() {
         pinButton.image = NSImage(

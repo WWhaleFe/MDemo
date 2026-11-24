@@ -223,13 +223,13 @@ public struct MemoListView: View {
                                 Text(memo.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                                 if memo.meta.conflictOf != nil { ConflictChip() }
                             }.frame(maxWidth: 240, alignment: .leading)
-                            Text(memo.listPreview.replacingOccurrences(of: "\n", with: " ")).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(memo.cleanedPreview(singleLine: true)).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                             MemoLinkChip(id: memo.id, index: index).frame(width: 136, alignment: .leading)
                             Group { if !model.isShowingTrash && model.windowActions.isVisible(memo.id) { LimeDot() } else { Color.clear } }.frame(width: 8, height: 8)
                             VStack(alignment: .trailing, spacing: 0) {
-                                Text(memo.listDate(trash: model.isShowingTrash))
+                                Text(memo.listDate(trash: model.isShowingTrash)).lineLimit(1).fixedSize(horizontal: false, vertical: true)
                                 if let group = memo.meta.group { Text(group).lineLimit(1) }
-                            }.font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted).frame(width: 56, alignment: .trailing)
+                            }.font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted).frame(width: 72, alignment: .trailing)
                         }.frame(height: 48).tag(memo.id).listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                             .listRowSeparatorTint(ListTheme.hairline)
                     }
@@ -250,7 +250,12 @@ public struct MemoListView: View {
             Group {
                 if mode == .bento {
                     BentoLayout {
-                        ForEach(memos) { memo in card(memo, index: index, span: spans[memo.id] ?? .small).bentoSpan(spans[memo.id] ?? .small) }
+                        ForEach(memos.enumerated().sorted { a, b in
+                            let order: [BoardLayout.BentoSpan] = [.large, .wide, .tall, .small]
+                            let x = order.firstIndex(of: spans[a.element.id] ?? .small)!
+                            let y = order.firstIndex(of: spans[b.element.id] ?? .small)!
+                            return x == y ? a.offset < b.offset : x < y
+                        }.map(\.element)) { memo in card(memo, index: index, span: spans[memo.id] ?? .small).bentoSpan(spans[memo.id] ?? .small) }
                         if canCreateTile { newTile.bentoSpan(.small) }
                     }
                 } else {

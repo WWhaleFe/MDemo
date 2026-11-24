@@ -30,7 +30,7 @@ final class AppContainer {
     init() {
         let overrideRoot = Self.dataDirectoryOverride
         // 앱 이름이 MemoApp에서 MDemo로 바뀌며 저장 폴더와 앱 식별자가 달라졌다.
-        // 예전 메모·설정을 새 자리로 복사한다. 반드시 데이터 폴더를 만들기 전에 해야 한다 —
+        // 예전 메모·설정을 새 자리로 복사한다. 반드시 데이터 폴더를 만들기 전에 해야 한다.
         // 저장소가 빈 새 폴더를 먼저 만들면 옮겨 올 자리가 "이미 있음"으로 보여 건너뛴다.
         if overrideRoot == nil {
         let migration = LegacyMigration.run(
@@ -40,7 +40,7 @@ final class AppContainer {
             defaults: .standard
         )
         if !migration.errors.isEmpty {
-            NSLog("MDemo: 예전 데이터를 옮기지 못한 항목이 있습니다 — %@", migration.errors.joined(separator: "; "))
+            NSLog("MDemo: 예전 데이터를 옮기지 못한 항목이 있습니다, %@", migration.errors.joined(separator: "; "))
         }
         }
 
@@ -93,8 +93,9 @@ final class AppContainer {
         self.listWindow = listWindow
 
         // 창이 뜨거나 지면 리스트 창의 "보이는/숨겨진" 개수도 함께 달라진다.
-        registry.onWindowStateChange = { [weak listWindow] in
+        registry.onWindowStateChange = { [weak listWindow, weak registry] in
             listWindow?.refreshIfOpen()
+            registry?.refreshFlowStrips()
         }
 
         self.syncCoordinator = SyncCoordinator(
@@ -119,5 +120,6 @@ final class AppContainer {
         guard preferences.autoEmptyTrash else { return }
         store.emptyTrash(olderThan: AppPreferences.trashRetentionDays)
         listWindow.refreshIfOpen()
+        windowRegistry.refreshFlowStrips()
     }
 }
