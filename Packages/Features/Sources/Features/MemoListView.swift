@@ -319,7 +319,8 @@ public struct MemoListView: View {
         let ids = model.orderedSelection
         if !ids.isEmpty || model.isShowingTrash {
             VStack(spacing: 8) {
-                if ids.count == 1, let id = ids.first, let context = index.flowByMemo[id] {
+                // 보드에서는 왼쪽 위 흐름 띠가 같은 일을 하므로 아래 흐름 줄을 두지 않는다.
+                if savedMode != "board", ids.count == 1, let id = ids.first, let context = index.flowByMemo[id] {
                     HStack {
                         FlowChips(flow: context.flow, current: id, index: index, select: { model.selection = [$0] })
                         Button("보드에서 보기") { savedMode = "board"; boardTarget = id }
