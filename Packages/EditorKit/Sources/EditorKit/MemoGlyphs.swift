@@ -45,6 +45,20 @@ public enum MemoGlyphs {
         }
     }
 
+    /// 노션에 보내기: 둥근 사각 페이지 안 N자 (24 상자).
+    public static func notion(pointSize: CGFloat) -> NSImage {
+        let width = lineWidth(for: pointSize)
+        return template(pointSize: pointSize) {
+            stroke(NSBezierPath(roundedRect: NSRect(x: 3.5, y: 3.5, width: 17, height: 17), xRadius: 3.5, yRadius: 3.5), width: width)
+            let letter = NSBezierPath()
+            letter.move(to: NSPoint(x: 9, y: 16))
+            letter.line(to: NSPoint(x: 9, y: 8))
+            letter.line(to: NSPoint(x: 15, y: 16))
+            letter.line(to: NSPoint(x: 15, y: 8))
+            stroke(letter, width: width)
+        }
+    }
+
     /// 암호 단추 기호 (24 상자, 시안 B + D).
     /// 일반 메모: 고리가 열린 자물쇠 + 빈 점 (누르면 잠근다).
     /// 잠긴 메모: 고리가 닫힌 자물쇠 + 라임 점 (앱 아이콘의 라임 점과 같은 색).

@@ -71,14 +71,17 @@ public final class NotionLinkStore: @unchecked Sendable {
 public struct NotionTargetStore: @unchecked Sendable {
     public static let key = "notion.target"
     private let defaults: UserDefaults
+    private let key: String
 
-    public init(defaults: UserDefaults = .standard) {
+    /// `key`는 개발용 시험 실행이 실제 설정과 섞이지 않게 바꿀 때만 쓴다.
+    public init(defaults: UserDefaults = .standard, key: String = Self.key) {
         self.defaults = defaults
+        self.key = key
     }
 
     public var target: NotionTarget? {
         get {
-            guard let dict = defaults.dictionary(forKey: Self.key),
+            guard let dict = defaults.dictionary(forKey: key),
                   let type = (dict["type"] as? String).flatMap(NotionTarget.Kind.init(rawValue:)),
                   let id = dict["id"] as? String, !id.isEmpty
             else { return nil }
@@ -86,9 +89,9 @@ public struct NotionTargetStore: @unchecked Sendable {
         }
         nonmutating set {
             if let newValue {
-                defaults.set(["type": newValue.type.rawValue, "id": newValue.id, "title": newValue.title], forKey: Self.key)
+                defaults.set(["type": newValue.type.rawValue, "id": newValue.id, "title": newValue.title], forKey: key)
             } else {
-                defaults.removeObject(forKey: Self.key)
+                defaults.removeObject(forKey: key)
             }
         }
     }

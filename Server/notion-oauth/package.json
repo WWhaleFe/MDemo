@@ -2,5 +2,8 @@
   "name": "mdemo-notion-oauth",
   "private": true,
   "description": "MDemo 노션 로그인 중계: 비밀키를 앱 밖에 두고 로그인 코드만 토큰으로 바꿔 준다",
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module"
 }

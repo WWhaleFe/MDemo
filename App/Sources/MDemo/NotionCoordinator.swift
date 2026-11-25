@@ -21,9 +21,13 @@ final class NotionCoordinator {
     private(set) var isUploading = false
 
     @ObservationIgnored private let config: NotionOAuthConfig?
-    @ObservationIgnored private let tokenStore: any NotionTokenStore = KeychainNotionTokenStore()
-    @ObservationIgnored private let targetStore = NotionTargetStore()
-    @ObservationIgnored private let links = NotionLinkStore(fileURL: NotionLinkStore.defaultFileURL())
+    @ObservationIgnored private let tokenStore: any NotionTokenStore
+    @ObservationIgnored private let targetStore: NotionTargetStore
+    @ObservationIgnored private let links: NotionLinkStore
+
+    /// 개발용: `--data-dir=<폴더>`와 `--notion-test`를 함께 주면 시험 폴더의 메모로 실제 노션 올리기를 시험한다.
+    /// 토큰 · 올릴 곳 · 올린 기록은 실제와 다른 자리에 둔다(키체인 항목 · 설정 키 · `<폴더>-notion-links.json`).
+    static let isNotionTest = AppContainer.dataDirectoryOverride != nil && CommandLine.arguments.contains("--notion-test")
     @ObservationIgnored private var session: NotionSession?
     @ObservationIgnored private let store: MemoStore
     @ObservationIgnored private let windowRegistry: WindowRegistry
@@ -37,7 +41,17 @@ final class NotionCoordinator {
         self.windowRegistry = windowRegistry
         let isTestMode = AppContainer.dataDirectoryOverride != nil
         self.dataRoot = AppContainer.dataDirectoryOverride ?? FileMemoRepository.defaultRootDirectory()
-        self.config = isTestMode ? nil : NotionOAuthConfig.load()
+        if Self.isNotionTest, let root = AppContainer.dataDirectoryOverride {
+            self.tokenStore = KeychainNotionTokenStore(serviceName: KeychainNotionTokenStore.service + ".devtest")
+            self.targetStore = NotionTargetStore(key: NotionTargetStore.key + ".devtest")
+            self.links = NotionLinkStore(fileURL: root.deletingLastPathComponent()
+                .appendingPathComponent(root.lastPathComponent + "-notion-links.json"))
+        } else {
+            self.tokenStore = KeychainNotionTokenStore()
+            self.targetStore = NotionTargetStore()
+            self.links = NotionLinkStore(fileURL: NotionLinkStore.defaultFileURL())
+        }
+        self.config = (isTestMode && !Self.isNotionTest) ? nil : NotionOAuthConfig.load()
         self.isConfigured = config != nil
         if let config, let credentials = (try? tokenStore.load()) ?? nil {
             self.session = NotionSession(config: config, store: tokenStore, transport: NotionHTTP())

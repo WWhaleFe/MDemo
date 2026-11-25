@@ -50,6 +50,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     let airDropButton = TopBarButton()
     /// 메모를 이미지로 내보내기.
     let exportButton = TopBarButton()
+    /// 노션에 보내기. 암호 메모에서는 흐리게 둔다.
+    let notionButton = TopBarButton()
+    var notionUpload: (() -> Void)?
     let airDropDot = NSView()
     let iconDivider = NSView()
     private let iconStack = NSStackView()
@@ -363,12 +366,19 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         iconStack.orientation = .horizontal
         iconStack.alignment = .centerY
         iconStack.spacing = 6
-        for view in [opacitySlider, airDropButton, exportButton, lockMenuButton, iconDivider, pinButton, foldButton, appearanceButton] {
+        for view in [opacitySlider, airDropButton, exportButton, notionButton, lockMenuButton, iconDivider, pinButton, foldButton, appearanceButton] {
             iconStack.addArrangedSubview(view)
         }
         iconStack.setCustomSpacing(8, after: opacitySlider)
         iconStack.setCustomSpacing(8, after: exportButton)
         iconStack.setCustomSpacing(8, after: iconDivider)
+        // 창이 좁으면 덜 쓰는 단추부터 묶음에서 뺀다: 노션 → 내보내기 → AirDrop.
+        // 단추가 늘어도 메모 창을 예전만큼 좁게 줄일 수 있어야 한다.
+        iconStack.detachesHiddenViews = true
+        iconStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        iconStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: 700), for: notionButton)
+        iconStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: 800), for: exportButton)
+        iconStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: 850), for: airDropButton)
         header.addSubview(iconStack)
 
         NSLayoutConstraint.activate([
@@ -1478,6 +1488,7 @@ enum TopBarIcon {
     static let airDrop: CGFloat = 20
     static let export: CGFloat = 19.5
     static let lock: CGFloat = 22
+    static let notion: CGFloat = 22
     static let pin: CGFloat = 14.5
     static let fold: CGFloat = 15.5
     static let palette: CGFloat = 14

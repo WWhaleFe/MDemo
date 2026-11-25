@@ -81,3 +81,19 @@ struct LockedMark: View {
             .accessibilityLabel("잠긴 메모")
     }
 }
+
+/// 노션에 보내기 기호. AppKit 쪽 `MemoGlyphs.notion`과 같은 좌표 (24 상자).
+struct NotionGlyph: View {
+    var body: some View {
+        Path { path in
+            path.addRoundedRect(in: CGRect(x: 3.5, y: 3.5, width: 17, height: 17), cornerSize: CGSize(width: 3.5, height: 3.5))
+            path.move(to: CGPoint(x: 9, y: 16))
+            path.addLine(to: CGPoint(x: 9, y: 8))
+            path.addLine(to: CGPoint(x: 15, y: 16))
+            path.addLine(to: CGPoint(x: 15, y: 8))
+        }
+        .stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+        .frame(width: 24, height: 24)
+    }
+}
+

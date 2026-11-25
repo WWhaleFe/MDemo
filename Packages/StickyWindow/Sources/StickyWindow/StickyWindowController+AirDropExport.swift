@@ -95,6 +95,26 @@ extension StickyWindowController {
 
     /// 우클릭 메뉴의 "노션에 올리기"를 연결한다. 올리기 전에 편집 중인 내용을 먼저 저장한다.
     func configureNotionMenu(upload: @escaping (MemoID) -> Void, canUpload: @escaping (MemoID) -> Bool) {
+        // 맨 위 줄 단추. 우클릭 "노션에 올리기"와 같은 일을 한다.
+        let side = Self.closeButtonSize(for: Self.chromeFontSize)
+        notionButton.target = self
+        notionButton.action = #selector(notionButtonTapped)
+        notionButton.title = ""
+        notionButton.translatesAutoresizingMaskIntoConstraints = false
+        notionButton.isBordered = false
+        notionButton.imageScaling = .scaleNone
+        notionButton.image = MemoGlyphs.notion(pointSize: TopBarIcon.notion)
+        notionButton.contentTintColor = NSColor.black.withAlphaComponent(0.62)
+        notionButton.toolTip = meta.isLocked ? "암호 메모는 노션에 보낼 수 없습니다" : "노션에 보내기 (메뉴바 노션에서 고른 페이지 · 데이터베이스로)"
+        notionButton.setAccessibilityLabel("노션에 보내기")
+        notionButton.isEnabled = !meta.isLocked && canUpload(memoID)
+        notionButton.widthAnchor.constraint(equalToConstant: side).isActive = true
+        notionButton.heightAnchor.constraint(equalToConstant: side).isActive = true
+        notionUpload = { [weak self] in
+            guard let self, !self.meta.isLocked, canUpload(self.memoID) else { return }
+            _ = self.saveBodyNow()
+            upload(self.memoID)
+        }
         textView.canRequestNotionUpload = { [weak self] in
             guard let self else { return false }
             return !self.meta.isLocked && canUpload(self.memoID)
@@ -104,6 +124,10 @@ extension StickyWindowController {
             _ = self.saveBodyNow()
             upload(self.memoID)
         }
+    }
+
+    @objc func notionButtonTapped() {
+        notionUpload?()
     }
 
     @objc func exportButtonTapped() {

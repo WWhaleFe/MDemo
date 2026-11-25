@@ -184,6 +184,7 @@ public struct MemoListView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).fixedSize().help("AirDrop으로 받은 사진으로 새 메모")
                 .accessibilityLabel("AirDrop으로 받은 사진으로 새 메모")
+            notionButton
             Button(action: model.windowActions.createLockedMemo) {
                 // 옆의 핀 · 화면 모드 단추와 같은 크기 · 색. 예전 기호(lock.badge.plus)는 없는 macOS가 있어 단추가 사라졌다.
                 // 만들어질 것은 잠긴 메모라 닫힌 자물쇠 + 라임 점으로 보인다.
@@ -198,6 +199,25 @@ public struct MemoListView: View {
                     .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).fixedSize().help("새 메모 (어디서든 ⌘⇧N)")
         }.padding(.horizontal, 12).frame(height: 52)
+    }
+
+    /// 고른 메모를 노션에 보낸다. 고른 것이 없거나 모두 보낼 수 없는 메모(암호 등)면 흐리게.
+    private var notionButton: some View {
+        let ids = Array(model.selection)
+        let sendable = ids.filter { model.windowActions.canUploadToNotion($0) }
+        return Button { model.windowActions.uploadToNotion(sendable) } label: {
+            NotionGlyph().foregroundStyle(ListTheme.muted)
+                .frame(width: 18, height: 18)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).fixedSize()
+        .disabled(sendable.isEmpty || model.isShowingTrash)
+        .opacity(sendable.isEmpty || model.isShowingTrash ? 0.45 : 1)
+        .help(ids.isEmpty ? "메모를 고르면 노션에 보낼 수 있습니다"
+              : sendable.isEmpty ? "암호 메모는 노션에 보낼 수 없습니다"
+              : "고른 메모 \(sendable.count)개를 노션에 보내기")
+        .accessibilityLabel("고른 메모 노션에 보내기")
     }
 
     /// 화면 모드 단추. 누를 때마다 시스템 → 라이트 → 다크 → 시스템 순으로 바뀌고, 우클릭하면 목록에서 바로 고른다.
