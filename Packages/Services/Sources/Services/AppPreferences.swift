@@ -43,6 +43,12 @@ public enum AppearanceMode: String, CaseIterable, Sendable {
     }
 }
 
+/// 동기화 대상. 기본은 iCloud이고, 구글에 로그인하면 구글 드라이브가 된다.
+public enum SyncTarget: String, Sendable {
+    case icloud
+    case google
+}
+
 /// 전역 환경설정 (SET-01, SET-02).
 ///
 /// 메모마다 다른 값(색상·투명도)은 프론트매터에 들어가고, 여기 있는 값은 앱 전체에 적용된다.
@@ -103,6 +109,11 @@ public final class AppPreferences {
     /// iCloud 자동 동기화를 켤지 (SYNC-04, SYNC-05).
     public var autoSyncEnabled: Bool {
         didSet { store.set(autoSyncEnabled, forKey: Key.autoSyncEnabled) }
+    }
+
+    /// 동기화 대상 (`sync.target`). 저장된 값이 없거나 모르는 값이면 iCloud.
+    public var syncTarget: SyncTarget {
+        didSet { store.set(syncTarget.rawValue, forKey: Key.syncTarget) }
     }
 
     /// 동기화가 끝날 때마다 iCloud Drive에 iPhone 읽기용 사본을 갱신할지.
@@ -174,6 +185,7 @@ public final class AppPreferences {
         static let hoverOpaque = "memo.hoverOpaque"
         static let autoSyncEnabled = "sync.autoEnabled"
         static let autoSyncMinutes = "sync.autoMinutes"
+        static let syncTarget = "sync.target"
         static let readableCopyEnabled = "sync.readableCopy"
         static let formatToolbarPosition = "memo.formatToolbarPosition"
         static let autoEmptyTrash = "trash.autoEmpty"
@@ -191,6 +203,7 @@ public final class AppPreferences {
 
         // 동기화는 사용자가 켜야 시작한다. 모르는 사이에 파일이 오가면 곤란하다.
         self.autoSyncEnabled = store.object(forKey: Key.autoSyncEnabled) as? Bool ?? false
+        self.syncTarget = store.string(forKey: Key.syncTarget).flatMap(SyncTarget.init(rawValue:)) ?? .icloud
         // 저장된 값이 없으면 켜 둔다. 동기화를 켠 사람만 이 사본을 만들게 된다.
         self.readableCopyEnabled = store.object(forKey: Key.readableCopyEnabled) as? Bool ?? true
         let savedMinutes = store.double(forKey: Key.autoSyncMinutes)

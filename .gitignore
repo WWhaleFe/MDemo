@@ -19,3 +19,9 @@ Data/
 
 # 공용 테스트 빌드 폴더
 .build-shared/
+
+# 구글 로그인 클라이언트 값 (저장소에는 빈 예시 GoogleOAuth.example.plist만 둔다)
+App/Resources/GoogleOAuth.plist
+
+# 노션 로그인 값 (저장소에는 빈 예시 NotionOAuth.example.plist만 둔다)
+App/Resources/NotionOAuth.plist

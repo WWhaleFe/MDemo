@@ -93,6 +93,19 @@ extension StickyWindowController {
         if isReceivingAirDrop { stopAirDropReceiving() } else { startAirDropReceiving() }
     }
 
+    /// 우클릭 메뉴의 "노션에 올리기"를 연결한다. 올리기 전에 편집 중인 내용을 먼저 저장한다.
+    func configureNotionMenu(upload: @escaping (MemoID) -> Void, canUpload: @escaping (MemoID) -> Bool) {
+        textView.canRequestNotionUpload = { [weak self] in
+            guard let self else { return false }
+            return !self.meta.isLocked && canUpload(self.memoID)
+        }
+        textView.onRequestNotionUpload = { [weak self] in
+            guard let self, !self.meta.isLocked else { return }
+            _ = self.saveBodyNow()
+            upload(self.memoID)
+        }
+    }
+
     @objc func exportButtonTapped() {
         presentExportSheet()
     }

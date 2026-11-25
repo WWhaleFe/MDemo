@@ -1191,4 +1191,733 @@ runner.test("장부의 손상 메모는 백업과 읽기용 사본에서 제외�
     t.expectEqual(try FileMemoRepository(rootDirectory: restored, keychain: testKeychain).loadSummaries().count, 0)
 }
 
+// MARK: - 구글 드라이브 동기화 (가짜 드라이브 · 임시 폴더 · 메모리 키체인, 실제 네트워크 없음)
+
+/// 드라이브를 흉내 내는 메모리 구현. 호출 기록을 남긴다.
+final class FakeDrive: DriveAPI, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var counter = 0
+    private(set) var files: [String: DriveFile] = [:]
+    private(set) var contents: [String: Data] = [:]
+    private(set) var uploadedPaths: [String] = []
+    private(set) var deletedPaths: [String] = []
+    private(set) var calls: [String] = []
+    var failList = false
+    var failDownload = false
+
+    private func nextID() -> String { counter += 1; return "id\(counter)" }
+
+    private func store(_ file: DriveFile, data: Data?) -> DriveFile {
+        var file = file
+        if let data { file.md5 = DriveMirrorSync.md5(of: data); contents[file.id] = data }
+        file.modifiedTime = Date()
+        files[file.id] = file
+        return file
+    }
+
+    /// 드라이브 안의 경로(MDemo 기준)로 파일 id를 찾는다.
+    private func path(of file: DriveFile) -> String {
+        var parts = [file.name]
+        var current = file
+        while let parent = current.parents.first, let next = files[parent] {
+            if next.parents.isEmpty && next.name == "MDemo" { break }
+            parts.insert(next.name, at: 0)
+            current = next
+        }
+        return parts.joined(separator: "/")
+    }
+
+    func paths() -> [String] { mutex.lock(); defer { mutex.unlock() }; return files.values.filter { !$0.isFolder }.map(path(of:)).sorted() }
+    func data(at path: String) -> Data? {
+        mutex.lock(); defer { mutex.unlock() }
+        guard let file = files.values.first(where: { !$0.isFolder && self.path(of: $0) == path }) else { return nil }
+        return contents[file.id]
+    }
+
+    /// 다른 기기가 드라이브에 직접 파일을 둔 것처럼 만든다.
+    func put(path: String, data: Data) {
+        mutex.lock(); defer { mutex.unlock() }
+        var parent: String?
+        if let root = files.values.first(where: { $0.isFolder && $0.name == "MDemo" && $0.parents.isEmpty }) { parent = root.id }
+        else { parent = store(DriveFile(id: nextID(), name: "MDemo", mimeType: DriveFile.folderMimeType), data: nil).id }
+        let components = path.split(separator: "/").map(String.init)
+        for name in components.dropLast() {
+            if let found = files.values.first(where: { $0.isFolder && $0.name == name && $0.parents == [parent!] }) { parent = found.id }
+            else { parent = store(DriveFile(id: nextID(), name: name, mimeType: DriveFile.folderMimeType, parents: [parent!]), data: nil).id }
+        }
+        let name = components.last!
+        if let existing = files.values.first(where: { !$0.isFolder && $0.name == name && $0.parents == [parent!] }) {
+            _ = store(existing, data: data)
+        } else {
+            _ = store(DriveFile(id: nextID(), name: name, parents: [parent!]), data: data)
+        }
+    }
+
+    func removeRemotely(path: String) {
+        mutex.lock(); defer { mutex.unlock() }
+        if let file = files.values.first(where: { !$0.isFolder && self.path(of: $0) == path }) { files[file.id] = nil; contents[file.id] = nil }
+    }
+
+    func list() async throws -> [DriveFile] {
+        try mutex.withLock {
+            calls.append("list")
+            if failList { throw DriveError.http(500, "목록 실패 주입") }
+            return Array(files.values)
+        }
+    }
+    func download(id: String) async throws -> Data {
+        try mutex.withLock {
+            calls.append("download")
+            if failDownload { throw DriveError.http(500, "내려받기 실패 주입") }
+            guard let data = contents[id] else { throw DriveError.notFound }
+            return data
+        }
+    }
+    func upload(name: String, parentID: String?, data: Data) async throws -> DriveFile {
+        try mutex.withLock {
+            calls.append("upload")
+            let file = store(DriveFile(id: nextID(), name: name, parents: parentID.map { [$0] } ?? []), data: data)
+            uploadedPaths.append(path(of: file))
+            return file
+        }
+    }
+    func update(id: String, data: Data) async throws -> DriveFile {
+        try mutex.withLock {
+            calls.append("update")
+            guard let file = files[id] else { throw DriveError.notFound }
+            uploadedPaths.append(path(of: file))
+            return store(file, data: data)
+        }
+    }
+    func createFolder(name: String, parentID: String?) async throws -> DriveFile {
+        try mutex.withLock {
+            calls.append("createFolder")
+            return store(DriveFile(id: nextID(), name: name, mimeType: DriveFile.folderMimeType, parents: parentID.map { [$0] } ?? []), data: nil)
+        }
+    }
+    func delete(id: String) async throws {
+        try mutex.withLock {
+            calls.append("delete")
+            guard let file = files[id] else { throw DriveError.notFound }
+            deletedPaths.append(path(of: file))
+            files[id] = nil
+            contents[id] = nil
+            // 폴더를 지우면 안의 것도 함께 사라진다(영구 삭제).
+            for child in files.values where child.parents.contains(id) { files[child.id] = nil; contents[child.id] = nil }
+        }
+    }
+}
+
+struct DriveRig {
+    let base: URL
+    let local: URL
+    let mirror: URL
+    let drive = FakeDrive()
+    let keys: PrivacyTestKeychain
+    let store: MemoStore
+    let sync: DriveMirrorSync
+
+    @MainActor
+    init() throws {
+        base = FileManager.default.temporaryDirectory.appendingPathComponent("drive-" + UUID().uuidString)
+        local = base.appendingPathComponent("Data")
+        mirror = base.appendingPathComponent("GoogleDrive/MDemo")
+        keys = PrivacyTestKeychain()
+        store = MemoStore(repository: try FileMemoRepository(rootDirectory: local, keychain: testKeychain), keychain: keys)
+        sync = DriveMirrorSync(
+            localRoot: local,
+            mirrorRoot: mirror,
+            driveStateURL: base.appendingPathComponent("GoogleDrive/drive-state.json"),
+            engineStateURL: base.appendingPathComponent("sync-state-google.json"),
+            api: drive,
+            keychain: keys
+        )
+    }
+
+    func cleanup() { try? FileManager.default.removeItem(at: base) }
+    var stateData: Data? { try? Data(contentsOf: base.appendingPathComponent("GoogleDrive/drive-state.json")) }
+    func memoText(_ id: MemoID) -> String? { try? String(contentsOf: mirror.appendingPathComponent("memos/\(id.rawValue)/memo.md"), encoding: .utf8) }
+}
+
+runner.test("PKCE: 검증값 길이 · 문자, S256 challenge, 인증 주소 매개변수") { t in
+    let verifier = PKCE.makeVerifier()
+    t.expect((43...128).contains(verifier.count), "검증값 길이")
+    let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    t.expect(verifier.allSatisfy(allowed.contains), "허용되지 않은 문자")
+    t.expect(PKCE.makeVerifier() != verifier, "무작위가 아니다")
+    // RFC 7636 부록 B의 예시 값
+    t.expectEqual(PKCE.challenge(for: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+    let url = PKCE.authorizationURL(clientID: "cid", redirectURI: "http://127.0.0.1:5555", challenge: "chal", state: "st")
+    let items = Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+    t.expectEqual(url.host, "accounts.google.com")
+    t.expectEqual(items["scope"], "https://www.googleapis.com/auth/drive.file openid email")
+    t.expectEqual(items["redirect_uri"], "http://127.0.0.1:5555")
+    t.expectEqual(items["access_type"], "offline")
+    t.expectEqual(items["prompt"], "consent")
+    t.expectEqual(items["state"], "st")
+    t.expectEqual(items["code_challenge_method"], "S256")
+    t.expectEqual(items["response_type"], "code")
+}
+
+await runner.testAsync("드라이브 첫 동기화는 합치기만 한다: 양쪽 메모가 모두 남고 삭제는 0건") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let mine = rig.store.createMemo().id
+    rig.store.saveBody(id: mine, body: "내 메모")
+
+    // 다른 기기가 드라이브에 둔 메모
+    let other = rig.base.appendingPathComponent("other")
+    let otherID = MemoID.generate()
+    try FileMemoRepository(rootDirectory: other, keychain: testKeychain).save(MemoDocument(meta: MemoMeta(id: otherID), body: "드라이브 메모"))
+    rig.drive.put(path: "memos/\(otherID.rawValue)/memo.md", data: try Data(contentsOf: other.appendingPathComponent("memos/\(otherID.rawValue)/memo.md")))
+
+    _ = try await rig.sync.sync()
+    t.expect(rig.drive.paths().contains("memos/\(mine.rawValue)/memo.md"), "로컬 메모가 올라가지 않았다")
+    rig.store.reloadSummaries()
+    t.expect(rig.store.summaries.contains { $0.id == otherID }, "드라이브 메모가 내려오지 않았다")
+    t.expect(rig.drive.deletedPaths.isEmpty, "첫 동기화에서 지웠다")
+    t.expectEqual(rig.store.summaries.count, 2)
+}
+
+await runner.testAsync("원격 변경은 내려받고 로컬 변경은 올리고 양쪽 변경은 충돌 사본을 만든다") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let id = rig.store.createMemo().id
+    rig.store.saveBody(id: id, body: "처음 내용")
+    _ = try await rig.sync.sync()
+    let path = "memos/\(id.rawValue)/memo.md"
+
+    // 원격만 바뀜
+    let original = String(data: rig.drive.data(at: path) ?? Data(), encoding: .utf8) ?? ""
+    rig.drive.put(path: path, data: Data(original.replacingOccurrences(of: "처음 내용", with: "원격 내용").utf8))
+    _ = try await rig.sync.sync()
+    rig.store.reloadSummaries()
+    t.expectEqual(rig.store.loadDocument(id: id)?.body, "원격 내용", "내려받지 못했다")
+
+    // 로컬만 바뀜
+    rig.store.saveBody(id: id, body: "로컬 내용")
+    _ = try await rig.sync.sync()
+    t.expect(String(data: rig.drive.data(at: path) ?? Data(), encoding: .utf8)?.contains("로컬 내용") == true, "올리지 못했다")
+
+    // 양쪽 다 바뀜
+    rig.store.saveBody(id: id, body: "로컬 둘째")
+    let current = String(data: rig.drive.data(at: path) ?? Data(), encoding: .utf8) ?? ""
+    rig.drive.put(path: path, data: Data(current.replacingOccurrences(of: "로컬 내용", with: "원격 둘째").utf8))
+    let report = try await rig.sync.sync()
+    t.expectEqual(report.conflicts, 1, "충돌 사본이 없다")
+    rig.store.reloadSummaries()
+    t.expectEqual(rig.store.summaries.filter { $0.meta.conflictOf != nil }.count, 1)
+}
+
+await runner.testAsync("로컬에서 지운 메모는 드라이브에서 영구 삭제(delete)로만 사라진다") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let id = rig.store.createMemo().id
+    rig.store.saveBody(id: id, body: "버릴 메모")
+    _ = try await rig.sync.sync()
+    rig.store.moveToTrash(id: id)
+    _ = try await rig.sync.sync()
+    t.expect(rig.drive.deletedPaths.contains("memos/\(id.rawValue)/memo.md"), "영구 삭제가 호출되지 않았다")
+    t.expect(rig.drive.paths().contains("trash/\(id.rawValue)/memo.md"), "휴지통 폴더 사본이 올라가야 한다")
+    t.expect(!rig.drive.paths().contains("memos/\(id.rawValue)/memo.md"))
+    t.expect(rig.drive.calls.allSatisfy { ["list", "download", "upload", "update", "createFolder", "delete"].contains($0) }, "휴지통 호출이 있다")
+}
+
+await runner.testAsync("목록 또는 내려받기가 실패하면 아무것도 지우지 않고 상태도 그대로다") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let first = rig.store.createMemo().id
+    let second = rig.store.createMemo().id
+    rig.store.saveBody(id: first, body: "하나")
+    rig.store.saveBody(id: second, body: "둘")
+    _ = try await rig.sync.sync()
+    let deletesBefore = rig.drive.deletedPaths.count
+    let stateBefore = rig.stateData
+
+    // 한쪽은 원격에서 사라졌고, 다른 쪽은 원격에서 바뀐 상황
+    let changedPath = "memos/\(second.rawValue)/memo.md"
+    let text = String(data: rig.drive.data(at: changedPath) ?? Data(), encoding: .utf8) ?? ""
+    rig.drive.removeRemotely(path: "memos/\(first.rawValue)/memo.md")
+    rig.drive.put(path: changedPath, data: Data(text.replacingOccurrences(of: "둘", with: "원격 둘").utf8))
+
+    for mode in ["list", "download"] {
+        rig.drive.failList = mode == "list"
+        rig.drive.failDownload = mode == "download"
+        var failed = false
+        do { _ = try await rig.sync.sync() } catch { failed = true }
+        t.expect(failed, "\(mode) 실패가 전파되지 않았다")
+        t.expectEqual(rig.drive.deletedPaths.count, deletesBefore, "\(mode): 드라이브에서 지웠다")
+        t.expect(rig.memoText(first) != nil, "\(mode): 거울에서 지웠다")
+        t.expect(rig.memoText(second)?.contains("원격 둘") == false, "\(mode): 거울이 바뀌었다")
+        t.expectEqual(rig.stateData, stateBefore, "\(mode): 상태 파일이 바뀌었다")
+    }
+    rig.store.reloadSummaries()
+    t.expectEqual(rig.store.summaries.count, 2, "로컬 메모가 사라졌다")
+}
+
+await runner.testAsync("잠긴 메모와 이 기기 전용 장부 메모는 업로드 요청에 한 번도 나오지 않는다") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let ordinary = rig.store.createMemo().id
+    rig.store.saveBody(id: ordinary, body: "보통 메모")
+    let locked = try await rig.store.createLockedMemo(password: "1234")
+    let ledgerOnly = rig.store.createMemo().id
+    rig.store.saveBody(id: ledgerOnly, body: "장부 메모")
+    try MemoPrivacyLedger.insert(ledgerOnly, name: "local-only", root: rig.local)
+    _ = try await rig.sync.sync()
+    _ = try await rig.sync.sync()
+    t.expect(rig.drive.uploadedPaths.contains("memos/\(ordinary.rawValue)/memo.md"), "보통 메모는 올라가야 한다")
+    for hidden in [locked, ledgerOnly] {
+        t.expect(!rig.drive.uploadedPaths.contains { $0.contains(hidden.rawValue) }, "\(hidden.rawValue) 가 업로드 요청에 나왔다")
+        t.expect(!rig.drive.paths().contains { $0.contains(hidden.rawValue) }, "\(hidden.rawValue) 가 드라이브에 있다")
+    }
+}
+
+await runner.testAsync("파기한 메모는 다음 동기화에서 드라이브 파일이 영구 삭제된다") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let id = rig.store.createMemo().id
+    rig.store.saveBody(id: id, body: "파기할 메모")
+    _ = try await rig.sync.sync()
+    t.expect(rig.drive.paths().contains("memos/\(id.rawValue)/memo.md"))
+    try rig.store.destroyMemo(id: id)
+    _ = try await rig.sync.sync()
+    t.expect(rig.drive.deletedPaths.contains("memos/\(id.rawValue)/memo.md"), "영구 삭제가 호출되지 않았다")
+    t.expect(!rig.drive.paths().contains { $0.contains(id.rawValue) && $0.hasSuffix("memo.md") }, "드라이브에 남아 있다")
+
+    // 개인정보 정리만 돌려도 드라이브에서 지워진다.
+    let second = rig.store.createMemo().id
+    rig.store.saveBody(id: second, body: "두 번째")
+    _ = try await rig.sync.sync()
+    try rig.store.destroyMemo(id: second)
+    _ = try await rig.sync.enforcePrivacy()
+    t.expect(!rig.drive.paths().contains { $0.contains(second.rawValue) && $0.hasSuffix("memo.md") }, "정리 직후 드라이브에 남아 있다")
+}
+
+/// 메모리 토큰 저장소.
+final class MemoryGoogleTokenStore: GoogleTokenStore, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var credentials: GoogleCredentials?
+    func load() throws -> GoogleCredentials? { mutex.lock(); defer { mutex.unlock() }; return credentials }
+    func save(_ value: GoogleCredentials) throws { mutex.lock(); defer { mutex.unlock() }; credentials = value }
+    func delete() throws { mutex.lock(); defer { mutex.unlock() }; credentials = nil }
+}
+
+/// 요청을 기록하고 미리 정한 응답을 돌려주는 가짜 통신.
+final class ScriptedTransport: HTTPTransport, @unchecked Sendable {
+    private let mutex = NSLock()
+    private(set) var requests: [URLRequest] = []
+    private let handler: @Sendable (Int, URLRequest) throws -> HTTPResult
+    init(_ handler: @escaping @Sendable (Int, URLRequest) throws -> HTTPResult) { self.handler = handler }
+    func send(_ request: URLRequest) async throws -> HTTPResult {
+        let index = mutex.withLock { () -> Int in requests.append(request); return requests.count }
+        return try handler(index, request)
+    }
+}
+
+final class FixedTokens: AccessTokenProvider, @unchecked Sendable {
+    private let mutex = NSLock()
+    private(set) var forced: [Bool] = []
+    func accessToken(forceRefresh: Bool) async throws -> String {
+        mutex.withLock { forced.append(forceRefresh) }
+        return forceRefresh ? "새토큰" : "옛토큰"
+    }
+}
+
+final class SleepLog: @unchecked Sendable {
+    private let mutex = NSLock()
+    private(set) var seconds: [TimeInterval] = []
+    func add(_ value: TimeInterval) { mutex.lock(); seconds.append(value); mutex.unlock() }
+}
+
+await runner.testAsync("토큰 저장소: 저장 · 읽기 · 로그아웃 삭제와 폐기 요청") { t in
+    let store = MemoryGoogleTokenStore()
+    t.expectNil(try store.load())
+    try store.save(GoogleCredentials(email: "a@example.com", refreshToken: "refresh-1"))
+    t.expectEqual(try store.load(), GoogleCredentials(email: "a@example.com", refreshToken: "refresh-1"))
+
+    let transport = ScriptedTransport { _, request in
+        if request.url?.absoluteString.contains("/token") == true {
+            return HTTPResult(status: 200, data: Data(#"{"access_token":"access-1","expires_in":3600}"#.utf8))
+        }
+        throw URLError(.notConnectedToInternet)  // 폐기 요청은 실패해도 로그아웃은 진행해야 한다
+    }
+    let session = GoogleSession(config: GoogleOAuthConfig(clientID: "cid", clientSecret: "secret"), store: store, transport: transport)
+    t.expectEqual(try await session.accessToken(forceRefresh: false), "access-1")
+    _ = try await session.accessToken(forceRefresh: false)
+    t.expectEqual(transport.requests.count, 1, "만료 전에는 다시 받지 않아야 한다")
+    try await session.signOut()
+    t.expectNil(try store.load(), "키체인 항목이 남았다")
+    t.expect(transport.requests.contains { $0.url?.absoluteString.contains("revoke") == true }, "폐기 요청이 없다")
+    var rejected = false
+    do { _ = try await session.accessToken(forceRefresh: false) } catch { rejected = true }
+    t.expect(rejected, "로그아웃 뒤에도 토큰을 받았다")
+}
+
+await runner.testAsync("401은 토큰을 갱신해 한 번만 다시 보내고 429는 백오프로 횟수 제한 안에서 다시 보낸다") { t in
+    // 401 한 번 뒤 성공
+    let tokens = FixedTokens()
+    let sleeps = SleepLog()
+    let transport = ScriptedTransport { index, _ in
+        index == 1 ? HTTPResult(status: 401, data: Data()) : HTTPResult(status: 200, data: Data(#"{"files":[{"id":"1","name":"MDemo","mimeType":"application/vnd.google-apps.folder"}]}"#.utf8))
+    }
+    let client = GoogleDriveClient(tokens: tokens, transport: transport, sleep: { sleeps.add($0) })
+    let files = try await client.list()
+    t.expectEqual(files.count, 1)
+    t.expectEqual(tokens.forced, [false, true], "401 뒤 갱신하지 않았다")
+    t.expectEqual(transport.requests.count, 2)
+    t.expect(transport.requests[0].url?.absoluteString.contains("trashed") == true, "휴지통 제외 조건이 없다")
+
+    // 계속 401이면 두 번에서 멈춘다
+    let always401 = ScriptedTransport { _, _ in HTTPResult(status: 401, data: Data()) }
+    var failed = false
+    do { _ = try await GoogleDriveClient(tokens: FixedTokens(), transport: always401, sleep: { _ in }).list() } catch { failed = true }
+    t.expect(failed)
+    t.expectEqual(always401.requests.count, 2, "401 재시도는 1번뿐이어야 한다")
+
+    // 429는 최대 5번 다시 보낸다 (처음 1 + 재시도 5)
+    let throttled = ScriptedTransport { _, _ in HTTPResult(status: 429, data: Data()) }
+    let throttledSleeps = SleepLog()
+    failed = false
+    do { _ = try await GoogleDriveClient(tokens: FixedTokens(), transport: throttled, sleep: { throttledSleeps.add($0) }).list() } catch { failed = true }
+    t.expect(failed)
+    t.expectEqual(throttled.requests.count, 6, "재시도 횟수 제한")
+    t.expectEqual(throttledSleeps.seconds.count, 5)
+    t.expect(zip(throttledSleeps.seconds, throttledSleeps.seconds.dropFirst()).allSatisfy { $0 < $1 }, "지수 백오프로 늘어나야 한다")
+
+    // 삭제는 DELETE 요청 하나, 휴지통 경로 없음
+    let ok = ScriptedTransport { _, _ in HTTPResult(status: 204, data: Data()) }
+    try await GoogleDriveClient(tokens: FixedTokens(), transport: ok, sleep: { _ in }).delete(id: "abc")
+    t.expectEqual(ok.requests.first?.httpMethod, "DELETE")
+    t.expect(ok.requests.first?.url?.absoluteString.contains("trash") == false)
+}
+
+
+// MARK: - 노션 올리기
+
+final class MemoryNotionTokenStore: NotionTokenStore, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var credentials: NotionCredentials?
+    func load() throws -> NotionCredentials? { mutex.lock(); defer { mutex.unlock() }; return credentials }
+    func save(_ value: NotionCredentials) throws { mutex.lock(); defer { mutex.unlock() }; credentials = value }
+    func delete() throws { mutex.lock(); defer { mutex.unlock() }; credentials = nil }
+}
+
+/// 호출을 기록만 하는 가짜 노션. 잠긴 메모에서 호출이 0건인지 확인하는 데 쓴다.
+final class FakeNotionAPI: NotionAPI, @unchecked Sendable {
+    private let mutex = NSLock()
+    private(set) var calls: [String] = []
+    var pageExists = true
+    private var counter = 0
+    private func record(_ call: String) { mutex.lock(); calls.append(call); mutex.unlock() }
+    private func nextID() -> String { mutex.lock(); defer { mutex.unlock() }; counter += 1; return "page-\(counter)" }
+    func search(query: String) async throws -> [NotionSearchItem] { record("search"); return [] }
+    func titlePropertyName(databaseID: String) async throws -> String { record("titleProperty"); return "이름" }
+    func createPage(target: NotionTarget, titleProperty: String?, title: String) async throws -> NotionPage {
+        record("create:\(target.type.rawValue):\(titleProperty ?? "-"):\(title)")
+        let id = nextID()
+        return NotionPage(id: id, url: "https://notion.so/\(id)")
+    }
+    func existingPage(id: String) async throws -> NotionPage? {
+        record("existing:\(id)")
+        return pageExists ? NotionPage(id: id, url: "https://notion.so/\(id)") : nil
+    }
+    func updateTitle(pageID: String, titleProperty: String, title: String) async throws { record("title:\(pageID):\(title)") }
+    func clearChildren(pageID: String) async throws { record("clear:\(pageID)") }
+    func append(pageID: String, blocks: [NotionBlock], uploadedImages: [String: String]) async throws { record("append:\(pageID):\(blocks.count)") }
+    func uploadImage(data: Data, fileName: String) async throws -> String { record("image:\(fileName)"); return "file-1" }
+}
+
+let notionConfig = NotionOAuthConfig(clientID: "cid", relayURL: "https://relay.example.com/")
+
+runner.test("노션 인증 주소와 state 형식, 다른 state나 경로는 거부한다") { t in
+    let state = NotionAuth.makeState(port: 51234)
+    let parts = state.split(separator: ".", maxSplits: 1).map(String.init)
+    t.expectEqual(parts.first, "51234")
+    t.expectEqual(parts.last?.count, 32, "무작위 부분은 32자")
+    t.expect(parts.last?.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } == true, "base64url 문자만")
+    t.expect(NotionAuth.makeState(port: 51234) != state, "매번 달라야 한다")
+
+    let url = NotionAuth.authorizationURL(config: notionConfig, state: state)
+    let items = Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+    t.expect(url.absoluteString.hasPrefix("https://api.notion.com/v1/oauth/authorize?"))
+    t.expectEqual(items["client_id"], "cid")
+    t.expectEqual(items["response_type"], "code")
+    t.expectEqual(items["owner"], "user")
+    t.expectEqual(items["redirect_uri"], "https://relay.example.com/api/notion/callback")
+    t.expectEqual(items["state"], state)
+
+    t.expectEqual(try NotionAuth.code(fromCallback: ["code": "abc", "state": state], path: "/notion", expectedState: state), "abc")
+    for (query, path) in [(["code": "abc", "state": "other"], "/notion"), (["code": "abc"], "/notion"), (["code": "abc", "state": state], "/other")] {
+        var rejected = false
+        do { _ = try NotionAuth.code(fromCallback: query, path: path, expectedState: state) } catch NotionAuthError.stateMismatch { rejected = true }
+        t.expect(rejected, "state나 경로가 다른데 받아들였다")
+    }
+    t.expectEqual(LoopbackReceiver.parsePath(fromRequest: "GET /notion?code=1&state=2 HTTP/1.1\r\nHost: x"), "/notion")
+}
+
+runner.test("마크다운을 노션 블록으로 바꾼다 (제목 · 중첩 목록 · 체크 · 인용 · 코드 · 구분선 · 표 · 굵게 · 링크)") { t in
+    let markdown = """
+    # 큰 제목
+    ## 중간
+    본문 **굵게** 와 *기울임* ~~취소~~ `코드` [노션](https://notion.so)
+    - 하나
+      - 둘
+        - 셋
+          - 넷
+    1. 번호
+    - [x] 완료
+    - [ ] 할 일
+    > 인용 첫 줄
+    > 인용 둘째 줄
+    ---
+    ```swift
+    let a = 1
+    ```
+    ```nope
+    x
+    ```
+    | 이름 | 값 |
+    | --- | --- |
+    | a | **b** |
+    <span style="color:#D44C47">빨강</span> ==형광==
+    """
+    let blocks = NotionBlocks.from(markdown: markdown)
+    t.expectEqual(blocks[0].kind, .heading(1))
+    t.expectEqual(blocks[1].kind, .heading(2))
+    let paragraph = blocks[2].richText
+    t.expect(paragraph.contains { $0.text == "굵게" && $0.bold }, "굵게")
+    t.expect(paragraph.contains { $0.text == "기울임" && $0.italic }, "기울임")
+    t.expect(paragraph.contains { $0.text == "취소" && $0.strikethrough }, "취소선")
+    t.expect(paragraph.contains { $0.text == "코드" && $0.code }, "인라인 코드")
+    t.expect(paragraph.contains { $0.text == "노션" && $0.link == "https://notion.so" }, "링크")
+    // 목록 중첩: 하나 > 둘 > 셋 (넷은 한도를 넘어 셋과 같은 단계)
+    t.expectEqual(blocks[3].kind, .bulleted)
+    t.expectEqual(blocks[3].children.count, 1)
+    t.expectEqual(blocks[3].children[0].children.count, 2, "중첩 2단계를 넘는 항목은 같은 단계에 둔다")
+    t.expectEqual(blocks[4].kind, .numbered)
+    t.expectEqual(blocks[5].kind, .todo(checked: true))
+    t.expectEqual(blocks[6].kind, .todo(checked: false))
+    t.expectEqual(blocks[7].kind, .quote)
+    t.expectEqual(blocks[7].richText.map(\.text).joined(), "인용 첫 줄\n인용 둘째 줄")
+    t.expectEqual(blocks[8].kind, .divider)
+    t.expectEqual(blocks[9].kind, .code(language: "swift"))
+    t.expectEqual(blocks[9].richText.first?.text, "let a = 1")
+    t.expectEqual(blocks[10].kind, .code(language: "plain text"), "모르는 언어")
+    t.expectEqual(blocks[11].kind, .table)
+    t.expectEqual(blocks[11].rows.count, 2)
+    t.expect(blocks[11].rows[1][1].first?.bold == true, "칸 안의 굵게")
+    t.expectEqual(blocks[12].richText.first?.color, "red", "글자 색")
+    t.expectEqual(blocks[12].richText.last?.color, "yellow_background", "형광펜")
+
+    // JSON 모양
+    let json = blocks[11].json()
+    t.expectEqual(json["type"] as? String, "table")
+    t.expectEqual((json["table"] as? [String: Any])?["table_width"] as? Int, 2)
+    t.expectEqual(blocks[5].json()["type"] as? String, "to_do")
+    let image = NotionBlock(.image(path: "attachments/a.png", alt: ""))
+    t.expectEqual(image.json()["type"] as? String, "paragraph", "올리지 못한 이미지는 문단")
+    t.expectEqual(image.json(uploadedImages: ["attachments/a.png": "f1"])["type"] as? String, "image")
+
+    // 2000자 분할 (UTF-16 기준)
+    let long = String(repeating: "가", count: 4500)
+    let split = NotionBlocks.from(markdown: long)[0].richText
+    t.expectEqual(split.map(\.text.count), [2000, 2000, 500])
+    t.expectEqual(split.map(\.text).joined(), long)
+    let emoji = NotionBlocks.from(markdown: String(repeating: "😀", count: 1500))[0].richText
+    t.expect(emoji.allSatisfy { $0.text.utf16.count <= 2000 }, "이모지도 2000(UTF-16)을 넘지 않는다")
+
+    // 100블록 묶음 분할
+    let many = NotionBlocks.from(markdown: (1...250).map { "문단 \($0)" }.joined(separator: "\n"))
+    t.expectEqual(many.count, 250)
+    t.expectEqual(NotionBlocks.chunks(many).map(\.count), [100, 100, 50])
+}
+
+await runner.testAsync("노션 올릴 곳: 페이지면 parent page_id, 데이터베이스면 database_id와 제목 속성 이름") { t in
+    let transport = ScriptedTransport { _, request in
+        let path = request.url?.path ?? ""
+        if path.hasSuffix("/databases/db1") {
+            return HTTPResult(status: 200, data: Data(#"{"properties":{"상태":{"type":"select"},"이름":{"type":"title"}}}"#.utf8))
+        }
+        return HTTPResult(status: 200, data: Data(#"{"id":"new-page","url":"https://notion.so/new-page"}"#.utf8))
+    }
+    let client = NotionClient(tokens: FixedTokens(), transport: transport, sleep: { _ in })
+    func body(_ index: Int) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: transport.requests[index].httpBody ?? Data())) as? [String: Any] ?? [:]
+    }
+
+    _ = try await client.createPage(target: NotionTarget(type: .page, id: "p1", title: "상위"), titleProperty: nil, title: "메모")
+    let pageParent = body(0)["parent"] as? [String: Any]
+    t.expectEqual(pageParent?["page_id"] as? String, "p1")
+    t.expectNil(pageParent?["database_id"])
+    t.expectNotNil((body(0)["properties"] as? [String: Any])?["title"], "페이지 아래는 title 속성")
+    t.expectEqual(transport.requests[0].value(forHTTPHeaderField: "Notion-Version"), "2022-06-28")
+    t.expectEqual(transport.requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer 옛토큰")
+
+    let property = try await client.titlePropertyName(databaseID: "db1")
+    t.expectEqual(property, "이름")
+    _ = try await client.createPage(target: NotionTarget(type: .database, id: "db1", title: "표"), titleProperty: property, title: "메모")
+    let databaseParent = body(2)["parent"] as? [String: Any]
+    t.expectEqual(databaseParent?["database_id"] as? String, "db1")
+    t.expectNotNil((body(2)["properties"] as? [String: Any])?["이름"], "제목 속성 이름으로 제목을 넣는다")
+}
+
+/// 업로더 시험용 환경: 임시 데이터 폴더(장부)와 연결 기록, 가짜 노션.
+struct NotionRig {
+    let root: URL
+    let api = FakeNotionAPI()
+    let links: NotionLinkStore
+    let documents: [MemoID: MemoDocument]
+    var uploader: NotionUploader {
+        let documents = documents
+        return NotionUploader(api: api, links: links, root: root, load: { id in
+            documents[id].map { NotionMemo(document: $0, title: $0.meta.title ?? "", attachmentsDirectory: URL(fileURLWithPath: "/nonexistent")) }
+        })
+    }
+    init(_ documents: [MemoDocument]) {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("notion-" + UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        links = NotionLinkStore(fileURL: root.appendingPathComponent("links/notion-links.json"))
+        self.documents = Dictionary(uniqueKeysWithValues: documents.map { ($0.meta.id, $0) })
+    }
+}
+
+let pageTarget = NotionTarget(type: .page, id: "parent-1", title: "상위")
+
+await runner.testAsync("노션 올리기: 잠긴 · local-only · destroyed 메모는 거부하고 가짜 API 호출 0건") { t in
+    let locked = MemoDocument(meta: MemoMeta(id: .generate(), title: "잠김", isLocked: true), body: "비밀")
+    let localOnly = MemoDocument(meta: MemoMeta(id: .generate(), title: "이 기기만"), body: "비밀")
+    let destroyed = MemoDocument(meta: MemoMeta(id: .generate(), title: "파기"), body: "비밀")
+    let rig = NotionRig([locked, localOnly, destroyed])
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    try MemoPrivacyLedger.insert(localOnly.meta.id, name: "local-only", root: rig.root)
+    try MemoPrivacyLedger.insert(destroyed.meta.id, name: "destroyed", root: rig.root)
+
+    for target in [pageTarget, NotionTarget(type: .database, id: "db1", title: "표")] {
+        let result = await rig.uploader.upload(ids: [locked.meta.id, localOnly.meta.id, destroyed.meta.id], target: target)
+        t.expectEqual(result.excluded, 3)
+        t.expect(result.uploaded.isEmpty && result.failures.isEmpty)
+    }
+    t.expectEqual(rig.api.calls, [], "노션 API가 호출되었다")
+    t.expect(!NotionUploader.isUploadAllowed(id: locked.meta.id, isLocked: true, root: rig.root))
+    t.expect(!NotionUploader.isUploadAllowed(id: localOnly.meta.id, isLocked: false, root: rig.root))
+
+    // 섞인 선택: 나머지만 올라가고 제외 개수를 돌려준다.
+    let plain = MemoDocument(meta: MemoMeta(id: .generate(), title: "일반"), body: "# 안녕\n본문")
+    let mixed = NotionRig([locked, plain])
+    defer { try? FileManager.default.removeItem(at: mixed.root) }
+    let result = await mixed.uploader.upload(ids: [locked.meta.id, plain.meta.id], target: pageTarget)
+    t.expectEqual(result.excluded, 1)
+    t.expectEqual(result.uploaded.map(\.id), [plain.meta.id])
+    t.expectEqual(mixed.api.calls, ["create:page:title:일반", "append:page-1:2"])
+    t.expect(!mixed.api.calls.contains { $0.contains("잠김") || $0.contains("비밀") })
+}
+
+await runner.testAsync("노션 다시 올리기: 같은 페이지 갱신(블록 삭제 후 추가), 지워졌으면 새로 만들고 올릴 곳이 바뀌면 새 곳에 만든다") { t in
+    let memo = MemoDocument(meta: MemoMeta(id: .generate(), title: "제목"), body: "내용")
+    let rig = NotionRig([memo])
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let id = memo.meta.id
+
+    _ = await rig.uploader.upload(ids: [id], target: pageTarget)
+    t.expectEqual(rig.links.link(for: id)?.pageID, "page-1")
+
+    let again = await rig.uploader.upload(ids: [id], target: pageTarget)
+    t.expectEqual(Array(rig.api.calls.dropFirst(2)), ["existing:page-1", "title:page-1:제목", "clear:page-1", "append:page-1:1"])
+    t.expectEqual(again.uploaded.first?.url, "https://notion.so/page-1")
+
+    // 페이지가 지워졌다
+    rig.api.pageExists = false
+    let before = rig.api.calls.count
+    _ = await rig.uploader.upload(ids: [id], target: pageTarget)
+    t.expectEqual(Array(rig.api.calls.dropFirst(before)), ["existing:page-1", "create:page:title:제목", "append:page-2:1"])
+    t.expectEqual(rig.links.link(for: id)?.pageID, "page-2")
+
+    // 올릴 곳이 바뀜: 기존 페이지는 건드리지 않고 새로 만든다
+    rig.api.pageExists = true
+    let beforeMove = rig.api.calls.count
+    _ = await rig.uploader.upload(ids: [id], target: NotionTarget(type: .page, id: "parent-2", title: "다른 곳"))
+    t.expectEqual(Array(rig.api.calls.dropFirst(beforeMove)), ["create:page:title:제목", "append:page-3:1"])
+    t.expectEqual(rig.links.link(for: id)?.targetID, "parent-2")
+
+    rig.links.removeAll()
+    t.expectNil(rig.links.link(for: id), "로그아웃하면 연결 기록을 지운다")
+}
+
+await runner.testAsync("노션 401은 갱신 토큰으로 갱신해 한 번 다시 보내고, 갱신 실패나 갱신 토큰 없음은 다시 로그인 오류") { t in
+    let credentials = NotionCredentials(accessToken: "옛토큰", refreshToken: "refresh-1", workspaceName: "내 작업공간", workspaceID: "ws-1", botID: "bot-1")
+    let store = MemoryNotionTokenStore()
+    try store.save(credentials)
+    let relay = ScriptedTransport { _, _ in
+        HTTPResult(status: 200, data: Data(#"{"access_token":"새토큰","refresh_token":"refresh-2"}"#.utf8))
+    }
+    let session = NotionSession(config: notionConfig, store: store, transport: relay)
+    let api = ScriptedTransport { _, request in
+        request.value(forHTTPHeaderField: "Authorization") == "Bearer 옛토큰"
+            ? HTTPResult(status: 401, data: Data())
+            : HTTPResult(status: 200, data: Data(#"{"results":[{"object":"page","id":"p1","parent":{"type":"workspace"},"properties":{"이름":{"type":"title","title":[{"plain_text":"할 일"}]}}}]}"#.utf8))
+    }
+    let items = try await NotionClient(tokens: session, transport: api, sleep: { _ in }).search(query: "")
+    t.expectEqual(items, [NotionSearchItem(id: "p1", type: .page, title: "할 일", path: "워크스페이스")])
+    t.expectEqual(api.requests.count, 2, "401 뒤 한 번만 다시 보낸다")
+    t.expectEqual(relay.requests.count, 1)
+    t.expectEqual(relay.requests.first?.url?.absoluteString, "https://relay.example.com/api/notion/token")
+    let relayBody = (try? JSONSerialization.jsonObject(with: relay.requests.first?.httpBody ?? Data())) as? [String: Any]
+    t.expectEqual(relayBody?["refresh_token"] as? String, "refresh-1")
+    t.expectEqual(try store.load()?.accessToken, "새토큰", "갱신한 토큰을 저장")
+    t.expectEqual(try store.load()?.refreshToken, "refresh-2")
+    t.expectEqual(try store.load()?.workspaceName, "내 작업공간", "갱신 응답에 없는 정보는 유지")
+
+    // 갱신 실패
+    let failingStore = MemoryNotionTokenStore()
+    try failingStore.save(credentials)
+    let failing = NotionSession(config: notionConfig, store: failingStore, transport: ScriptedTransport { _, _ in HTTPResult(status: 400, data: Data(#"{"error":"invalid_grant"}"#.utf8)) })
+    var reauth = false
+    do { _ = try await NotionClient(tokens: failing, transport: ScriptedTransport { _, _ in HTTPResult(status: 401, data: Data()) }, sleep: { _ in }).search(query: "") } catch NotionError.reauthRequired { reauth = true }
+    t.expect(reauth, "갱신 실패는 다시 로그인 오류여야 한다")
+    t.expect(NotionError.reauthRequired.localizedDescription.contains("다시 로그인해 주세요"))
+
+    // 갱신 토큰이 없음 (중계 호출 없이)
+    let noRefreshStore = MemoryNotionTokenStore()
+    try noRefreshStore.save(NotionCredentials(accessToken: "옛토큰", workspaceName: "w", workspaceID: "ws-2", botID: "b"))
+    let untouchedRelay = ScriptedTransport { _, _ in HTTPResult(status: 200, data: Data()) }
+    reauth = false
+    do { _ = try await NotionClient(tokens: NotionSession(config: notionConfig, store: noRefreshStore, transport: untouchedRelay), transport: ScriptedTransport { _, _ in HTTPResult(status: 401, data: Data()) }, sleep: { _ in }).search(query: "") } catch NotionError.reauthRequired { reauth = true }
+    t.expect(reauth)
+    t.expectEqual(untouchedRelay.requests.count, 0)
+
+    // 429는 Retry-After를 지키며 최대 5번 다시 보낸다
+    let sleeps = SleepLog()
+    let throttled = ScriptedTransport { _, _ in HTTPResult(status: 429, data: Data(), retryAfter: 30) }
+    var failed = false
+    do { _ = try await NotionClient(tokens: FixedTokens(), transport: throttled, sleep: { sleeps.add($0) }).search(query: "") } catch { failed = true }
+    t.expect(failed)
+    t.expectEqual(throttled.requests.count, 6)
+    t.expect(sleeps.seconds.allSatisfy { $0 >= 30 }, "Retry-After를 지켜야 한다")
+}
+
+await runner.testAsync("노션 토큰 저장과 로그아웃 삭제 (메모리 키체인)") { t in
+    let store = MemoryNotionTokenStore()
+    t.expectNil(try store.load())
+    let credentials = NotionCredentials(accessToken: "a", refreshToken: "r", workspaceName: "작업공간", workspaceID: "ws-1", botID: "bot")
+    try store.save(credentials)
+    t.expectEqual(try store.load(), credentials)
+    let session = NotionSession(config: notionConfig, store: store, transport: ScriptedTransport { _, _ in HTTPResult(status: 500, data: Data()) })
+    t.expectEqual(await session.current?.workspaceName, "작업공간")
+    t.expectEqual(try await session.accessToken(forceRefresh: false), "a")
+    try await session.signOut()
+    t.expectNil(try store.load(), "키체인 항목이 남았다")
+    t.expectNil(await session.current)
+    var rejected = false
+    do { _ = try await session.accessToken(forceRefresh: false) } catch { rejected = true }
+    t.expect(rejected, "로그아웃 뒤에도 토큰을 받았다")
+
+    let defaults = UserDefaults(suiteName: "notion-test-" + UUID().uuidString)!
+    let targets = NotionTargetStore(defaults: defaults)
+    targets.target = NotionTarget(type: .database, id: "db", title: "표")
+    t.expectEqual(targets.target, NotionTarget(type: .database, id: "db", title: "표"))
+    targets.target = nil
+    t.expectNil(targets.target)
+}
+
 runner.finish()

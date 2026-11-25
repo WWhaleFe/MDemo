@@ -20,6 +20,9 @@ public final class MemoTextView: NSTextView {
     var onInsertImageContent: ((Data, String, Int?) -> Bool)?
     /// 이미지 글자 읽기(OCR)를 요청한다 (이미지 우클릭 메뉴). 인식과 미리보기 시트는 창 계층이 맡는다.
     public var onRequestImageText: ((ImageTextRequest) -> Void)?
+    /// 우클릭 메뉴의 "노션에 올리기". 요청과 허용 여부는 창 계층이 연결한다 (암호 메모는 허용하지 않는다).
+    public var onRequestNotionUpload: (() -> Void)?
+    public var canRequestNotionUpload: (() -> Bool)?
     /// 메모 제목. "다른 이름으로 저장"의 기본 파일 이름을 만들 때 쓴다.
     public var memoTitleProvider: (() -> String?)?
     /// 줄이 바뀌어 다음에 칠 글자의 서식을 본문으로 되돌려야 할 때 (이미지 줄 앞뒤). LiveFormatController가 연결한다.

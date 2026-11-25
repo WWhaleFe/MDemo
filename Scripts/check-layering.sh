@@ -21,16 +21,19 @@ for package in MemoCore MarkdownEngine Services; do
 done
 
 # 네트워크 통신 코드가 없어야 한다 (NFR-07).
-# 예외는 명세가 허용한 업데이트 확인 하나뿐이고, 그 파일 하나로 가둬 둔다.
-NET_HITS="$(grep -rn --include='*.swift' -E 'URLSession|NWConnection|CFStream' \
+# 예외는 업데이트 확인(파일 하나), 구글 드라이브 통신(GoogleDrive 폴더의 두 파일), 노션 통신(Notion 폴더의 파일 하나)뿐이다.
+NET_HITS="$(grep -rn --include='*.swift' -E 'URLSession|NWConnection|NWListener|CFStream' \
     "$ROOT/Packages" "$ROOT/App" 2>/dev/null \
-    | grep -v '/App/Sources/MDemo/Update/UpdateChecker.swift:' || true)"
+    | grep -v '/App/Sources/MDemo/Update/UpdateChecker.swift:' \
+    | grep -v '/Packages/Services/Sources/Services/GoogleDrive/GoogleHTTP.swift:' \
+    | grep -v '/Packages/Services/Sources/Services/GoogleDrive/LoopbackReceiver.swift:' \
+    | grep -v '/Packages/Services/Sources/Services/Notion/NotionHTTP.swift:' || true)"
 if [ -n "$NET_HITS" ]; then
     echo "✗ 네트워크 통신 코드가 발견되었습니다 (NFR-07 위반):"
     echo "$NET_HITS"
     STATUS=1
 else
-    echo "✓ 네트워크 통신 코드 없음 (NFR-07, 업데이트 확인 제외)"
+    echo "✓ 네트워크 통신 코드 없음 (NFR-07, 업데이트 확인 · 구글 드라이브 · 노션 통신 제외)"
 fi
 
 exit $STATUS

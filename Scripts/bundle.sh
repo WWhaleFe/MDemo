@@ -38,6 +38,16 @@ cp "$ROOT/App/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 # 앱 아이콘. 원본 PNG를 바꿨다면 Scripts/make-icon.sh로 다시 만든다.
 cp "$ROOT/App/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
+# 구글 로그인 설정. 저장소에는 없고(.gitignore), 파일이 있을 때만 넣는다.
+if [ -f "$ROOT/App/Resources/GoogleOAuth.plist" ]; then
+    cp "$ROOT/App/Resources/GoogleOAuth.plist" "$APP_DIR/Contents/Resources/GoogleOAuth.plist"
+fi
+
+# 노션 로그인 설정. 구글과 같은 방식이다.
+if [ -f "$ROOT/App/Resources/NotionOAuth.plist" ]; then
+    cp "$ROOT/App/Resources/NotionOAuth.plist" "$APP_DIR/Contents/Resources/NotionOAuth.plist"
+fi
+
 # 시스템 메뉴와 컨트롤이 앱 강조색을 찾도록 에셋 카탈로그를 번들에 넣는다.
 # actool은 Xcode에 포함되므로 Command Line Tools만 있을 때는 생략한다.
 if xcrun --find actool >/dev/null 2>&1; then

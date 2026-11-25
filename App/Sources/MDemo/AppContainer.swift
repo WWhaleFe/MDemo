@@ -18,6 +18,7 @@ final class AppContainer {
     let windowRegistry: WindowRegistry
     let listWindow: MemoListWindowController
     let syncCoordinator: SyncCoordinator
+    let notionCoordinator: NotionCoordinator
     let hotkeys = GlobalHotkeyService()
     let updateChecker: UpdateChecker
 
@@ -74,6 +75,11 @@ final class AppContainer {
         )
         self.windowRegistry = registry
 
+        let notion = NotionCoordinator(store: store, windowRegistry: registry)
+        self.notionCoordinator = notion
+        registry.onUploadToNotion = { [notion] ids in notion.upload(ids) }
+        registry.canUploadToNotion = { [notion] id in notion.canUpload(id) }
+
         // 리스트 창은 메모를 열어 달라고 요청만 하고, 창을 만드는 일은 레지스트리가 한다.
         let listWindow = MemoListWindowController(
             store: store,
@@ -90,7 +96,9 @@ final class AppContainer {
                 moveToPlain: { [registry] id in registry.moveToPlainMemo(id: id) },
                 changePassword: { [registry] id in registry.changeMemoPassword(id: id) },
                 isUnlocked: { [store] id in store.lockSession(for: id) != nil },
-                createMemoReceivingAirDrop: { [registry] in registry.createMemoReceivingAirDrop() }
+                createMemoReceivingAirDrop: { [registry] in registry.createMemoReceivingAirDrop() },
+                uploadToNotion: { [notion] ids in notion.upload(ids) },
+                canUploadToNotion: { [notion] id in notion.canUpload(id) }
             ),
             onOpenMemo: { [registry] id in registry.openMemo(id: id) },
             onCreateMemo: { [registry] in registry.createMemo() }

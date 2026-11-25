@@ -659,6 +659,10 @@ public struct MemoListView: View {
                     .disabled(!model.canDuplicate(ids))
                     .help(ids.contains { index.summaries[$0]?.meta.isLocked == true }
                           ? "암호가 걸린 메모는 복제할 수 없습니다" : "선택한 메모를 첨부와 함께 복제합니다")
+                Button(ids.count == 1 ? "노션에 올리기" : "\(ids.count)개 노션에 올리기") { model.windowActions.uploadToNotion(ids) }
+                    .disabled(!ids.contains { model.windowActions.canUploadToNotion($0) })
+                    .help(ids.allSatisfy { !model.windowActions.canUploadToNotion($0) }
+                          ? "암호 메모는 노션에 올릴 수 없습니다" : "선택한 메모를 노션에 올립니다. 암호 메모는 빠집니다")
                 if ids.count == 1, let id = ids.first {
                     if index.summaries[id]?.meta.isLocked == true {
                         Button("암호 바꾸기…") { model.windowActions.changePassword(id) }.disabled(!model.windowActions.isUnlocked(id))

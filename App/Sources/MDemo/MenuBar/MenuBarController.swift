@@ -30,8 +30,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let syncStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var autoSyncItem: NSMenuItem?
     private var readableCopyItem: NSMenuItem?
+    private var pushItem: NSMenuItem?
+    private var pullItem: NSMenuItem?
+    private var googleSignInItem: NSMenuItem?
+    private let googleInfoItem = NSMenuItem.info(NSAttributedString(string: ""))
+    private var googleSyncNowItem: NSMenuItem?
+    private var googleSignOutItem: NSMenuItem?
+    private var iCloudSeparator: NSMenuItem?
     private var launchAtLoginItem: NSMenuItem?
     private let syncCoordinator: SyncCoordinator
+    private let notionCoordinator: NotionCoordinator
+    private var notionSignInItem: NSMenuItem?
+    private let notionInfoItem = NSMenuItem.info(NSAttributedString(string: ""))
+    private let notionTargetInfoItem = NSMenuItem.info(NSAttributedString(string: ""))
+    private var notionChooseItem: NSMenuItem?
+    private var notionSignOutItem: NSMenuItem?
     private let fontMenu = NSMenu()
     private let fontSizeMenu = NSMenu()
     private let memoSizeMenu = NSMenu()
@@ -44,9 +57,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         preferences: AppPreferences,
         listWindow: MemoListWindowController,
         syncCoordinator: SyncCoordinator,
+        notionCoordinator: NotionCoordinator,
         updateChecker: UpdateChecker
     ) {
         self.syncCoordinator = syncCoordinator
+        self.notionCoordinator = notionCoordinator
         self.updateChecker = updateChecker
         self.windowRegistry = windowRegistry
         self.store = store
@@ -213,7 +228,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let styles = NSMenu(title: "단추 모양")
         styleItem.submenu = styles
         viewSettings.addItem(styleItem)
-        for (title, value) in [("이름 함께(A, 기본)", "A"), ("견본만(C)", "C")] {
+        for (title, value) in [("이름 함께 (기본, 높이 40)", "A"), ("견본만 (높이 34)", "C")] {
             let entry = item(title: title, action: #selector(selectLineButtonStyle(_:)), key: "")
             entry.representedObject = value
             styles.addItem(entry)
@@ -278,9 +293,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let backupItem = NSMenuItem(title: "백업", action: nil, keyEquivalent: "")
         backupItem.submenu = buildBackupMenu()
         menu.addItem(backupItem)
-        let syncItem = NSMenuItem(title: "iCloud 동기화", action: nil, keyEquivalent: "")
+        let syncItem = NSMenuItem(title: "동기화", action: nil, keyEquivalent: "")
         syncItem.submenu = buildSyncMenu()
         menu.addItem(syncItem)
+        let notionItem = NSMenuItem(title: "노션", action: nil, keyEquivalent: "")
+        notionItem.submenu = buildNotionMenu()
+        menu.addItem(notionItem)
         menu.addItem(.separator())
 
         // 메모리 최소화가 제1 요구사항이므로 사용량을 항상 확인할 수 있게 노출한다 (§4-5).
@@ -404,15 +422,32 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         alert.runModal()
     }
 
-    // MARK: - iCloud 동기화 (SYNC-02~05, SYNC-09)
+    // MARK: - 동기화 (iCloud 또는 구글 드라이브, SYNC-02~05, SYNC-09)
 
     private func buildSyncMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
 
-        menu.addItem(item(title: "지금 iCloud에 저장", action: #selector(pushNow), key: ""))
-        menu.addItem(item(title: "iCloud에서 불러오기", action: #selector(pullNow), key: ""))
-        menu.addItem(.separator())
+        // 로그아웃 상태(iCloud): 저장 · 불러오기와 구글 로그인
+        let push = item(title: "지금 iCloud에 저장", action: #selector(pushNow), key: "")
+        pushItem = push
+        menu.addItem(push)
+        let pull = item(title: "iCloud에서 불러오기", action: #selector(pullNow), key: "")
+        pullItem = pull
+        menu.addItem(pull)
+        let signIn = item(title: "구글 계정으로 로그인…", action: #selector(signInWithGoogle), key: "")
+        signIn.toolTip = "로그인만 하면 구글 드라이브로 동기화합니다. 권한은 앱이 만든 파일에만 한정됩니다"
+        googleSignInItem = signIn
+        menu.addItem(signIn)
+
+        // 로그인 상태(구글 드라이브)
+        menu.addItem(googleInfoItem)
+        let syncNow = item(title: "지금 맞추기", action: #selector(googleSyncNow), key: "")
+        googleSyncNowItem = syncNow
+        menu.addItem(syncNow)
+        let separator = NSMenuItem.separator()
+        iCloudSeparator = separator
+        menu.addItem(separator)
 
         let auto = item(title: "자동으로 맞추기 (5분마다)", action: #selector(toggleAutoSync), key: "")
         auto.toolTip = "앱을 켤 때와 5분마다, 끌 때 자동으로 주고받습니다"
@@ -423,15 +458,79 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         readable.toolTip = "iCloud Drive의 \"\(ReadableCopy.folderName)\" 폴더 안, 이 맥 이름의 하위 폴더에 본문만 담은 사본을 동기화할 때마다 갱신합니다. 끄면 이미 만든 폴더는 그대로 둡니다"
         readableCopyItem = readable
         menu.addItem(readable)
+
+        let signOut = item(title: "로그아웃", action: #selector(signOutGoogle), key: "")
+        signOut.toolTip = "토큰을 폐기하고 이 맥의 드라이브 사본을 지운 뒤 iCloud로 돌아갑니다. 메모는 그대로 남습니다"
+        googleSignOutItem = signOut
+        menu.addItem(signOut)
         menu.addItem(.separator())
 
         menu.addItem(syncStatusItem)
         return menu
     }
 
+    // MARK: - 노션 (로그인 · 올릴 곳)
+
+    private func buildNotionMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+        let signIn = item(title: "노션 계정으로 로그인…", action: #selector(signInWithNotion), key: "")
+        signIn.toolTip = "로그인하면 메모를 노션 페이지나 데이터베이스로 올릴 수 있습니다. 암호 메모는 올라가지 않습니다"
+        notionSignInItem = signIn
+        menu.addItem(signIn)
+        menu.addItem(notionInfoItem)
+        menu.addItem(notionTargetInfoItem)
+        let choose = item(title: "올릴 곳 고르기…", action: #selector(chooseNotionTarget), key: "")
+        notionChooseItem = choose
+        menu.addItem(choose)
+        let signOut = item(title: "로그아웃", action: #selector(signOutNotion), key: "")
+        signOut.toolTip = "저장된 노션 로그인 정보와 올릴 곳 설정, 올린 페이지 연결 기록을 지웁니다. 노션에 올라간 페이지는 그대로 남습니다"
+        notionSignOutItem = signOut
+        menu.addItem(signOut)
+        return menu
+    }
+
+    private func refreshNotionMenuState() {
+        let signedIn = notionCoordinator.isSignedIn
+        notionSignInItem?.isHidden = signedIn
+        for item in [notionInfoItem, notionTargetInfoItem, notionChooseItem, notionSignOutItem] { item?.isHidden = !signedIn }
+        if signedIn {
+            setInfoTitle(notionInfoItem, "노션 · \(notionCoordinator.workspaceName ?? "")")
+            let target = notionCoordinator.target
+            setInfoTitle(notionTargetInfoItem, target.map { "올릴 곳: \($0.title) (\($0.kindLabel))" } ?? "올릴 곳: 아직 고르지 않음")
+            return
+        }
+        // 설정 파일이 없으면 흐리게 보이고 기능을 끈다(동작이 없는 항목은 자동으로 흐려진다).
+        let configured = notionCoordinator.isConfigured
+        notionSignInItem?.title = notionCoordinator.isSigningIn ? "노션 로그인 중… 브라우저에서 계속해 주세요"
+            : (configured ? "노션 계정으로 로그인…" : "노션 로그인 설정이 없습니다")
+        notionSignInItem?.action = (configured && !notionCoordinator.isSigningIn) ? #selector(signInWithNotion) : nil
+    }
+
+    @objc private func signInWithNotion() { notionCoordinator.signIn() }
+    @objc private func chooseNotionTarget() { notionCoordinator.chooseTarget() }
+    @objc private func signOutNotion() { notionCoordinator.signOut() }
+
     private func refreshSyncMenuState() {
         autoSyncItem?.state = preferences.autoSyncEnabled ? .on : .off
         readableCopyItem?.state = preferences.readableCopyEnabled ? .on : .off
+
+        let isGoogle = syncCoordinator.googleEmail != nil && syncCoordinator.isGoogleBackend
+        // iCloud 항목은 로그아웃 상태에서만, 구글 항목은 로그인 상태에서만 보인다.
+        for item in [pushItem, pullItem, readableCopyItem, googleSignInItem] { item?.isHidden = isGoogle }
+        for item in [googleInfoItem, googleSyncNowItem, googleSignOutItem] { item?.isHidden = !isGoogle }
+
+        if isGoogle {
+            setInfoTitle(googleInfoItem, "구글 드라이브 · \(syncCoordinator.googleEmail ?? "")")
+            setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
+            return
+        }
+
+        // 설정 파일이 없으면 흐리게 보이고 기능을 끈다(동작이 없는 항목은 자동으로 흐려진다).
+        let configured = syncCoordinator.isGoogleConfigured
+        googleSignInItem?.title = configured ? "구글 계정으로 로그인…" : "구글 로그인 설정이 없습니다"
+        googleSignInItem?.action = configured ? #selector(signInWithGoogle) : nil
+
         if syncCoordinator.isAvailable {
             setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
         } else {
@@ -439,6 +538,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             autoSyncItem?.isEnabled = false
             readableCopyItem?.isEnabled = false
         }
+    }
+
+    @objc private func signInWithGoogle() {
+        syncCoordinator.signInWithGoogle()
+    }
+
+    @objc private func googleSyncNow() {
+        syncCoordinator.run(mode: .both)
+    }
+
+    @objc private func signOutGoogle() {
+        syncCoordinator.signOutGoogle()
     }
 
     @objc private func pushNow() {
@@ -723,6 +834,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             rememberLastSizeItem?.title = "새 메모를 마지막으로 맞춘 크기로  (지금 \(Int(last.width)) × \(Int(last.height)))"
         }
         refreshSyncMenuState()
+        refreshNotionMenuState()
         refreshUpdateMenuState()
         launchAtLoginItem?.state = LaunchAtLoginService.isEnabled ? .on : .off
         if LaunchAtLoginService.isBlockedBySystemSettings {
