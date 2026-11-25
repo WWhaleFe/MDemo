@@ -197,6 +197,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(item(title: "새 메모  (어디서든 ⌘⇧N)", action: #selector(newMemo), key: "n"))
         let lockedItem = item(title: "새 암호 메모", action: #selector(newLockedMemo), key: "n")
         lockedItem.keyEquivalentModifierMask = [.command, .option]
+        // 암호 단추와 같은 기호. 선 색은 그릴 때의 화면 모드를 따른다.
+        lockedItem.image = MemoGlyphs.lock(locked: true, pointSize: 18, ink: .labelColor)
         menu.addItem(lockedItem)
         let airDropItem = item(title: "AirDrop으로 새 메모 만들기", action: #selector(newMemoReceivingAirDrop), key: "")
         airDropItem.toolTip = "새 메모를 만들고 iPhone이 AirDrop으로 보낸 사진을 바로 받아 넣습니다"

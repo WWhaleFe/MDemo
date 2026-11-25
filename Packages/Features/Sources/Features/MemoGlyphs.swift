@@ -73,3 +73,11 @@ struct LockGlyph: View {
     }
 }
 
+/// 목록 · 카드의 잠긴 메모 표시. 글자 높이에 맞춘 작은 `LockGlyph`.
+struct LockedMark: View {
+    var body: some View {
+        LockGlyph(locked: true).scaleEffect(14 / 24).frame(width: 14, height: 14)
+            .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+            .accessibilityLabel("잠긴 메모")
+    }
+}

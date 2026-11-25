@@ -370,7 +370,10 @@ public struct MemoListView: View {
                                 Text(memo.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                                 if memo.meta.conflictOf != nil { ConflictChip() }
                             }.frame(maxWidth: 240, alignment: .leading)
-                            Text(model.cardInfo(for: memo).singleLinePreview).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                            HStack(spacing: 4) {
+                                if memo.meta.isLocked { LockedMark() }
+                                Text(model.cardInfo(for: memo).singleLinePreview).lineLimit(1)
+                            }.foregroundStyle(ListTheme.text2).frame(maxWidth: .infinity, alignment: .leading)
                             MemoLinkChip(id: memo.id, index: index).frame(width: 136, alignment: .leading)
                             Group { if !model.isShowingTrash && model.windowActions.isVisible(memo.id) { LimeDot() } else { Color.clear } }.frame(width: 8, height: 8)
                             VStack(alignment: .trailing, spacing: 0) {

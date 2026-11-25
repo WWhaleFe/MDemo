@@ -202,7 +202,11 @@ struct MemoCardView: View {
         .clipped()
     }
     private var preview: some View {
-        Text(info.preview).font(.system(size: span == .large ? 14 : 13))
-            .foregroundStyle(ListTheme.text2).lineLimit(board || span == .large ? 2 : 3)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            // 잠긴 메모는 암호 단추와 같은 기호(닫힌 자물쇠 + 라임 점)를 앞에 붙인다.
+            if memo.meta.isLocked { LockedMark() }
+            Text(info.preview).font(.system(size: span == .large ? 14 : 13))
+                .lineLimit(board || span == .large ? 2 : 3)
+        }.foregroundStyle(ListTheme.text2)
     }
 }

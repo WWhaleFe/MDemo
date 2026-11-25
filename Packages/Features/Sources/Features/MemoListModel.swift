@@ -485,7 +485,7 @@ public final class MemoListModel {
 
     /// 수정 시각과 미리보기가 같으면 이전에 계산한 값을 돌려준다. 바뀐 메모만 다시 계산한다.
     public func cardInfo(for memo: MemoSummary) -> CardInfo {
-        if memo.meta.isLocked { return CardInfo(preview: "🔒 잠긴 메모", singleLinePreview: "🔒 잠긴 메모", tasks: []) }
+        if memo.meta.isLocked { return CardInfo(preview: "잠긴 메모", singleLinePreview: "잠긴 메모", tasks: []) }
         let key = CardKey(modified: memo.meta.modified, previewHash: memo.preview.hashValue)
         if let cached = cardCache[memo.id], cached.key == key { return cached.info }
         cardInfoComputations += 1
