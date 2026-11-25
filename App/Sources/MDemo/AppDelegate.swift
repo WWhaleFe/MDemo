@@ -5,6 +5,7 @@ import Services
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var container: AppContainer?
     private var menuBarController: MenuBarController?
+    private var devSettingObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // ⌘C · ⌘V 같은 편집 단축키는 메인 메뉴가 있어야 동작한다 (EditMenu 참고).
@@ -12,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let container = AppContainer()
         self.container = container
+        container.preferences.appearanceMode.apply()
         self.menuBarController = MenuBarController(
             windowRegistry: container.windowRegistry,
             store: container.store,
@@ -81,6 +83,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if CommandLine.arguments.contains("--show-list") {
             container.listWindow.show()
+        }
+
+        // 개발용(`--data-dir`로 띄웠을 때만): 밖에서 "키=값" 알림을 보내면 이 앱 안에서 설정을 바꾼다.
+        // 보기 전환처럼 화면 클릭으로만 바꿀 수 있는 것을 시험 도구로 바꿔 가며 속도와 메모리를 잴 때 쓴다.
+        if AppContainer.dataDirectoryOverride != nil {
+            devSettingObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("com.wwhalefe.MDemo.dev.setDefault"), object: nil, queue: .main
+            ) { note in
+                guard let pair = note.object as? String, let eq = pair.firstIndex(of: "=") else { return }
+                UserDefaults.standard.set(String(pair[pair.index(after: eq)...]), forKey: String(pair[..<eq]))
+            }
         }
 
         if CommandLine.arguments.contains("--demo-slash") {

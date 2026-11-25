@@ -353,6 +353,7 @@ runner.test("연결 없는 벤토도 최근 수정 순위와 표시 상태로 �
         for i in memos.indices { memos[i].meta.modified = Date(timeIntervalSince1970: Double(100 - i)) }
         t.expectEqual(model.bentoSpans(for: memos)[ids[0]], .large)
         windows.onScreen = [ids[1]]
+        model.noteWindowStateChanged()
         t.expectEqual(model.bentoSpans(for: memos)[ids[1]], .large)
         t.expectEqual(model.bentoSpans(for: [])[ids[0]], nil)
     }
@@ -435,6 +436,60 @@ runner.test("미리보기는 마크다운 기호를 지우고 줄 표시 방식�
     let lines = ["준비", "완료", "항목", "추가", "순서", "인용", "소제목", "코드 취소 기울임"]
     t.expectEqual(cleanedMemoPreview(source), lines.joined(separator: "\n"))
     t.expectEqual(cleanedMemoPreview(source, singleLine: true), lines.joined(separator: " · "))
+}
+
+runner.test("카드 정보 캐시는 수정 시각이나 본문이 바뀔 때만 다시 계산한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let meta = model.store.createMemo(group: nil)
+        var memo = MemoSummary(meta: meta, preview: "제목\n- [ ] 가\n- [x] **나**")
+        let first = model.cardInfo(for: memo)
+        t.expectEqual(first.preview, "가\n나")
+        t.expectEqual(first.total, 2)
+        t.expectEqual(first.done, 1)
+        t.expectEqual(first.singleLinePreview, "가 · 나")
+        _ = model.cardInfo(for: memo)
+        t.expectEqual(model.cardInfoComputations, 1)
+        memo.meta.modified = memo.meta.modified.addingTimeInterval(10)
+        memo.preview = "제목\n- [x] 가\n- [x] 나\n- [ ] 다"
+        let second = model.cardInfo(for: memo)
+        t.expectEqual(model.cardInfoComputations, 2)
+        t.expectEqual(second.total, 3)
+        t.expectEqual(second.done, 2)
+    }
+}
+
+runner.test("벤토 배치는 열 수와 칸 크기를 지키고 띠는 모든 카드를 한 번씩 담는다") { t in
+    let spans: [BoardLayout.BentoSpan] = [.large, .small, .small, .wide, .tall, .small, .small, .large, .small, .tall, .wide, .small, .small, .small, .small]
+    for width in [300.0, 500, 700, 900] {
+        let (cells, columns) = BentoGrid.bentoCells(spans: spans, width: width)
+        t.expectEqual(columns, Int(max(2, min(4, width / 220))))
+        t.expectEqual(cells.count, spans.count)
+        t.expect(cells.allSatisfy { $0.minX >= 0 && $0.maxX <= width + 0.001 }, "칸이 폭을 넘음 \(width)")
+        for (i, a) in cells.enumerated() { for b in cells[(i + 1)...] { t.expect(!a.intersects(b), "칸이 겹침 \(width)") } }
+        t.expectEqual(cells[0].height, 280)
+        for rowsPerBand in [1, 2, 3] {
+            let bands = BentoGrid.bands(cells: cells, rowsPerBand: rowsPerBand)
+            t.expectEqual(bands.flatMap(\.cardIndices).sorted(), Array(0..<spans.count))
+            for band in bands {
+                for i in band.cardIndices {
+                    t.expect(cells[i].minY >= band.minY - 0.001 && cells[i].maxY <= band.minY + band.height + 0.001, "카드가 띠를 넘음")
+                }
+            }
+            t.expectEqual(bands.map(\.rowRange.lowerBound), [0] + bands.dropLast().map(\.rowRange.upperBound))
+        }
+    }
+    t.expectEqual(BentoGrid.bands(cells: []).count, 0)
+}
+
+runner.test("보드 파이프 끝점은 메모마다 시작 메모는 첫 점, 끝 메모는 마지막 점") { t in
+    let a = MemoID(rawValue: "a"), b = MemoID(rawValue: "b")
+    let pipe = PipeGeometry(edge: MemoEdge(from: a, to: b, kind: .flow),
+                            a: CGRect(x: 0, y: 0, width: 200, height: 120), b: CGRect(x: 400, y: 0, width: 200, height: 120))
+    let points = PipeGeometry.endpoints(of: [pipe])
+    t.expectEqual(points[a], [pipe.points.first!])
+    t.expectEqual(points[b], [pipe.points.last!])
 }
 
 runner.finish()

@@ -32,10 +32,13 @@ struct CardSurface: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     var selected = false
     func body(content: Content) -> some View {
-        content.background(ListTheme.card, in: RoundedRectangle(cornerRadius: 14))
+        // 그림자는 배경 모양에만 걸어 글자까지 그림자 계산에 들어가지 않게 한다.
+        content
+            .background {
+                RoundedRectangle(cornerRadius: 14).fill(ListTheme.card)
+                    .shadow(color: scheme == .dark ? .clear : ListTheme.ink.opacity(0.07), radius: 3, y: 1)
+            }
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? ListTheme.ink : ListTheme.hairline, lineWidth: selected ? 2 : 1))
-            .shadow(color: scheme == .dark ? .clear : ListTheme.ink.opacity(0.05), radius: 1, y: 1)
-            .shadow(color: scheme == .dark ? .clear : ListTheme.ink.opacity(0.07), radius: 24, y: 8)
     }
 }
 

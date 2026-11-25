@@ -23,6 +23,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var hoverOpaqueItem: NSMenuItem?
     private var wrapsLinesItem: NSMenuItem?
     private var autoEmptyTrashItem: NSMenuItem?
+    private var listAlwaysOnTopItem: NSMenuItem?
     private var rememberLastSizeItem: NSMenuItem?
     private let syncStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var autoSyncItem: NSMenuItem?
@@ -32,6 +33,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let fontSizeMenu = NSMenu()
     private let memoSizeMenu = NSMenu()
     private let toolbarMenu = NSMenu()
+    private let appearanceMenu = NSMenu()
 
     init(
         windowRegistry: WindowRegistry,
@@ -171,12 +173,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
+        menu.addItem(item(title: "메모 목록…", action: #selector(showList), key: "l"))
+
+        let onTopItem = item(title: "메모 목록 창 항상 위에", action: #selector(toggleListAlwaysOnTop), key: "")
+        onTopItem.toolTip = "켜면 다른 앱을 눌러도 목록 창이 위에 남습니다. 목록 창의 핀 버튼과 같은 설정입니다"
+        listAlwaysOnTopItem = onTopItem
+        menu.addItem(onTopItem)
+
         menu.addItem(item(title: "새 메모  (어디서든 ⌘⇧N)", action: #selector(newMemo), key: "n"))
         menu.addItem(.separator())
 
         menu.addItem(item(title: "모든 메모 보이기/숨기기  (어디서든 ⌘⇧H)", action: #selector(toggleAllMemos), key: ""))
         menu.addItem(item(title: "모든 메모 창 닫기", action: #selector(closeAllMemos), key: ""))
         menu.addItem(.separator())
+
+        let appearanceItem = NSMenuItem(title: "화면 모드", action: nil, keyEquivalent: "")
+        appearanceItem.submenu = appearanceMenu
+        appearanceItem.toolTip = "메모 목록과 흐름 줄의 라이트 · 다크를 정합니다"
+        menu.addItem(appearanceItem)
 
         let fontItem = NSMenuItem(title: "글꼴", action: nil, keyEquivalent: "")
         fontItem.submenu = fontMenu
@@ -224,8 +238,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(helpItem)
         menu.addItem(.separator())
 
-        menu.addItem(item(title: "메모 목록…", action: #selector(showList), key: "l"))
-
         let trashItem = item(
             title: "휴지통 \(AppPreferences.trashRetentionDays)일 지나면 자동 비우기",
             action: #selector(toggleAutoEmptyTrash),
@@ -259,6 +271,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         buildFontSizeMenu()
         buildMemoSizeMenu()
         buildToolbarMenu()
+        buildAppearanceMenu()
         return menu
     }
 
@@ -581,6 +594,32 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         windowRegistry.applyPreferencesToOpenWindows()
     }
 
+    // MARK: - 화면 모드
+
+    private func buildAppearanceMenu() {
+        appearanceMenu.removeAllItems()
+        for mode in AppearanceMode.allCases {
+            let menuItem = item(title: mode.label, action: #selector(selectAppearance(_:)), key: "")
+            menuItem.representedObject = mode.rawValue
+            appearanceMenu.addItem(menuItem)
+        }
+    }
+
+    private func refreshAppearanceMenuState() {
+        for menuItem in appearanceMenu.items {
+            guard let raw = menuItem.representedObject as? String else { continue }
+            menuItem.state = raw == preferences.appearanceMode.rawValue ? .on : .off
+        }
+    }
+
+    @objc private func selectAppearance(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = AppearanceMode(rawValue: raw)
+        else { return }
+        preferences.appearanceMode = mode
+        mode.apply()
+    }
+
     // MARK: - 새 메모 기본 크기 (SET-01)
 
     private func buildMemoSizeMenu() {
@@ -633,9 +672,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshFontSizeMenuState()
         refreshMemoSizeMenuState()
         refreshToolbarMenuState()
+        refreshAppearanceMenuState()
         hoverOpaqueItem?.state = preferences.hoverOpaque ? .on : .off
         wrapsLinesItem?.state = preferences.wrapsLines ? .on : .off
         autoEmptyTrashItem?.state = preferences.autoEmptyTrash ? .on : .off
+        listAlwaysOnTopItem?.state = MemoListWindowController.isAlwaysOnTop ? .on : .off
         rememberLastSizeItem?.state = preferences.rememberLastMemoSize ? .on : .off
         if let last = preferences.lastMemoSize {
             rememberLastSizeItem?.title = "새 메모를 마지막으로 맞춘 크기로  (지금 \(Int(last.width)) × \(Int(last.height)))"
@@ -659,6 +700,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleRememberLastMemoSize() {
         preferences.rememberLastMemoSize.toggle()
+    }
+
+    @objc private func toggleListAlwaysOnTop() {
+        MemoListWindowController.isAlwaysOnTop.toggle()
     }
 
     @objc private func toggleAutoEmptyTrash() {
@@ -751,5 +796,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
+    }
+}
+
+extension AppearanceMode {
+    /// 앱 전체(목록 창, 흐름 줄, 메모 창)에 화면 모드를 적용한다. 시스템을 따를 때는 nil.
+    @MainActor
+    func apply() {
+        switch self {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 }

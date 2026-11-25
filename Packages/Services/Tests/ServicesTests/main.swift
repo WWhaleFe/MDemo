@@ -414,4 +414,20 @@ runner.test("board.json은 한쪽만 있으면 복사하고 양쪽이면 최신 
     }
 }
 
+runner.test("화면 모드는 기본이 시스템이고 저장하면 다시 읽힌다") { t in
+    MainActor.assumeIsolated {
+        let suite = "MDemoAppearanceTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = AppPreferences(store: defaults)
+        t.expectEqual(first.appearanceMode, .system)
+        first.appearanceMode = .dark
+        t.expectEqual(AppPreferences(store: defaults).appearanceMode, .dark)
+        first.appearanceMode = .light
+        t.expectEqual(AppPreferences(store: defaults).appearanceMode, .light)
+        defaults.set("엉뚱한 값", forKey: "app.appearance")
+        t.expectEqual(AppPreferences(store: defaults).appearanceMode, .system)
+    }
+}
+
 runner.finish()

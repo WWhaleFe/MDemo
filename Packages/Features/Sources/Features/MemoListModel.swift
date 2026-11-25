@@ -56,8 +56,28 @@ public final class MemoListModel {
         self.windowActions = windowActions
     }
 
-    /// 지금 화면에 보여 줄 메모들.
+    private struct VisibleKey: Equatable {
+        var scope: Scope
+        var query: String
+        var sortOrder: MemoSortOrder
+        var summaries: [MemoSummary]
+        var trashed: [MemoSummary]
+        var revision: Int
+    }
+    @ObservationIgnored private var visibleCache: (key: VisibleKey, memos: [MemoSummary])?
+
+    /// 지금 화면에 보여 줄 메모들. 한 번 그릴 때 여러 번 불리므로 같은 입력이면 이전 결과를 돌려준다.
     public var visibleMemos: [MemoSummary] {
+        // 캐시를 쓰더라도 관찰 값은 모두 읽어야 화면이 다시 그려진다.
+        let key = VisibleKey(scope: scope, query: query, sortOrder: sortOrder, summaries: store.summaries,
+                             trashed: store.trashed, revision: windowStateRevision)
+        if let visibleCache, visibleCache.key == key { return visibleCache.memos }
+        let memos = computeVisibleMemos()
+        visibleCache = (key, memos)
+        return memos
+    }
+
+    private func computeVisibleMemos() -> [MemoSummary] {
         let base: [MemoSummary]
         switch scope {
         case .all:
@@ -137,6 +157,7 @@ public final class MemoListModel {
         if isShowingTrash {
             store.reloadTrash()
         }
+        pruneCaches()
         // 창이 뜨고 진 것도 이때 다시 본다. 창 상태는 이 모델 밖에서 바뀐다.
         noteWindowStateChanged()
     }
@@ -321,7 +342,89 @@ public final class MemoListModel {
 
     public func flowContext(of id: MemoID) -> (flow: MemoFlow, index: Int)? { linkIndex.flowByMemo[id] }
 
+    // MARK: - 카드 정보 캐시
+
+    /// 카드 한 장을 그리는 데 필요한, 메모 본문에서 뽑은 값.
+    public struct CardInfo {
+        public struct Task { public var text: String; public var checked: Bool }
+        /// 마크다운 기호를 걷어 낸 여러 줄 미리보기.
+        public var preview = ""
+        /// 목록 줄에 쓰는 한 줄 미리보기.
+        public var singleLinePreview = ""
+        /// 체크리스트 항목. 글은 기호를 걷어 낸 것이다.
+        public var tasks: [Task] = []
+        public var total: Int { tasks.count }
+        public var done: Int { tasks.filter(\.checked).count }
+    }
+
+    private struct CardKey: Hashable {
+        var modified: Date
+        var previewHash: Int
+    }
+    @ObservationIgnored private var cardCache: [MemoID: (key: CardKey, info: CardInfo)] = [:]
+    /// 카드 정보를 새로 계산한 횟수. 캐시가 듣는지 시험에서 확인한다.
+    @ObservationIgnored private(set) var cardInfoComputations = 0
+
+    /// 수정 시각과 미리보기가 같으면 이전에 계산한 값을 돌려준다. 바뀐 메모만 다시 계산한다.
+    public func cardInfo(for memo: MemoSummary) -> CardInfo {
+        let key = CardKey(modified: memo.meta.modified, previewHash: memo.preview.hashValue)
+        if let cached = cardCache[memo.id], cached.key == key { return cached.info }
+        cardInfoComputations += 1
+        let info = CardInfo(
+            preview: cleanedMemoPreview(memo.preview),
+            singleLinePreview: cleanedMemoPreview(memo.preview, singleLine: true),
+            tasks: Self.checklist(memo).map { .init(text: cleanedMemoPreview($0.text, excludingTitle: false), checked: $0.checked) })
+        cardCache[memo.id] = (key, info)
+        return info
+    }
+
+    /// 요약 목록에 없는 메모의 캐시는 버린다. 캐시가 메모 수만큼만 남게 한다.
+    private func pruneCaches() {
+        let alive = Set(store.summaries.map(\.id)).union(store.trashed.map(\.id))
+        cardCache = cardCache.filter { alive.contains($0.key) }
+    }
+
+    // MARK: - 벤토 · 보드 계산 캐시
+
+    private struct BentoKey: Equatable {
+        var cards: [CardFingerprint]
+        var revision: Int
+        var layout: BoardLayout
+        var summaries: [MemoSummary]
+    }
+    private struct CardFingerprint: Hashable {
+        var id: MemoID
+        var modified: Date
+        var previewHash: Int
+    }
+    @ObservationIgnored private var bentoCache: (key: BentoKey, spans: [MemoID: BoardLayout.BentoSpan], order: [Int])?
+
+    private func bentoEntry(for memos: [MemoSummary]) -> (spans: [MemoID: BoardLayout.BentoSpan], order: [Int]) {
+        // 관찰 값(요약, 창 상태, 보드 배치)은 캐시 확인 전에 읽는다.
+        let key = BentoKey(cards: memos.map { .init(id: $0.id, modified: $0.meta.modified, previewHash: $0.preview.hashValue) },
+                           revision: windowStateRevision, layout: store.boardLayout, summaries: store.summaries)
+        if let bentoCache, bentoCache.key == key { return (bentoCache.spans, bentoCache.order) }
+        let spans = computeBentoSpans(for: memos)
+        let rank: [BoardLayout.BentoSpan] = [.large, .wide, .tall, .small]
+        let order = memos.indices.sorted { a, b in
+            let x = rank.firstIndex(of: spans[memos[a].id] ?? .small)!
+            let y = rank.firstIndex(of: spans[memos[b].id] ?? .small)!
+            return x == y ? a < b : x < y
+        }
+        bentoCache = (key, spans, order)
+        return (spans, order)
+    }
+
     public func bentoSpans(for memos: [MemoSummary]) -> [MemoID: BoardLayout.BentoSpan] {
+        bentoEntry(for: memos).spans
+    }
+
+    /// 벤토에서 큰 카드부터 놓는 차례로 정렬한 메모.
+    func bentoOrdered(_ memos: [MemoSummary]) -> [MemoSummary] {
+        bentoEntry(for: memos).order.map { memos[$0] }
+    }
+
+    private func computeBentoSpans(for memos: [MemoSummary]) -> [MemoID: BoardLayout.BentoSpan] {
         let index = linkIndex
         let recent = memos.sorted {
             $0.meta.modified == $1.meta.modified ? $0.id.rawValue < $1.id.rawValue : $0.meta.modified > $1.meta.modified
@@ -339,13 +442,22 @@ public final class MemoListModel {
             if let manual = store.boardLayout.bentoSpan(for: memo.id) { span = manual }
             else if ranks[memo.id] == 0 && score(memo) > 0 { span = .large }
             else if (ranks[memo.id] ?? 3) < 3 { span = .wide }
-            else if Self.checklist(memo).count >= 3 { span = .tall }
+            else if cardInfo(for: memo).total >= 3 { span = .tall }
             else { span = .small }
             return (memo.id, span)
         })
     }
 
+    private struct PlacementKey: Equatable {
+        var ids: [MemoID]
+        var layout: BoardLayout
+    }
+    @ObservationIgnored private var placementCache: (key: PlacementKey, placements: [MemoID: BoardLayout.Placement])?
+    @ObservationIgnored private var pipeCache: (key: PlacementKey, edges: [MemoEdge], pipes: [PipeGeometry], endpoints: [MemoID: [CGPoint]])?
+
     public func boardPlacements(for memos: [MemoSummary]) -> [MemoID: BoardLayout.Placement] {
+        let key = PlacementKey(ids: memos.map(\.id), layout: store.boardLayout)
+        if let placementCache, placementCache.key == key { return placementCache.placements }
         var result: [MemoID: BoardLayout.Placement] = [:]
         for memo in memos { result[memo.id] = store.boardLayout.placement(for: memo.id) }
         let startY = result.values.map { $0.y + 180 }.max() ?? 100
@@ -354,7 +466,24 @@ public final class MemoListModel {
             result[memo.id] = .init(x: 40 + Double(offset % 4) * 260, y: startY + Double(offset / 4) * 180)
             offset += 1
         }
+        placementCache = (key, result)
         return result
+    }
+
+    /// 드래그 중이 아닐 때 쓰는 파이프 모양. 메모 위치와 연결이 같으면 다시 계산하지 않는다.
+    func boardPipes(for memos: [MemoSummary], edges: [MemoEdge]) -> [PipeGeometry] {
+        let positions = boardPlacements(for: memos)
+        let key = PlacementKey(ids: memos.map(\.id), layout: store.boardLayout)
+        if let pipeCache, pipeCache.key == key, pipeCache.edges == edges { return pipeCache.pipes }
+        let pipes = PipeGeometry.make(edges: edges, positions: positions)
+        pipeCache = (key, edges, pipes, PipeGeometry.endpoints(of: pipes))
+        return pipes
+    }
+
+    /// 메모마다 파이프가 닿는 점. boardPipes와 같은 키로 한 번만 계산한다.
+    func boardEndpoints(for memos: [MemoSummary], edges: [MemoEdge]) -> [MemoID: [CGPoint]] {
+        _ = boardPipes(for: memos, edges: edges)
+        return pipeCache?.endpoints ?? [:]
     }
 
     public func autoArrangedPlacements(for memos: [MemoSummary]) -> [MemoID: BoardLayout.Placement] {

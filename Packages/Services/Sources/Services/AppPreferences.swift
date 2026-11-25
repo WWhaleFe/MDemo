@@ -28,6 +28,21 @@ public enum FormatToolbarPosition: String, CaseIterable, Sendable {
     }
 }
 
+/// 앱 화면 모드. 시스템 설정을 따르거나 라이트 · 다크로 고정한다.
+public enum AppearanceMode: String, CaseIterable, Sendable {
+    case system
+    case light
+    case dark
+
+    public var label: String {
+        switch self {
+        case .system: return "시스템 설정 따르기"
+        case .light: return "라이트"
+        case .dark: return "다크"
+        }
+    }
+}
+
 /// 전역 환경설정 (SET-01, SET-02).
 ///
 /// 메모마다 다른 값(색상·투명도)은 프론트매터에 들어가고, 여기 있는 값은 앱 전체에 적용된다.
@@ -125,6 +140,11 @@ public final class AppPreferences {
         didSet { store.set(formatToolbarPosition.rawValue, forKey: Key.formatToolbarPosition) }
     }
 
+    /// 화면 모드. 기본은 시스템 설정을 따른다.
+    public var appearanceMode: AppearanceMode {
+        didSet { store.set(appearanceMode.rawValue, forKey: Key.appearance) }
+    }
+
     public static let defaultFontSize: Double = 18
     public static let defaultMemoSize = (width: 420.0, height: 480.0)
     /// 창이 너무 작아 내용을 볼 수 없게 되는 것을 막는다.
@@ -148,6 +168,7 @@ public final class AppPreferences {
         static let autoEmptyTrash = "trash.autoEmpty"
         static let autoCheckUpdate = "update.autoCheck"
         static let wrapsLines = "editor.wrapsLines"
+        static let appearance = "app.appearance"
         static let rememberLastMemoSize = "memo.rememberLastSize"
         static let lastMemoWidth = "memo.lastWidth"
         static let lastMemoHeight = "memo.lastHeight"
@@ -176,6 +197,7 @@ public final class AppPreferences {
         self.formatToolbarPosition = FormatToolbarPosition(
             rawValue: store.string(forKey: Key.formatToolbarPosition) ?? ""
         ) ?? .top
+        self.appearanceMode = AppearanceMode(rawValue: store.string(forKey: Key.appearance) ?? "") ?? .system
         self.hasChosenFontSize = store.object(forKey: Key.fontSize) != nil
         self.hasChosenMemoSize = store.object(forKey: Key.defaultMemoWidth) != nil
 

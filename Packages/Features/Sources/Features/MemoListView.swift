@@ -7,6 +7,9 @@ public struct MemoListView: View {
     private let onOpenMemo: (MemoID) -> Void
     private let onCreateMemo: () -> Void
     @AppStorage("memoList.viewMode") private var savedMode = MemoListModel.ViewMode.list.rawValue
+    @AppStorage(MemoListWindowController.alwaysOnTopKey) private var alwaysOnTop = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var modeNamespace
     @State private var isConfirmingBulkOpen = false
     @State private var pendingPermanentDelete: [MemoID] = []
     @State private var addingGroup = false
@@ -33,15 +36,18 @@ public struct MemoListView: View {
                 sidebar
                 Rectangle().fill(ListTheme.hairline).frame(width: 1)
                 VStack(spacing: 0) {
-                    if mode == .board && !model.isShowingTrash {
-                        BoardView(model: model, memos: memos, index: index, target: $boardTarget,
-                                  onOpen: { openMemos([$0]) }, onCreate: onCreateMemo, menu: { id in AnyView(rowMenu(for: menuTargets(id), index: index)) })
-                    } else {
-                        contentHeader(count: memos.count)
-                        if memos.isEmpty { emptyState }
-                        else if mode == .list || model.isShowingTrash && mode == .board { rows(memos, index: index) }
-                        else { cards(memos, index: index) }
-                    }
+                    // 보기가 바뀌면 이 덩어리만 교차 페이드한다. 카드끼리 잇는 무거운 전환은 하지 않는다.
+                    VStack(spacing: 0) {
+                        if mode == .board && !model.isShowingTrash {
+                            BoardView(model: model, memos: memos, index: index, target: $boardTarget,
+                                      onOpen: { openMemos([$0]) }, onCreate: onCreateMemo, menu: { id in AnyView(rowMenu(for: menuTargets(id), index: index)) })
+                        } else {
+                            contentHeader(count: memos.count)
+                            if memos.isEmpty { emptyState }
+                            else if mode == .list || model.isShowingTrash && mode == .board { rows(memos, index: index) }
+                            else { cards(memos, index: index) }
+                        }
+                    }.id(mode).transition(.opacity.combined(with: .scale(scale: 0.985)))
                     selectionBar(index: index)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -64,18 +70,32 @@ public struct MemoListView: View {
             } message: { Text("첨부 이미지까지 함께 지워지며 되돌릴 수 없습니다") }
     }
 
+    /// 보기를 바꾼다. 동작 줄이기가 켜져 있으면 애니메이션 없이 바로 바꾼다.
+    private func setMode(_ item: MemoListModel.ViewMode) {
+        guard item.rawValue != savedMode else { return }
+        if reduceMotion { savedMode = item.rawValue }
+        else { withAnimation(.snappy(duration: 0.22)) { savedMode = item.rawValue } }
+    }
+
     private var toolbar: some View {
         HStack(spacing: 12) {
             Color.clear.frame(minWidth: 72, idealWidth: 208, maxWidth: 208).layoutPriority(-2)
             HStack(spacing: 0) {
                 ForEach(MemoListModel.ViewMode.allCases, id: \.self) { item in
-                    Button { savedMode = item.rawValue } label: {
+                    Button { setMode(item) } label: {
                         HStack(spacing: 4) {
                             Image(systemName: item.symbol).font(.system(size: 16))
                             Text(item.label).font(.system(size: 13, weight: mode == item ? .semibold : .regular))
                         }.padding(.horizontal, 8).frame(height: 28)
-                            .background(mode == item ? ListTheme.card : .clear, in: RoundedRectangle(cornerRadius: 8))
-                            .shadow(color: mode == item ? .black.opacity(0.08) : .clear, radius: 2, y: 1)
+                            .background {
+                                // 선택 배경은 버튼 사이를 미끄러진다. 그림자는 배경 모양에만 건다.
+                                if mode == item {
+                                    RoundedRectangle(cornerRadius: 8).fill(ListTheme.card)
+                                        .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+                                        .matchedGeometryEffect(id: "보기선택", in: modeNamespace)
+                                }
+                            }
+                            .contentShape(RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain)
                 }
             }.padding(3).background(ListTheme.track, in: RoundedRectangle(cornerRadius: 10))
@@ -90,6 +110,18 @@ public struct MemoListView: View {
                 Button("창 나열") { model.arrangeWindows(byGroup: false) }
                 Button("그룹별로 나열") { model.arrangeWindows(byGroup: true) }
             } label: { Label("창", systemImage: "macwindow.on.rectangle") }.fixedSize().menuStyle(.borderlessButton)
+            Button { alwaysOnTop.toggle() } label: {
+                Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
+                    .font(.system(size: 14))
+                    .foregroundStyle(alwaysOnTop ? ListTheme.ink : ListTheme.muted)
+                    .frame(width: 32, height: 32)
+                    .background(alwaysOnTop ? ListTheme.track : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(alwaysOnTop ? "항상 위에 켜짐: 누르면 다른 앱 뒤로 갈 수 있습니다" : "항상 위에 꺼짐: 누르면 목록 창을 다른 창 위에 고정합니다")
+            .accessibilityLabel("목록 창 항상 위에")
+            .accessibilityValue(alwaysOnTop ? "켜짐" : "꺼짐")
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(ListTheme.muted)
                 TextField("검색", text: $model.query).textFieldStyle(.plain).focused($searchFocused)
@@ -223,7 +255,7 @@ public struct MemoListView: View {
                                 Text(memo.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                                 if memo.meta.conflictOf != nil { ConflictChip() }
                             }.frame(maxWidth: 240, alignment: .leading)
-                            Text(memo.cleanedPreview(singleLine: true)).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(model.cardInfo(for: memo).singleLinePreview).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                             MemoLinkChip(id: memo.id, index: index).frame(width: 136, alignment: .leading)
                             Group { if !model.isShowingTrash && model.windowActions.isVisible(memo.id) { LimeDot() } else { Color.clear } }.frame(width: 8, height: 8)
                             VStack(alignment: .trailing, spacing: 0) {
@@ -245,19 +277,12 @@ public struct MemoListView: View {
     }
 
     private func cards(_ memos: [MemoSummary], index: MemoListModel.LinkIndex) -> some View {
-        let spans = model.bentoSpans(for: memos)
-        return ScrollView {
+        // 벤토는 띠 배치에 콘텐츠 폭이 필요하다. 상태로 받아 두면 첫 값이 늦게 오거나 안 와서 빈 화면이 될 수 있어,
+        // 바깥 폭을 그대로 넘긴다(좌우 여백 32씩 뺀 값).
+        return GeometryReader { geo in ScrollView {
             Group {
                 if mode == .bento {
-                    BentoLayout {
-                        ForEach(memos.enumerated().sorted { a, b in
-                            let order: [BoardLayout.BentoSpan] = [.large, .wide, .tall, .small]
-                            let x = order.firstIndex(of: spans[a.element.id] ?? .small)!
-                            let y = order.firstIndex(of: spans[b.element.id] ?? .small)!
-                            return x == y ? a.offset < b.offset : x < y
-                        }.map(\.element)) { memo in card(memo, index: index, span: spans[memo.id] ?? .small).bentoSpan(spans[memo.id] ?? .small) }
-                        if canCreateTile { newTile.bentoSpan(.small) }
-                    }
+                    bentoBands(model.bentoOrdered(memos), spans: model.bentoSpans(for: memos), index: index, width: max(0, geo.size.width - 64))
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 16)], spacing: 16) {
                         ForEach(memos) { memo in card(memo, index: index, span: .small).frame(height: 176) }
@@ -265,7 +290,8 @@ public struct MemoListView: View {
                     }
                 }
             }.padding(.horizontal, 32).padding(.bottom, 32)
-        }.focusable().focused($cardsFocused).focusEffectDisabled()
+        } }
+            .focusable().focused($cardsFocused).focusEffectDisabled()
             .background(ListKeyboardCommands(selectAll: { model.selectAllVisible() }, delete: deleteSelected,
                                              open: { if !model.isShowingTrash { openMemos(model.orderedSelection) } }))
             .onDeleteCommand(perform: deleteSelected)
@@ -275,12 +301,32 @@ public struct MemoListView: View {
                 model.selectAllVisible(); return .handled
             }
     }
+    /// 벤토는 띠 단위로 지연 생성해 보이는 줄의 카드만 만든다. 폭을 알기 전에는 그리지 않는다.
+    @ViewBuilder private func bentoBands(_ ordered: [MemoSummary], spans: [MemoID: BoardLayout.BentoSpan], index: MemoListModel.LinkIndex, width bentoWidth: CGFloat) -> some View {
+        if bentoWidth > 0 {
+            let tile = canCreateTile
+            let cardSpans = ordered.map { spans[$0.id] ?? .small } + (tile ? [.small] : [])
+            let layout = BentoGrid.bentoCells(spans: cardSpans, width: bentoWidth)
+            LazyVStack(spacing: BentoGrid.gap) {
+                ForEach(BentoGrid.bands(cells: layout.cells), id: \.rowRange.lowerBound) { band in
+                    ZStack(alignment: .topLeading) {
+                        ForEach(band.cardIndices, id: \.self) { i in
+                            let rect = layout.cells[i]
+                            Group {
+                                if i < ordered.count { card(ordered[i], index: index, span: cardSpans[i]) } else { newTile }
+                            }.frame(width: rect.width, height: rect.height).offset(x: rect.minX, y: rect.minY - band.minY)
+                        }
+                    }.frame(width: bentoWidth, height: band.height, alignment: .topLeading)
+                }
+            }
+        }
+    }
     private func card(_ memo: MemoSummary, index: MemoListModel.LinkIndex, span: BoardLayout.BentoSpan) -> some View {
-        MemoCardView(memo: memo, index: index, visible: !model.isShowingTrash && model.windowActions.isVisible(memo.id), trash: model.isShowingTrash, span: span, select: { model.selection = [$0] })
+        MemoCardView(memo: memo, info: model.cardInfo(for: memo), index: index, visible: !model.isShowingTrash && model.windowActions.isVisible(memo.id), trash: model.isShowingTrash, span: span, select: { model.selection = [$0] })
             .modifier(CardSurface(selected: model.selection.contains(memo.id)))
             .contentShape(RoundedRectangle(cornerRadius: 14))
-            .onTapGesture(count: 2) { if !model.isShowingTrash { openMemos([memo.id]) } }
             .onTapGesture { select(memo.id) }
+            .simultaneousGesture(TapGesture(count: 2).onEnded { if !model.isShowingTrash { openMemos([memo.id]) } })
             .contextMenu {
                 rowMenu(for: menuTargets(memo.id), index: index)
                 if mode == .bento {
@@ -407,7 +453,7 @@ private struct SidebarButton<Content: View>: View {
             content().font(.system(size: 13, weight: selected ? .semibold : .regular))
                 .padding(.horizontal, 8).frame(height: 32)
                 .background(selected ? ListTheme.card : hovered ? ListTheme.ink.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                .shadow(color: selected ? .black.opacity(0.04) : .clear, radius: 2, y: 1)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).onHover { hovered = $0 }
     }
 }

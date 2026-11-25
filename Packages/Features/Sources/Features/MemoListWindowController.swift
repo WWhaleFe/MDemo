@@ -21,6 +21,17 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
 
     /// ⌃ 클릭을 ⌘ 클릭으로 바꿔 주는 감시자. 창이 떠 있는 동안만 둔다.
     private var controlClickMonitor: Any?
+    /// "항상 위에" 설정이 바뀌면 창 높이를 바로 맞춘다. 창이 떠 있는 동안만 둔다.
+    private var alwaysOnTopObserver: NSObjectProtocol?
+
+    /// 목록 창을 다른 앱 창보다 항상 위에 둘지 저장하는 키. 목록 창의 핀 버튼과 메뉴바 설정이 같이 쓴다.
+    public static let alwaysOnTopKey = "memoList.alwaysOnTop"
+
+    /// 저장된 값이 없으면 끈다. 다른 앱이나 파일을 고를 때 목록 창이 가리지 않게 한다.
+    public static var isAlwaysOnTop: Bool {
+        get { UserDefaults.standard.bool(forKey: alwaysOnTopKey) }
+        set { UserDefaults.standard.set(newValue, forKey: alwaysOnTopKey) }
+    }
 
     public init(
         store: MemoStore,
@@ -71,10 +82,18 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         window.center()
-        // 메모 창들이 항상 위에 떠 있으므로, 리스트 창도 같은 높이에 두어야 가려지지 않는다.
-        window.level = .floating
+        // 켜 두면 메모 창과 같은 높이에 떠서 가려지지 않고, 끄면 보통 창처럼 다른 앱 뒤로 간다.
+        applyAlwaysOnTop(to: window)
 
         self.window = window
+        alwaysOnTopObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window else { return }
+                self.applyAlwaysOnTop(to: window)
+            }
+        }
         installControlClickSelection()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -105,6 +124,11 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    private func applyAlwaysOnTop(to window: NSWindow) {
+        let level: NSWindow.Level = Self.isAlwaysOnTop ? .floating : .normal
+        if window.level != level { window.level = level }
+    }
+
     public func close() {
         window?.close()
     }
@@ -115,6 +139,10 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
             NSEvent.removeMonitor(controlClickMonitor)
         }
         controlClickMonitor = nil
+        if let alwaysOnTopObserver {
+            NotificationCenter.default.removeObserver(alwaysOnTopObserver)
+        }
+        alwaysOnTopObserver = nil
         window?.contentView = nil
         window?.delegate = nil
         window = nil

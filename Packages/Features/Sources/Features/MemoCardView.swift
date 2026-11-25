@@ -2,30 +2,38 @@ import MemoCore
 import SwiftUI
 
 extension MemoSummary {
-    var listPreview: String {
-        cleanedPreview()
-    }
-    func cleanedPreview(singleLine: Bool = false) -> String {
-        cleanedMemoPreview(preview, singleLine: singleLine)
-    }
-
     func listDate(trash: Bool) -> String {
         let date = trash ? (deletedAt ?? meta.modified) : meta.modified
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M월 d일"
+        let formatter = Calendar.current.isDateInToday(date) ? ListDateFormat.today : ListDateFormat.other
         return formatter.string(from: date)
     }
 }
+
+/// 날짜 포매터는 만드는 값이 비싸서 한 번만 만든다. 메모 내용은 담지 않는다.
+private enum ListDateFormat {
+    static let today = make("a h:mm")
+    static let other = make("M월 d일")
+    private static func make(_ format: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = format
+        return formatter
+    }
+}
+
+/// 줄 앞의 목록 · 인용 · 제목 기호. 한 번만 컴파일한다.
+private let previewPrefixPattern = try! NSRegularExpression(
+    pattern: #"^(?:[-*+]\s+\[[ xX]\]\s*|[-*+]\s+|\d+\.\s+|>\s*|#+\s*)"#)
 
 /// 목록과 카드에서 같은 규칙으로 마크다운 기호를 걷어 낸다.
 func cleanedMemoPreview(_ preview: String, singleLine: Bool = false, excludingTitle: Bool = true) -> String {
     preview.components(separatedBy: "\n").dropFirst(excludingTitle ? 1 : 0).compactMap { line -> String? in
         var text = line.trimmingCharacters(in: .whitespaces)
         guard !text.hasPrefix("```") else { return nil }
-        let prefix = #"^(?:[-*+]\s+\[[ xX]\]\s*|[-*+]\s+|\d+\.\s+|>\s*|#+\s*)"#
-        while let range = text.range(of: prefix, options: .regularExpression) {
-            text.removeSubrange(range)
+        while true {
+            let whole = NSRange(location: 0, length: (text as NSString).length)
+            guard let match = previewPrefixPattern.firstMatch(in: text, range: whole), match.range.length > 0 else { break }
+            text = (text as NSString).substring(from: match.range.length)
         }
         for marker in ["**", "__", "~~", "`", "*", "_"] {
             text = text.replacingOccurrences(of: marker, with: "")
@@ -72,18 +80,16 @@ struct MemoLinkChip: View {
 }
 
 struct ChecklistProgress: View {
-    let memo: MemoSummary
+    let info: MemoListModel.CardInfo
     var body: some View {
-        let tasks = MemoListModel.checklist(memo)
-        if !tasks.isEmpty {
+        if info.total > 0 {
             HStack(spacing: 8) {
-                GeometryReader { geo in
-                    Capsule().fill(ListTheme.chipBg)
-                        .overlay(alignment: .leading) {
-                            Capsule().fill(ListTheme.ink).frame(width: geo.size.width * CGFloat(tasks.filter(\.checked).count) / CGFloat(tasks.count))
-                        }
-                }.frame(height: 4)
-                Text("\(tasks.filter(\.checked).count)/\(tasks.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted)
+                Capsule().fill(ListTheme.chipBg).frame(maxWidth: .infinity).frame(height: 4)
+                    .overlay {
+                        Capsule().fill(ListTheme.ink)
+                            .scaleEffect(x: CGFloat(info.done) / CGFloat(info.total), anchor: .leading)
+                    }
+                Text("\(info.done)/\(info.total)").font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted)
             }
         }
     }
@@ -117,6 +123,7 @@ struct FlowChips: View {
 
 struct MemoCardView: View {
     let memo: MemoSummary
+    let info: MemoListModel.CardInfo
     let index: MemoListModel.LinkIndex
     let visible: Bool
     var trash = false
@@ -141,17 +148,17 @@ struct MemoCardView: View {
             }
             if memo.meta.conflictOf != nil { ConflictChip() }
             if span == .tall {
-                let tasks = MemoListModel.checklist(memo)
+                let tasks = info.tasks
                 ForEach(Array(tasks.prefix(6).enumerated()), id: \.offset) { _, task in
                     HStack(spacing: 8) {
                         Image(systemName: task.checked ? "checkmark.square.fill" : "square").font(.system(size: 14)).foregroundStyle(ListTheme.ink)
-                        Text(cleanedMemoPreview(task.text, excludingTitle: false)).font(.system(size: 13)).foregroundStyle(ListTheme.text2).lineLimit(1)
+                        Text(task.text).font(.system(size: 13)).foregroundStyle(ListTheme.text2).lineLimit(1)
                     }
                 }
                 if tasks.isEmpty { preview }
             } else { preview }
             Spacer(minLength: 0)
-            ChecklistProgress(memo: memo)
+            ChecklistProgress(info: info)
             if span == .large, let context = index.flowByMemo[memo.id] {
                 VStack(alignment: .leading, spacing: 8) {
                     MemoLinkChip(id: memo.id, index: index)
@@ -176,7 +183,7 @@ struct MemoCardView: View {
         .clipped()
     }
     private var preview: some View {
-        Text(memo.listPreview).font(.system(size: span == .large ? 14 : 13))
+        Text(info.preview).font(.system(size: span == .large ? 14 : 13))
             .foregroundStyle(ListTheme.text2).lineLimit(board || span == .large ? 2 : 3)
     }
 }
