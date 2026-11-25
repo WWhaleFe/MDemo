@@ -617,7 +617,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
               let mode = AppearanceMode(rawValue: raw)
         else { return }
         preferences.appearanceMode = mode
-        mode.apply()
+        mode.apply(animated: true)
     }
 
     // MARK: - 새 메모 기본 크기 (SET-01)
@@ -796,17 +796,5 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
-    }
-}
-
-extension AppearanceMode {
-    /// 앱 전체(목록 창, 흐름 줄, 메모 창)에 화면 모드를 적용한다. 시스템을 따를 때는 nil.
-    @MainActor
-    func apply() {
-        switch self {
-        case .system: NSApp.appearance = nil
-        case .light: NSApp.appearance = NSAppearance(named: .aqua)
-        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
-        }
     }
 }

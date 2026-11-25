@@ -329,26 +329,35 @@ public final class MemoStore {
 
     // MARK: - 검색 (SRC-01, SRC-02)
 
-    /// 제목·미리보기로 먼저 거르고, 필요하면 본문까지 찾아본다.
-    ///
-    /// 본문 검색은 파일을 읽어야 해서 비싸다. 앞단계에서 걸린 메모는 다시 읽지 않고,
-    /// 걸리지 않은 메모만 파일을 열어 본다.
+    /// 그룹으로 좁힌 뒤 제목+본문에서 찾는다. 기존 호출을 위한 얇은 래퍼다.
     public func search(query: String, group: String? = nil, includeBodies: Bool = true) -> [MemoSummary] {
-        let scope = MemoSearch.filtered(summaries, group: group)
+        filter(MemoSearch.filtered(summaries, group: group), query: query, target: includeBodies ? .titleAndBody : .title)
+    }
+
+    /// 요약 목록에서 검색어에 맞는 것만 남긴다. 입력 순서를 유지한다.
+    ///
+    /// 제목은 요약(목록에 보이는 제목 그대로)으로, 본문은 프론트매터를 뺀 파일 내용으로 찾는다.
+    /// 본문 검색은 파일을 한 건씩 읽고 버린다. 본문 캐시는 두지 않는다 (§4-5).
+    public func filter(_ summaries: [MemoSummary], query: String, target: MemoSearchTarget) -> [MemoSummary] {
         let needle = query.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return scope }
+        guard !needle.isEmpty else { return summaries }
 
-        let quickHits = scope.filter { MemoSearch.matches($0, query: needle) }
-        guard includeBodies else { return quickHits }
-
-        let quickHitIDs = Set(quickHits.map(\.id))
-        let remaining = scope.filter { !quickHitIDs.contains($0.id) }
-        guard !remaining.isEmpty else { return quickHits }
-
-        let bodyHits = (try? repository.searchBodies(matching: needle, in: remaining.map(\.id))) ?? []
-        guard !bodyHits.isEmpty else { return quickHits }
-
-        return scope.filter { quickHitIDs.contains($0.id) || bodyHits.contains($0.id) }
+        func titleMatches(_ summary: MemoSummary) -> Bool {
+            summary.title.localizedCaseInsensitiveContains(needle)
+        }
+        switch target {
+        case .title:
+            return summaries.filter(titleMatches)
+        case .body:
+            let hits = (try? repository.searchBodies(matching: needle, in: summaries.map(\.id))) ?? []
+            return summaries.filter { hits.contains($0.id) }
+        case .titleAndBody:
+            // 제목에서 걸린 메모는 파일을 다시 읽지 않는다.
+            let titleHits = Set(summaries.filter(titleMatches).map(\.id))
+            let remaining = summaries.filter { !titleHits.contains($0.id) }.map(\.id)
+            let bodyHits = remaining.isEmpty ? [] : ((try? repository.searchBodies(matching: needle, in: remaining)) ?? [])
+            return summaries.filter { titleHits.contains($0.id) || bodyHits.contains($0.id) }
+        }
     }
 
     private func updateSummary(meta: MemoMeta, preview: String) {

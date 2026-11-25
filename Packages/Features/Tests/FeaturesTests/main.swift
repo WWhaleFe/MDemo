@@ -13,7 +13,9 @@ func makeModel() throws -> (MemoListModel, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MDemoFeatureTests-\(UUID().uuidString)", isDirectory: true)
     let repository = try FileMemoRepository(rootDirectory: root)
-    return (MemoListModel(store: MemoStore(repository: repository)), root)
+    let model = MemoListModel(store: MemoStore(repository: repository))
+    model.searchDebounce = 0
+    return (model, root)
 }
 
 /// 창 계층을 흉내 낸다. 어떤 메모가 화면에 떠 있는지만 기억하면 목록 규칙은 다 시험할 수 있다.
@@ -39,6 +41,7 @@ func makeModelWithWindows() throws -> (MemoListModel, FakeWindows, URL) {
     let repository = try FileMemoRepository(rootDirectory: root)
     let windows = FakeWindows()
     let model = MemoListModel(store: MemoStore(repository: repository), windowActions: windows.actions)
+    model.searchDebounce = 0
     return (model, windows, root)
 }
 
@@ -490,6 +493,30 @@ runner.test("보드 파이프 끝점은 메모마다 시작 메모는 첫 점, �
     let points = PipeGeometry.endpoints(of: [pipe])
     t.expectEqual(points[a], [pipe.points.first!])
     t.expectEqual(points[b], [pipe.points.last!])
+}
+
+runner.test("찾는 범위와 그룹이 모든 범위에서 같은 규칙으로 적용된다") { t in
+    let (model, root) = try makeModel()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let work = model.store.createMemo(group: "업무")
+    model.store.saveBody(id: work.id, body: "업무 메모\n본문낱말")
+    let free = model.store.createMemo()
+    model.store.saveBody(id: free.id, body: "자유 메모\n본문낱말")
+
+    model.query = "본문낱말"
+    t.expectEqual(model.visibleMemos.count, 2)
+    model.searchTarget = .title
+    t.expectEqual(model.visibleMemos.count, 0, "제목 찾기에 본문이 걸렸다")
+    model.searchTarget = .body
+    model.searchGroup = .named("업무")
+    t.expectEqual(model.visibleMemos.map(\.id), [work.id])
+    model.searchGroup = .ungrouped
+    t.expectEqual(model.visibleMemos.map(\.id), [free.id])
+    model.prepare(for: .ungrouped)
+    t.expectEqual(model.visibleMemos.map(\.id), [free.id])
+    model.resetSearchOptions()
+    t.expect(!model.hasCustomSearchOptions, "기본값으로 돌아오지 않았다")
+    UserDefaults.standard.removeObject(forKey: "memoList.searchTarget")
 }
 
 runner.finish()

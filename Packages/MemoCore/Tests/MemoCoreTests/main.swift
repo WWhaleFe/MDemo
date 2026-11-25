@@ -740,4 +740,66 @@ runner.test("보드 배치는 저장과 재시작을 거치며 깨진 파일은 
     t.expectEqual(BoardLayout.BentoSpan.allCases.map(\.rows), [1, 1, 2, 2])
 }
 
+// MARK: - 찾는 범위 (제목 · 본문)
+
+runner.test("프론트매터 낱말로는 본문 찾기에 걸리지 않는다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let memo = store.createMemo()
+        store.saveBody(id: memo.id, body: "우유 사기")
+        t.expectEqual(store.filter(store.summaries, query: "pinned", target: .body).count, 0, "pinned가 걸렸다")
+        t.expectEqual(store.filter(store.summaries, query: "color", target: .body).count, 0, "color가 걸렸다")
+        t.expectEqual(store.filter(store.summaries, query: "pinned", target: .titleAndBody).count, 0)
+        t.expectEqual(store.filter(store.summaries, query: "우유", target: .body).count, 1)
+    }
+}
+
+runner.test("본문 속 마크다운 제목은 본문으로 찾고, 제목 찾기에는 메모 제목만 쓴다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let memo = store.createMemo()
+        store.saveBody(id: memo.id, body: "첫 줄 제목\n\n# 소제목\n내용")
+        t.expectEqual(store.filter(store.summaries, query: "소제목", target: .body).count, 1)
+        t.expectEqual(store.filter(store.summaries, query: "소제목", target: .title).count, 0)
+        t.expectEqual(store.filter(store.summaries, query: "첫 줄", target: .title).count, 1)
+    }
+}
+
+runner.test("직접 붙인 제목은 제목 찾기로만 걸린다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let memo = store.createMemo()
+        store.saveBody(id: memo.id, body: "본문 내용")
+        store.updateMeta(id: memo.id) { $0.title = "직접제목" }
+        t.expectEqual(store.filter(store.summaries, query: "직접제목", target: .title).count, 1)
+        t.expectEqual(store.filter(store.summaries, query: "직접제목", target: .body).count, 0)
+        t.expectEqual(store.filter(store.summaries, query: "직접제목", target: .titleAndBody).count, 1)
+        t.expectEqual(store.filter(store.summaries, query: "", target: .body).count, 1, "빈 검색어는 그대로")
+    }
+}
+
+runner.test("휴지통 메모도 본문으로 찾는다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let memo = store.createMemo()
+        store.saveBody(id: memo.id, body: "제목줄\n휴지통속낱말")
+        store.moveToTrash(ids: [memo.id])
+        store.reloadTrash()
+        t.expectEqual(store.filter(store.trashed, query: "휴지통속낱말", target: .body).count, 1)
+        t.expectEqual(store.filter(store.trashed, query: "없는낱말", target: .body).count, 0)
+    }
+}
+
 runner.finish()

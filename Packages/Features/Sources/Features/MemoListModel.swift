@@ -35,7 +35,54 @@ public final class MemoListModel {
     }
 
     public var scope: Scope = .all
-    public var query: String = ""
+    /// 검색칸에 친 글자. 찾기에는 `appliedQuery`를 쓴다.
+    public var query: String = "" {
+        didSet { queryDidChange() }
+    }
+    /// 실제로 찾는 데 쓰는 검색어. 입력이 0.15초 멈춘 뒤에 `query`를 따라간다.
+    public private(set) var appliedQuery: String = ""
+    /// 입력 뒤 찾기까지 기다리는 시간(초). 0이면 바로 찾는다(시험용).
+    @ObservationIgnored public var searchDebounce: Double = 0.15
+    @ObservationIgnored private var debounceTask: Task<Void, Never>?
+
+    /// 찾는 범위. 다음 실행에도 이어진다.
+    public var searchTarget: MemoSearchTarget = {
+        UserDefaults.standard.string(forKey: "memoList.searchTarget").flatMap(MemoSearchTarget.init(rawValue:)) ?? .titleAndBody
+    }() {
+        didSet { UserDefaults.standard.set(searchTarget.rawValue, forKey: "memoList.searchTarget") }
+    }
+
+    /// 검색을 좁히는 그룹. 저장하지 않는다.
+    public enum SearchGroup: Hashable {
+        case any
+        case ungrouped
+        case named(String)
+    }
+    public var searchGroup: SearchGroup = .any
+
+    /// 찾는 범위나 그룹이 기본값에서 벗어났는가.
+    public var hasCustomSearchOptions: Bool { searchTarget != .titleAndBody || searchGroup != .any }
+
+    public func resetSearchOptions() {
+        searchTarget = .titleAndBody
+        searchGroup = .any
+    }
+
+    private func queryDidChange() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        // 지울 때와 시간이 0일 때는 기다리지 않는다.
+        if query.trimmingCharacters(in: .whitespaces).isEmpty || searchDebounce <= 0 {
+            if appliedQuery != query { appliedQuery = query }
+            return
+        }
+        let delay = searchDebounce
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            if self.appliedQuery != self.query { self.appliedQuery = self.query }
+        }
+    }
     public var sortOrder: MemoSortOrder = .newestFirst
     /// 목록에서 고른 메모들 (LST-05).
     public var selection: Set<MemoID> = []
@@ -59,6 +106,8 @@ public final class MemoListModel {
     private struct VisibleKey: Equatable {
         var scope: Scope
         var query: String
+        var searchTarget: MemoSearchTarget
+        var searchGroup: SearchGroup
         var sortOrder: MemoSortOrder
         var summaries: [MemoSummary]
         var trashed: [MemoSummary]
@@ -69,8 +118,8 @@ public final class MemoListModel {
     /// 지금 화면에 보여 줄 메모들. 한 번 그릴 때 여러 번 불리므로 같은 입력이면 이전 결과를 돌려준다.
     public var visibleMemos: [MemoSummary] {
         // 캐시를 쓰더라도 관찰 값은 모두 읽어야 화면이 다시 그려진다.
-        let key = VisibleKey(scope: scope, query: query, sortOrder: sortOrder, summaries: store.summaries,
-                             trashed: store.trashed, revision: windowStateRevision)
+        let key = VisibleKey(scope: scope, query: appliedQuery, searchTarget: searchTarget, searchGroup: searchGroup,
+                             sortOrder: sortOrder, summaries: store.summaries, trashed: store.trashed, revision: windowStateRevision)
         if let visibleCache, visibleCache.key == key { return visibleCache.memos }
         let memos = computeVisibleMemos()
         visibleCache = (key, memos)
@@ -78,33 +127,35 @@ public final class MemoListModel {
     }
 
     private func computeVisibleMemos() -> [MemoSummary] {
-        let base: [MemoSummary]
+        // 1) 왼쪽 범위 2) 그룹 3) 검색어 순서로 거른다. 모든 범위에서 같은 규칙이다.
+        var base: [MemoSummary]
         switch scope {
         case .all:
-            base = store.search(query: query)
+            base = store.summaries
         case .group(let name):
-            base = store.search(query: query, group: name)
+            base = MemoSearch.filtered(store.summaries, group: name)
         case .ungrouped:
-            let ungrouped = store.summaries.filter { $0.meta.group == nil }
-            base = query.trimmingCharacters(in: .whitespaces).isEmpty
-                ? ungrouped
-                : ungrouped.filter { MemoSearch.matches($0, query: query) }
+            base = store.summaries.filter { $0.meta.group == nil }
         case .visible, .hidden:
             // 창 상태는 저장소가 아니라 창 계층에 있다. 이 값을 읽어 두어야 화면이 다시 그려진다.
             _ = windowStateRevision
             let shouldBeVisible = scope == .visible
-            let matching = store.summaries.filter { windowActions.isVisible($0.id) == shouldBeVisible }
-            base = query.trimmingCharacters(in: .whitespaces).isEmpty
-                ? matching
-                : matching.filter { MemoSearch.matches($0, query: query) }
+            base = store.summaries.filter { windowActions.isVisible($0.id) == shouldBeVisible }
         case .flow(let id):
             guard let flow = linkIndex.flows.first(where: { $0.id == id }) else { return [] }
             let byID = Dictionary(uniqueKeysWithValues: store.summaries.map { ($0.id, $0) })
-            return flow.memoIDs.compactMap { byID[$0] }.filter { MemoSearch.matches($0, query: query) }
+            base = flow.memoIDs.compactMap { byID[$0] }
         case .trash:
-            let needle = query.trimmingCharacters(in: .whitespaces)
-            base = needle.isEmpty ? store.trashed : store.trashed.filter { MemoSearch.matches($0, query: needle) }
+            base = store.trashed
         }
+        switch searchGroup {
+        case .any: break
+        case .ungrouped: base = base.filter { $0.meta.group == nil }
+        case .named(let name): base = base.filter { $0.meta.group == name }
+        }
+        base = store.filter(base, query: appliedQuery, target: searchTarget)
+        // 흐름은 흐름 순서를 지킨다.
+        if case .flow = scope { return base }
         return MemoSearch.sorted(base, by: sortOrder)
     }
 

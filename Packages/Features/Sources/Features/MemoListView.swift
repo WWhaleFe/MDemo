@@ -1,5 +1,6 @@
 import AppKit
 import MemoCore
+import Services
 import SwiftUI
 
 public struct MemoListView: View {
@@ -8,8 +9,14 @@ public struct MemoListView: View {
     private let onCreateMemo: () -> Void
     @AppStorage("memoList.viewMode") private var savedMode = MemoListModel.ViewMode.list.rawValue
     @AppStorage(MemoListWindowController.alwaysOnTopKey) private var alwaysOnTop = false
+    @AppStorage(AppPreferences.appearanceKey) private var appearanceRaw = AppearanceMode.system.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var modeNamespace
+    /// 카드판에서 지금 보이는 맨 위(카드 한 줄 단위로 맞춘 값). 화면 근처 카드만 만들 때 쓴다.
+    @State private var cardScrollTop: CGFloat = 0
+    /// 화면에 그리는 보기. 저장값(@AppStorage)을 바꾸면 화면 반영이 애니메이션 묶음 밖에서 일어나 움직임이 사라지므로,
+    /// 이 값을 애니메이션 안에서 바꾸고 저장값은 따로 맞춘다.
+    @State private var shownMode: MemoListModel.ViewMode?
     @State private var isConfirmingBulkOpen = false
     @State private var pendingPermanentDelete: [MemoID] = []
     @State private var addingGroup = false
@@ -24,7 +31,7 @@ public struct MemoListView: View {
         self.onOpenMemo = onOpenMemo
         self.onCreateMemo = onCreateMemo
     }
-    private var mode: MemoListModel.ViewMode { MemoListModel.ViewMode(rawValue: savedMode) ?? .list }
+    private var mode: MemoListModel.ViewMode { shownMode ?? MemoListModel.ViewMode(rawValue: savedMode) ?? .list }
 
     public var body: some View {
         let memos = model.visibleMemos
@@ -36,7 +43,8 @@ public struct MemoListView: View {
                 sidebar
                 Rectangle().fill(ListTheme.hairline).frame(width: 1)
                 VStack(spacing: 0) {
-                    // 보기가 바뀌면 이 덩어리만 교차 페이드한다. 카드끼리 잇는 무거운 전환은 하지 않는다.
+                    // 그리드 ↔ 벤토는 같은 카드판 안에서 카드가 새 자리로 미끄러지며 크기가 바뀐다.
+                    // 목록 · 보드처럼 모양이 전혀 다른 보기로 갈 때는 덩어리째 짧게 흐려졌다가 살짝 커지며 나타난다(페이드 스루).
                     VStack(spacing: 0) {
                         if mode == .board && !model.isShowingTrash {
                             BoardView(model: model, memos: memos, index: index, target: $boardTarget,
@@ -47,7 +55,7 @@ public struct MemoListView: View {
                             else if mode == .list || model.isShowingTrash && mode == .board { rows(memos, index: index) }
                             else { cards(memos, index: index) }
                         }
-                    }.id(mode).transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    }.id(contentGroup).transition(Self.fadeThrough)
                     selectionBar(index: index)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -55,6 +63,10 @@ public struct MemoListView: View {
         .font(.system(size: 13)).foregroundStyle(ListTheme.ink).tint(ListTheme.ink).background(ListTheme.windowBg)
         .ignoresSafeArea(.container, edges: .top)
         .onAppear { model.refresh() }
+        // 다른 곳에서 저장값이 바뀌면(시험 도구 등) 화면 보기도 맞춘다. 같은 값이면 아무 일도 없다.
+        .onChange(of: savedMode) { _, new in
+            if let m = MemoListModel.ViewMode(rawValue: new), m != shownMode { shownMode = m }
+        }
         .onChange(of: model.scope) { _, _ in anchor = nil }
         .background {
             Button("검색") { searchFocused = true }.keyboardShortcut("f").hidden()
@@ -70,11 +82,30 @@ public struct MemoListView: View {
             } message: { Text("첨부 이미지까지 함께 지워지며 되돌릴 수 없습니다") }
     }
 
+    /// 그리드와 벤토는 같은 덩어리로 묶어 카드가 이어서 움직이게 하고, 나머지는 덩어리를 바꿔 페이드 스루한다.
+    private var contentGroup: String {
+        switch mode {
+        case .grid, .bento: "카드"
+        case .list: "목록"
+        case .board: "보드"
+        }
+    }
+
+    /// 경쾌한 전환: 나가는 화면은 0.08초에 흐려지고, 들어오는 화면은 0.04초 뒤 0.14초 동안 98%에서 커지며 나타난다.
+    private static let fadeThrough = AnyTransition.asymmetric(
+        insertion: .opacity.combined(with: .scale(scale: 0.98)).animation(.easeOut(duration: 0.14).delay(0.04)),
+        removal: .opacity.animation(.easeIn(duration: 0.08))
+    )
+
+    /// 카드 이동 · 크기 변화와 선택 표시에 쓰는 짧고 튀지 않는 스프링.
+    private static let modeSpring = Animation.spring(response: 0.24, dampingFraction: 0.9)
+
     /// 보기를 바꾼다. 동작 줄이기가 켜져 있으면 애니메이션 없이 바로 바꾼다.
     private func setMode(_ item: MemoListModel.ViewMode) {
-        guard item.rawValue != savedMode else { return }
-        if reduceMotion { savedMode = item.rawValue }
-        else { withAnimation(.snappy(duration: 0.22)) { savedMode = item.rawValue } }
+        guard item != mode else { return }
+        if reduceMotion { shownMode = item }
+        else { withAnimation(Self.modeSpring) { shownMode = item } }
+        savedMode = item.rawValue
     }
 
     private var toolbar: some View {
@@ -122,15 +153,17 @@ public struct MemoListView: View {
             .help(alwaysOnTop ? "항상 위에 켜짐: 누르면 다른 앱 뒤로 갈 수 있습니다" : "항상 위에 꺼짐: 누르면 목록 창을 다른 창 위에 고정합니다")
             .accessibilityLabel("목록 창 항상 위에")
             .accessibilityValue(alwaysOnTop ? "켜짐" : "꺼짐")
+            appearanceButton
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(ListTheme.muted)
-                TextField("검색", text: $model.query).textFieldStyle(.plain).focused($searchFocused)
+                searchOptionsMenu
+                if model.hasCustomSearchOptions { searchChip }
+                TextField(searchPlaceholder, text: $model.query).textFieldStyle(.plain).focused($searchFocused)
                 if model.query.isEmpty {
                     Text("⌘F").font(.system(size: 12)).foregroundStyle(ListTheme.muted).padding(2).background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 4))
                 } else {
                     Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(ListTheme.muted)
                 }
-            }.padding(.horizontal, 8).frame(width: 220, height: 32)
+            }.padding(.horizontal, 8).frame(width: model.hasCustomSearchOptions ? 280 : 220, height: 32)
                 .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(ListTheme.hairline))
                 .layoutPriority(-1)
@@ -139,6 +172,38 @@ public struct MemoListView: View {
                     .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).fixedSize().help("새 메모 (어디서든 ⌘⇧N)")
         }.padding(.horizontal, 12).frame(height: 52)
+    }
+
+    /// 화면 모드 단추. 누를 때마다 시스템 → 라이트 → 다크 → 시스템 순으로 바뀌고, 우클릭하면 목록에서 바로 고른다.
+    /// 메뉴바의 "화면 모드"와 같은 설정을 읽고 쓴다.
+    private var appearanceButton: some View {
+        let current = AppearanceMode(rawValue: appearanceRaw) ?? .system
+        let all = AppearanceMode.allCases
+        let next = all[(all.firstIndex(of: current).map { $0 + 1 } ?? 0) % all.count]
+        return Button { setAppearance(next) } label: {
+            Image(systemName: current.symbol)
+                .font(.system(size: 14))
+                .foregroundStyle(current == .system ? ListTheme.muted : ListTheme.ink)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            ForEach(all, id: \.self) { mode in
+                Button { setAppearance(mode) } label: {
+                    if mode == current { Label(mode.label, systemImage: "checkmark") } else { Text(mode.label) }
+                }
+            }
+        }
+        .help("화면 모드: \(current.label) - 누르면 \(next.label), 우클릭하면 목록에서 고르기")
+        .accessibilityLabel("화면 모드")
+        .accessibilityValue(current.label)
+    }
+
+    private func setAppearance(_ mode: AppearanceMode) {
+        guard mode.rawValue != appearanceRaw else { return }
+        appearanceRaw = mode.rawValue
+        mode.apply(animated: true)
     }
 
     private var sidebar: some View {
@@ -277,20 +342,49 @@ public struct MemoListView: View {
     }
 
     private func cards(_ memos: [MemoSummary], index: MemoListModel.LinkIndex) -> some View {
-        // 벤토는 띠 배치에 콘텐츠 폭이 필요하다. 상태로 받아 두면 첫 값이 늦게 오거나 안 와서 빈 화면이 될 수 있어,
-        // 바깥 폭을 그대로 넘긴다(좌우 여백 32씩 뺀 값).
-        return GeometryReader { geo in ScrollView {
-            Group {
-                if mode == .bento {
-                    bentoBands(model.bentoOrdered(memos), spans: model.bentoSpans(for: memos), index: index, width: max(0, geo.size.width - 64))
-                } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 16)], spacing: 16) {
-                        ForEach(memos) { memo in card(memo, index: index, span: .small).frame(height: 176) }
-                        if canCreateTile { newTile.frame(height: 176) }
+        // 그리드와 벤토를 한 판에 그린다. 카드는 메모마다 같은 뷰로 남고 자리와 크기만 바뀌므로,
+        // 보기를 바꾸면 각 카드가 새 칸으로 미끄러지며 커지거나 줄어든다.
+        // 지연 목록(LazyVGrid · LazyVStack) 사이에서는 새 카드가 이전 자리를 이어받지 못해 이 방식을 쓴다.
+        // 화면 근처 카드만 만들어 메모가 많아도 가볍다.
+        GeometryReader { geo in
+            let width = max(0, geo.size.width - 64)
+            let ordered = mode == .bento ? model.bentoOrdered(memos) : memos
+            let spans = mode == .bento ? model.bentoSpans(for: memos) : [:]
+            let tile = canCreateTile
+            let cardSpans = ordered.map { spans[$0.id] ?? .small } + (tile ? [.small] : [])
+            let cells = mode == .bento ? BentoGrid.bentoCells(spans: cardSpans, width: width).cells
+                                       : Self.gridCells(count: cardSpans.count, width: width)
+            let height = (cells.map(\.maxY).max() ?? 0)
+            // 지금 보이는 범위 위아래로 한 화면씩 더 만든다. 스크롤할 때 빈칸이 보이지 않게.
+            let visible = CGRect(x: 0, y: cardScrollTop - geo.size.height, width: width, height: geo.size.height * 3)
+            ScrollView {
+                ZStack(alignment: .topLeading) {
+                    Color.clear.frame(width: width, height: height)
+                    // 메모 id로 구분해야 순서가 바뀌어도 같은 카드가 새 자리로 움직인다(순서 번호로 구분하면 내용만 바뀐다).
+                    ForEach(cells.indices.filter { cells[$0].intersects(visible) }.map { i in
+                        CardSlot(id: i < ordered.count ? ordered[i].id.rawValue : "새 메모 칸", index: i, rect: cells[i])
+                    }) { slot in
+                        Group {
+                            if slot.index < ordered.count {
+                                card(ordered[slot.index], index: index, span: cardSpans[slot.index])
+                            } else { newTile }
+                        }
+                        .frame(width: slot.rect.width, height: slot.rect.height)
+                        .position(x: slot.rect.midX, y: slot.rect.midY)
                     }
                 }
-            }.padding(.horizontal, 32).padding(.bottom, 32)
-        } }
+                .frame(width: width, height: height, alignment: .topLeading)
+                .background(GeometryReader { inner in
+                    Color.clear.onChange(of: inner.frame(in: .named("카드판")).minY, initial: true) { _, minY in
+                        // 스크롤 위치는 카드 한 줄(약 150pt) 단위로만 반영해 다시 그리는 횟수를 줄인다.
+                        let top = (max(0, -minY) / 150).rounded(.down) * 150
+                        if top != cardScrollTop { cardScrollTop = top }
+                    }
+                })
+                .padding(.horizontal, 32).padding(.bottom, 32)
+            }
+            .coordinateSpace(name: "카드판")
+        }
             .focusable().focused($cardsFocused).focusEffectDisabled()
             .background(ListKeyboardCommands(selectAll: { model.selectAllVisible() }, delete: deleteSelected,
                                              open: { if !model.isShowingTrash { openMemos(model.orderedSelection) } }))
@@ -301,26 +395,23 @@ public struct MemoListView: View {
                 model.selectAllVisible(); return .handled
             }
     }
-    /// 벤토는 띠 단위로 지연 생성해 보이는 줄의 카드만 만든다. 폭을 알기 전에는 그리지 않는다.
-    @ViewBuilder private func bentoBands(_ ordered: [MemoSummary], spans: [MemoID: BoardLayout.BentoSpan], index: MemoListModel.LinkIndex, width bentoWidth: CGFloat) -> some View {
-        if bentoWidth > 0 {
-            let tile = canCreateTile
-            let cardSpans = ordered.map { spans[$0.id] ?? .small } + (tile ? [.small] : [])
-            let layout = BentoGrid.bentoCells(spans: cardSpans, width: bentoWidth)
-            LazyVStack(spacing: BentoGrid.gap) {
-                ForEach(BentoGrid.bands(cells: layout.cells), id: \.rowRange.lowerBound) { band in
-                    ZStack(alignment: .topLeading) {
-                        ForEach(band.cardIndices, id: \.self) { i in
-                            let rect = layout.cells[i]
-                            Group {
-                                if i < ordered.count { card(ordered[i], index: index, span: cardSpans[i]) } else { newTile }
-                            }.frame(width: rect.width, height: rect.height).offset(x: rect.minX, y: rect.minY - band.minY)
-                        }
-                    }.frame(width: bentoWidth, height: band.height, alignment: .topLeading)
-                }
-            }
+
+    private struct CardSlot: Identifiable {
+        let id: String
+        let index: Int
+        let rect: CGRect
+    }
+
+    /// 그리드 칸: 최소 폭 200, 간격 16, 높이 176. 예전 LazyVGrid(.adaptive(minimum: 200))와 같은 배치.
+    static func gridCells(count: Int, width: CGFloat) -> [CGRect] {
+        guard width > 0 else { return [] }
+        let columns = max(1, Int((width + 16) / (200 + 16)))
+        let cellWidth = (width - CGFloat(columns - 1) * 16) / CGFloat(columns)
+        return (0..<count).map { i in
+            CGRect(x: CGFloat(i % columns) * (cellWidth + 16), y: CGFloat(i / columns) * (176 + 16), width: cellWidth, height: 176)
         }
     }
+
     private func card(_ memo: MemoSummary, index: MemoListModel.LinkIndex, span: BoardLayout.BentoSpan) -> some View {
         MemoCardView(memo: memo, info: model.cardInfo(for: memo), index: index, visible: !model.isShowingTrash && model.windowActions.isVisible(memo.id), trash: model.isShowingTrash, span: span, select: { model.selection = [$0] })
             .modifier(CardSurface(selected: model.selection.contains(memo.id)))
@@ -340,6 +431,68 @@ public struct MemoListView: View {
                 }
             }
     }
+    private var searchPlaceholder: String {
+        switch model.searchTarget {
+        case .titleAndBody: return "검색"
+        case .title: return "제목 검색"
+        case .body: return "본문 검색"
+        }
+    }
+
+    /// 돋보기 단추. 찾는 범위와 그룹을 고른다.
+    private var searchOptionsMenu: some View {
+        Menu {
+            Section("찾는 범위") {
+                ForEach(MemoSearchTarget.allCases, id: \.self) { target in
+                    Button { model.searchTarget = target } label: {
+                        if model.searchTarget == target { Label(target.label, systemImage: "checkmark") } else { Text(target.label) }
+                    }
+                }
+            }
+            Section("그룹") {
+                Button { model.searchGroup = .any } label: {
+                    if model.searchGroup == .any { Label("모든 그룹", systemImage: "checkmark") } else { Text("모든 그룹") }
+                }
+                Button { model.searchGroup = .ungrouped } label: {
+                    if model.searchGroup == .ungrouped { Label("미분류", systemImage: "checkmark") } else { Text("미분류") }
+                }
+                ForEach(model.store.groups, id: \.self) { name in
+                    Button { model.searchGroup = .named(name) } label: {
+                        if model.searchGroup == .named(name) { Label(name, systemImage: "checkmark") } else { Text(name) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "magnifyingglass").foregroundStyle(ListTheme.muted)
+                .frame(width: 24, height: 24).contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("찾는 범위와 그룹 고르기")
+        .accessibilityLabel("찾는 범위와 그룹")
+    }
+
+    /// 기본값이 아닌 찾기 조건을 보여 주는 칩. x로 기본값으로 되돌린다.
+    private var searchChip: some View {
+        let groupText: String? = {
+            switch model.searchGroup {
+            case .any: return nil
+            case .ungrouped: return "미분류"
+            case .named(let name): return name
+            }
+        }()
+        let text = ([model.searchTarget == .titleAndBody ? nil : model.searchTarget.label, groupText].compactMap { $0 }).joined(separator: " · ")
+        return HStack(spacing: 2) {
+            Text(text).font(.system(size: 12)).foregroundStyle(ListTheme.ink).lineLimit(1)
+            Button { model.resetSearchOptions() } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(ListTheme.muted)
+                    .frame(width: 16, height: 16).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("기본 찾기로 되돌리기").accessibilityLabel("찾기 조건 지우기")
+        }
+        .padding(.leading, 6).padding(.trailing, 2).frame(height: 20)
+        .background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 5))
+        .fixedSize()
+    }
+
     private var canCreateTile: Bool { !model.isShowingTrash && model.query.isEmpty }
     private var newTile: some View {
         Button(action: onCreateMemo) { Label("새 메모", systemImage: "plus").frame(maxWidth: .infinity, maxHeight: .infinity) }
@@ -399,7 +552,7 @@ public struct MemoListView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer()
-            Text(model.query.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다").foregroundStyle(ListTheme.muted)
+            Text(model.appliedQuery.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다").foregroundStyle(ListTheme.muted)
             if !model.isShowingTrash { Button("새 메모 만들기", action: onCreateMemo).buttonStyle(.link).tint(ListTheme.ink) }
             Spacer()
         }.frame(maxWidth: .infinity)

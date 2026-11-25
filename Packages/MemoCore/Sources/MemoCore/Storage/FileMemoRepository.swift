@@ -287,8 +287,15 @@ public struct FileMemoRepository: MemoRepository {
 
         var found: Set<MemoID> = []
         for id in ids {
-            guard let text = try? String(contentsOf: memoFileURL(for: id), encoding: .utf8) else { continue }
-            if text.localizedCaseInsensitiveContains(needle) {
+            // 메모 폴더에 없으면 휴지통 폴더의 파일을 본다.
+            var text = try? String(contentsOf: memoFileURL(for: id), encoding: .utf8)
+            if text == nil {
+                text = try? String(contentsOf: trashDirectory(for: id).appendingPathComponent(Self.memoFileName), encoding: .utf8)
+            }
+            guard let text else { continue }
+            // 프론트매터(color, pinned 등)는 본문이 아니므로 뺀다.
+            let body = (try? FrontmatterCodec.decode(fileContents: text).body) ?? text
+            if body.localizedCaseInsensitiveContains(needle) {
                 found.insert(id)
             }
         }

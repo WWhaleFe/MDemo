@@ -68,7 +68,7 @@ struct BoardView: View {
                     })
                 if memos.isEmpty {
                     VStack(spacing: 12) {
-                        Text(model.query.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다").foregroundStyle(ListTheme.muted)
+                        Text(model.appliedQuery.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다").foregroundStyle(ListTheme.muted)
                         Button("새 메모 만들기", action: onCreate).buttonStyle(.plain)
                     }.frame(width: geo.size.width, height: geo.size.height)
                 }

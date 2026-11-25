@@ -30,6 +30,21 @@ public struct MemoSortOrder: Hashable, Sendable {
     public static let newestFirst = MemoSortOrder(key: .modified, ascending: false)
 }
 
+/// 검색어를 어디서 찾을지.
+public enum MemoSearchTarget: String, CaseIterable, Sendable {
+    case titleAndBody
+    case title
+    case body
+
+    public var label: String {
+        switch self {
+        case .titleAndBody: return "제목+본문"
+        case .title: return "제목"
+        case .body: return "본문"
+        }
+    }
+}
+
 public enum MemoSearch {
     /// 제목과 미리보기에서 부분 일치를 찾는다 (SRC-01).
     ///

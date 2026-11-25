@@ -141,9 +141,14 @@ public final class AppPreferences {
     }
 
     /// 화면 모드. 기본은 시스템 설정을 따른다.
+    /// 메모 목록 창의 화면 모드 단추도 같은 키를 직접 바꾸므로, 값을 따로 들고 있지 않고 매번 저장소에서 읽는다.
     public var appearanceMode: AppearanceMode {
-        didSet { store.set(appearanceMode.rawValue, forKey: Key.appearance) }
+        get { AppearanceMode(rawValue: store.string(forKey: Key.appearance) ?? "") ?? .system }
+        set { store.set(newValue.rawValue, forKey: Key.appearance) }
     }
+
+    /// 화면 모드를 저장하는 키. 메모 목록 창이 같은 값을 읽고 쓴다.
+    public static let appearanceKey = Key.appearance
 
     public static let defaultFontSize: Double = 18
     public static let defaultMemoSize = (width: 420.0, height: 480.0)
@@ -197,7 +202,6 @@ public final class AppPreferences {
         self.formatToolbarPosition = FormatToolbarPosition(
             rawValue: store.string(forKey: Key.formatToolbarPosition) ?? ""
         ) ?? .top
-        self.appearanceMode = AppearanceMode(rawValue: store.string(forKey: Key.appearance) ?? "") ?? .system
         self.hasChosenFontSize = store.object(forKey: Key.fontSize) != nil
         self.hasChosenMemoSize = store.object(forKey: Key.defaultMemoWidth) != nil
 
