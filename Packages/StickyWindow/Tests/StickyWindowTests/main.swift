@@ -11,12 +11,25 @@ import TestKit
 
 let runner = TestRunner("StickyWindow")
 
+/// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
+final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var failures: [MemoID: Int] = [:]
+    func readFailures(id: MemoID) throws -> Int { mutex.lock(); defer { mutex.unlock() }; return failures[id] ?? 0 }
+    func writeFailures(_ count: Int, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; failures[id] = count }
+    private var values: [MemoID: Data] = [:]
+    func read(id: MemoID) throws -> Data? { mutex.lock(); defer { mutex.unlock() }; return values[id] }
+    func write(_ value: Data, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = value }
+    func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = nil; failures[id] = nil }
+}
+let testKeychain = TestMemoKeychain()
+
 @MainActor
 func makeRegistry() throws -> (WindowRegistry, MemoStore, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("StickyWindowTests-\(UUID().uuidString)", isDirectory: true)
-    let repository = try FileMemoRepository(rootDirectory: root)
-    let store = MemoStore(repository: repository)
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let store = MemoStore(repository: repository, keychain: testKeychain)
     let deviceState = DeviceStateStore(fileURL: root.appendingPathComponent("device-state.json"))
     let preferences = AppPreferences(store: UserDefaults(suiteName: root.lastPathComponent)!)
     return (WindowRegistry(store: store, deviceState: deviceState, preferences: preferences), store, root)
@@ -26,8 +39,8 @@ func makeRegistry() throws -> (WindowRegistry, MemoStore, URL) {
 func makeRegistryWithPreferences() throws -> (WindowRegistry, MemoStore, URL, AppPreferences) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("StickyWindowTests-\(UUID().uuidString)", isDirectory: true)
-    let repository = try FileMemoRepository(rootDirectory: root)
-    let store = MemoStore(repository: repository)
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let store = MemoStore(repository: repository, keychain: testKeychain)
     let deviceState = DeviceStateStore(fileURL: root.appendingPathComponent("device-state.json"))
     let preferences = AppPreferences(store: UserDefaults(suiteName: root.lastPathComponent)!)
     let registry = WindowRegistry(store: store, deviceState: deviceState, preferences: preferences)

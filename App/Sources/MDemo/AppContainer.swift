@@ -85,6 +85,11 @@ final class AppContainer {
                 arrangeInOrder: { [registry] ids in registry.arrangeWindows(inOrder: ids) },
                 exportAsImage: { [registry] id in registry.presentExportSheet(for: id) },
                 withExternalBodyEdit: { [registry] id, edit in registry.withExternalBodyEdit(id: id, edit) },
+                createLockedMemo: { [registry] in registry.createLockedMemo() },
+                moveToLocked: { [registry] id in registry.createLockedMemo(moving: id) },
+                moveToPlain: { [registry] id in registry.moveToPlainMemo(id: id) },
+                changePassword: { [registry] id in registry.changeMemoPassword(id: id) },
+                isUnlocked: { [store] id in store.lockSession(for: id) != nil },
                 createMemoReceivingAirDrop: { [registry] in registry.createMemoReceivingAirDrop() }
             ),
             onOpenMemo: { [registry] id in registry.openMemo(id: id) },
@@ -106,6 +111,10 @@ final class AppContainer {
             windowRegistry: registry,
             preferences: preferences
         )
+
+        registry.onPrivacyChange = { [weak syncCoordinator] in syncCoordinator?.enforcePrivacy() }
+        store.onPrivacyChange = { [weak syncCoordinator] in syncCoordinator?.enforcePrivacy() }
+        syncCoordinator.enforcePrivacy()
 
         // 보관 기간이 지난 휴지통 항목을 정리한다 (TRS-03).
         // 메뉴바 앱은 며칠씩 켜 둔 채로 쓰므로 시작할 때 한 번으로는 모자라다. 몇 시간마다 다시 본다.

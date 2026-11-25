@@ -52,6 +52,7 @@ public final class ListAirDropSession {
 
     /// 받은 사진 한 장을 저장하고 본문에 줄을 더한다. 저장에 실패하면 그 장은 건너뛴다.
     func handleReceived(_ url: URL) {
+        guard store.loadDocument(id: memoID)?.meta.isLocked == false else { return }
         guard let saved = try? AttachmentImages.save(
             imageFileAt: url, into: store.attachmentsDirectory(for: memoID)
         ) else { return }
@@ -72,6 +73,7 @@ public final class ListAirDropSession {
 extension MemoListModel {
     /// 그 메모에 AirDrop 사진 받기를 시작한다. 이미 받는 중이면 먼저 멈춘다.
     public func startAirDrop(for id: MemoID, position: BodyImageInsertion.Position) {
+        guard store.loadDocument(id: id)?.meta.isLocked == false else { return }
         airDrop?.stop()
         let title = store.summaries.first { $0.id == id }?.title ?? "메모"
         let session = ListAirDropSession(

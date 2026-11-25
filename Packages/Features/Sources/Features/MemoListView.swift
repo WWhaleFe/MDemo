@@ -184,6 +184,9 @@ public struct MemoListView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).fixedSize().help("AirDrop으로 받은 사진으로 새 메모")
                 .accessibilityLabel("AirDrop으로 받은 사진으로 새 메모")
+            Button(action: model.windowActions.createLockedMemo) {
+                Image(systemName: "lock.badge.plus")
+            }.buttonStyle(.plain).help("새 암호 메모 (⌘⌥N)").accessibilityLabel("새 암호 메모")
             Button(action: onCreateMemo) {
                 Label("새 메모", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(ListTheme.card)
                     .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))
@@ -433,7 +436,8 @@ public struct MemoListView: View {
                         if top != cardScrollTop { cardScrollTop = top }
                     }
                 })
-                .padding(.horizontal, 32).padding(.bottom, 32)
+                // 맨 위 줄 카드의 그림자와 고른 테두리가 스크롤 영역 위 끝에 잘리지 않게 약간 띄운다.
+                .padding(.horizontal, 32).padding(.top, 4).padding(.bottom, 32)
             }
             .coordinateSpace(name: "카드판")
         }
@@ -655,16 +659,24 @@ public struct MemoListView: View {
                     .disabled(!model.canDuplicate(ids))
                     .help(ids.contains { index.summaries[$0]?.meta.isLocked == true }
                           ? "암호가 걸린 메모는 복제할 수 없습니다" : "선택한 메모를 첨부와 함께 복제합니다")
+                if ids.count == 1, let id = ids.first {
+                    if index.summaries[id]?.meta.isLocked == true {
+                        Button("암호 바꾸기…") { model.windowActions.changePassword(id) }.disabled(!model.windowActions.isUnlocked(id))
+                        Button("일반 메모로 옮기기…") { model.windowActions.moveToPlain(id) }.disabled(!model.windowActions.isUnlocked(id))
+                    } else {
+                        Button("암호 메모로 옮기기…") { model.windowActions.moveToLocked(id) }
+                    }
+                }
                 Divider()
                 Menu {
                     Button("맨 위에 넣기") { if let id = ids.first { model.startAirDrop(for: id, position: .top) } }
                     Button("맨 아래에 넣기") { if let id = ids.first { model.startAirDrop(for: id, position: .bottom) } }
                 } label: {
                     Label { Text("AirDrop으로 이미지 받기") } icon: { AirDropGlyph() }
-                }.disabled(ids.count != 1)
+                }.disabled(ids.count != 1 || ids.contains { index.summaries[$0]?.meta.isLocked == true })
                 Button { if let id = ids.first { model.windowActions.exportAsImage(id); model.noteWindowStateChanged() } } label: {
                     Label { Text("이미지로 내보내기…") } icon: { ExportImageGlyph() }
-                }.disabled(ids.count != 1)
+                }.disabled(ids.count != 1 || ids.contains { index.summaries[$0]?.meta.isLocked == true })
                 Divider()
                 Menu("그룹으로 이동") {
                     Button("미분류") { model.assign(ids, to: nil) }

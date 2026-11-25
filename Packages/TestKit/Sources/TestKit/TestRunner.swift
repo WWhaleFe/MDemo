@@ -41,6 +41,22 @@ public final class TestRunner {
         }
     }
 
+    /// 디스크와 키체인 경계를 다루는 비동기 작업도 같은 판정 규칙으로 시험한다.
+    @MainActor
+    public func testAsync(_ name: String, _ body: @MainActor (TestRunner) async throws -> Void) async {
+        currentFailures = []
+        do { try await body(self) }
+        catch { currentFailures.append("예외 발생: \(error)") }
+        if currentFailures.isEmpty {
+            passedCount += 1
+            print("  ✓ \(name)")
+        } else {
+            failedCount += 1
+            print("  ✗ \(name)")
+            for failure in currentFailures { print("      \(failure)") }
+        }
+    }
+
     public func expect(
         _ condition: Bool,
         _ description: @autoclosure () -> String = "조건이 참이 아님",

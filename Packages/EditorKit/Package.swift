@@ -25,6 +25,7 @@ let package = Package(
             name: "EditorKitTests",
             dependencies: [
                 "EditorKit",
+                .product(name: "MemoCore", package: "MemoCore"),
                 .product(name: "TestKit", package: "TestKit"),
             ],
             path: "Tests/EditorKitTests"

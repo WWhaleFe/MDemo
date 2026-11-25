@@ -24,6 +24,11 @@ public struct MemoWindowActions {
     /// 고친 뒤 창 내용을 다시 읽는다. 창이 없으면 고치기만 한다.
     public var withExternalBodyEdit: (MemoID, () -> Void) -> Void
     /// 새 메모를 만들어 띄우고 바로 AirDrop 사진 받기를 시작한다.
+    public var createLockedMemo: () -> Void
+    public var moveToLocked: (MemoID) -> Void
+    public var moveToPlain: (MemoID) -> Void
+    public var changePassword: (MemoID) -> Void
+    public var isUnlocked: (MemoID) -> Bool
     public var createMemoReceivingAirDrop: () -> Void
 
     public init(
@@ -34,8 +39,18 @@ public struct MemoWindowActions {
         arrangeInOrder: @escaping ([MemoID]) -> Void = { _ in },
         exportAsImage: @escaping (MemoID) -> Void = { _ in },
         withExternalBodyEdit: @escaping (MemoID, () -> Void) -> Void = { _, edit in edit() },
+        createLockedMemo: @escaping () -> Void = {},
+        moveToLocked: @escaping (MemoID) -> Void = { _ in },
+        moveToPlain: @escaping (MemoID) -> Void = { _ in },
+        changePassword: @escaping (MemoID) -> Void = { _ in },
+        isUnlocked: @escaping (MemoID) -> Bool = { _ in false },
         createMemoReceivingAirDrop: @escaping () -> Void = {}
     ) {
+        self.createLockedMemo = createLockedMemo
+        self.moveToLocked = moveToLocked
+        self.moveToPlain = moveToPlain
+        self.changePassword = changePassword
+        self.isUnlocked = isUnlocked
         self.isVisible = isVisible
         self.open = open
         self.hide = hide

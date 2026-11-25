@@ -2,9 +2,14 @@ import Foundation
 
 /// 메모의 메타데이터. 마크다운 파일 상단 YAML 프론트매터와 1:1 대응한다 (DOC-02).
 ///
-/// 여기 담기는 값은 모두 **기기 간 공유 대상**이다.
+/// 일반 메모의 값은 기기 간 공유한다. 잠금 관련 값은 이 맥 전용이다.
 /// 창 위치 · 크기 · 접힘처럼 기기마다 달라야 하는 값은 `DeviceMemoState`로 분리한다 (SYNC-07).
 public struct MemoMeta: Hashable, Sendable, Codable {
+    /// 파일에는 시각이 밀리초까지만 적힌다. 처음부터 밀리초로 맞춰 두면 저장했다 다시 읽어도 값이 똑같다.
+    public static func now() -> Date {
+        Date(timeIntervalSince1970: (Date().timeIntervalSince1970 * 1000).rounded() / 1000)
+    }
+
     /// 프론트매터 스키마 버전. 포맷 변경 시 올리고 마이그레이션을 함께 넣는다.
     ///
     /// - v1 → v2: `title` 추가. 없던 파일은 제목이 비어 있는 것으로 읽고,
@@ -50,6 +55,11 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         set { locked = newValue ? true : nil }
     }
 
+    public var lockSalt: String?
+    public var lockIterations: Int?
+    public var lockVersion: Int?
+    public var lockFailures: Int?
+
     public init(
         schemaVersion: Int = MemoMeta.currentSchemaVersion,
         id: MemoID,
@@ -60,8 +70,8 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         textAlpha: Double = 1.0,
         isOpen: Bool = true,
         isPinned: Bool = true,
-        created: Date = Date(),
-        modified: Date = Date(),
+        created: Date = MemoMeta.now(),
+        modified: Date = MemoMeta.now(),
         conflictOf: MemoID? = nil,
         links: [MemoLink] = [],
         isLocked: Bool = false

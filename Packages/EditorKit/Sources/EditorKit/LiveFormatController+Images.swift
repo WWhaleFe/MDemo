@@ -14,7 +14,7 @@ extension LiveFormatController {
         textView?.commitComposition()
         return enqueueImageSave(store: store) {
             urls.compactMap { url in
-                guard let image = try? AttachmentImages.save(imageFileAt: url, into: store.directory) else { return nil }
+                guard let image = try? store.save(Data(contentsOf: url)) else { return nil }
                 return (image, url.deletingPathExtension().lastPathComponent)
             }
         }
@@ -25,7 +25,7 @@ extension LiveFormatController {
         guard !data.isEmpty, let store = textView?.imageStore else { return false }
         textView?.commitComposition()
         return enqueueImageSave(store: store, width: width) {
-            guard let image = try? AttachmentImages.save(imageData: data, into: store.directory) else { return [] }
+            guard let image = try? store.save(data) else { return [] }
             return [(image, alt)]
         }
     }
@@ -45,6 +45,9 @@ extension LiveFormatController {
         }
         return true
     }
+
+    /// 옮기기 전에 진행 중인 첨부 저장과 본문 삽입을 끝낸다.
+    public func finishPendingImageInsertion() async { await pendingImageInsertion?.value }
 
     /// 파일 선택 창을 열어 고른 이미지를 넣는다. 서식 막대의 "이미지 넣기" 단추가 부른다.
     public func chooseAndInsertImages() {

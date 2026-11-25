@@ -5,6 +5,19 @@ import TestKit
 
 let runner = TestRunner("Services")
 
+/// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
+final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var failures: [MemoID: Int] = [:]
+    func readFailures(id: MemoID) throws -> Int { mutex.lock(); defer { mutex.unlock() }; return failures[id] ?? 0 }
+    func writeFailures(_ count: Int, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; failures[id] = count }
+    private var values: [MemoID: Data] = [:]
+    func read(id: MemoID) throws -> Data? { mutex.lock(); defer { mutex.unlock() }; return values[id] }
+    func write(_ value: Data, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = value }
+    func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = nil; failures[id] = nil }
+}
+let testKeychain = TestMemoKeychain()
+
 runner.test("메모리 사용량을 읽을 수 있다 (§4-5 측정 게이트의 기반)") { t in
     let bytes = MemoryReporter.footprintBytes()
     t.expectNotNil(bytes, "메모리 측정 실패")
@@ -25,8 +38,8 @@ final class FakeDevice {
 
     init(name: String, base: URL, cloud: URL) throws {
         self.root = base.appendingPathComponent(name, isDirectory: true)
-        let repository = try FileMemoRepository(rootDirectory: root)
-        self.store = MemoStore(repository: repository)
+        let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+        self.store = MemoStore(repository: repository, keychain: testKeychain)
         self.sync = SyncService(
             localRoot: root,
             remoteRoot: cloud,
@@ -227,8 +240,8 @@ runner.test("백업을 만들고 되돌리면 메모가 그대로 돌아온다 (
         defer { try? FileManager.default.removeItem(at: base) }
 
         let dataRoot = base.appendingPathComponent("Data", isDirectory: true)
-        let repository = try FileMemoRepository(rootDirectory: dataRoot)
-        let store = MemoStore(repository: repository)
+        let repository = try FileMemoRepository(rootDirectory: dataRoot, keychain: testKeychain)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let backup = BackupService(dataRoot: dataRoot)
 
         let meta = store.createMemo(group: "업무")
@@ -258,8 +271,8 @@ runner.test("합치기로 복원하면 지금 메모가 지워지지 않는다 (
         defer { try? FileManager.default.removeItem(at: base) }
 
         let dataRoot = base.appendingPathComponent("Data", isDirectory: true)
-        let repository = try FileMemoRepository(rootDirectory: dataRoot)
-        let store = MemoStore(repository: repository)
+        let repository = try FileMemoRepository(rootDirectory: dataRoot, keychain: testKeychain)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let backup = BackupService(dataRoot: dataRoot)
 
         let old = store.createMemo()
@@ -391,7 +404,7 @@ runner.test("board.json은 한쪽만 있으면 복사하고 양쪽이면 최신 
         _ = try book.sync.sync(mode: .pull)
         book.store.reloadBoardLayout()
         t.expectEqual(book.store.boardLayout, mini.store.boardLayout)
-        let remoteRepository = try FileMemoRepository(rootDirectory: mini.sync.remoteRoot)
+        let remoteRepository = try FileMemoRepository(rootDirectory: mini.sync.remoteRoot, keychain: testKeychain)
         let newer = BoardLayout(placements: [id.rawValue: .init(x: 30, y: 40)])
         try remoteRepository.saveBoardLayout(newer)
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: remote.path)
@@ -722,7 +735,7 @@ runner.test("읽기용 사본: 그룹별 폴더, 중복 이름, 이미지 경로
         defer { try? FileManager.default.removeItem(at: base) }
         let root = base.appendingPathComponent("local", isDirectory: true)
         let output = base.appendingPathComponent("MDemo 읽기용", isDirectory: true)
-        let repository = try FileMemoRepository(rootDirectory: root)
+        let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
 
         let first = MemoMeta(id: .generate(), title: "장보기", group: "집", created: Date(timeIntervalSince1970: 1000))
         let second = MemoMeta(id: .generate(), title: "장보기", group: "집", created: Date(timeIntervalSince1970: 2000))
@@ -804,7 +817,7 @@ func makeReadableFixture(body: String = "본문") throws -> (root: URL, output: 
         .appendingPathComponent("ReadableAudit-\(UUID().uuidString)", isDirectory: true)
     let root = base.appendingPathComponent("local", isDirectory: true)
     let output = base.appendingPathComponent("MDemo 읽기용/내 맥", isDirectory: true)
-    let repository = try FileMemoRepository(rootDirectory: root)
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
     let meta = MemoMeta(id: .generate(), title: "제목", group: "집", created: Date(timeIntervalSince1970: 1000))
     try repository.save(MemoDocument(meta: meta, body: body))
     return (root, output, base, repository, meta)
@@ -929,7 +942,7 @@ runner.test("항목2: 한쪽은 휴지통, 반대쪽은 고쳤으면 고친 쪽�
         let meta2 = mini.store.createMemo()
         mini.store.saveBody(id: meta2.id, body: "둘째 처음")
         _ = try mini.sync.sync()
-        let repo = try FileMemoRepository(rootDirectory: mini.sync.remoteRoot)
+        let repo = try FileMemoRepository(rootDirectory: mini.sync.remoteRoot, keychain: testKeychain)
         try repo.moveToTrash(id: meta2.id)
         mini.store.saveBody(id: meta2.id, body: "둘째 이 맥에서 고침")
         _ = try mini.sync.sync()
@@ -1032,6 +1045,150 @@ runner.test("항목5: 지문이 없을 때 내용이 다르면 같은 상태로 
         bodies = a.store.summaries.compactMap { a.store.loadDocument(id: $0.id)?.body }
         t.expect(bodies.contains("맥 내용") && bodies.contains("클라우드 내용"), "한쪽 내용이 사라졌다: \(bodies)")
     }
+}
+
+final class PrivacyTestKeychain: MemoKeychain, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var failures: [MemoID: Int] = [:]
+    func readFailures(id: MemoID) throws -> Int { mutex.lock(); defer { mutex.unlock() }; return failures[id] ?? 0 }
+    func writeFailures(_ count: Int, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; failures[id] = count }
+    private var items: [MemoID: Data] = [:]
+    func read(id: MemoID) throws -> Data? { mutex.lock(); defer { mutex.unlock() }; return items[id] }
+    func write(_ value: Data, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; items[id] = value }
+    func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; items[id] = nil; failures[id] = nil }
+}
+
+await runner.testAsync("암호 메모는 모든 동기화 모드에서 제외되고 원본 파기는 다른 맥과 휴지통에도 전파된다") { t in
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("privacy-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let local = base.appendingPathComponent("local"), remote = base.appendingPathComponent("cloud"), other = base.appendingPathComponent("other")
+    let repository = try FileMemoRepository(rootDirectory: local, keychain: testKeychain)
+    let keys = PrivacyTestKeychain()
+    let store = MemoStore(repository: repository, keychain: keys)
+    let source = store.createMemo().id
+    store.saveBody(id: source, body: "원본 평문")
+    let original = try repository.load(id: source)
+    let sync = SyncService(localRoot: local, remoteRoot: remote, stateURL: local.appendingPathComponent("state.json"), keychain: keys)
+    _ = try sync.sync(mode: .push)
+    let second = SyncService(localRoot: other, remoteRoot: remote, stateURL: other.appendingPathComponent("state.json"), keychain: PrivacyTestKeychain())
+    _ = try second.sync(mode: .pull)
+    let otherRepository = try FileMemoRepository(rootDirectory: other, keychain: testKeychain)
+    try otherRepository.moveToTrash(id: source)
+    let id = try await store.createLockedMemo(password: "1234", moving: source)
+    // 예전 휴지통 사본도 정리 대상이다.
+    let remoteTrash = remote.appendingPathComponent("trash").appendingPathComponent(source.rawValue)
+    try FileManager.default.copyItem(at: remote.appendingPathComponent("memos").appendingPathComponent(source.rawValue), to: remoteTrash)
+    for mode in [SyncMode.push, .pull, .both] {
+        let report = try sync.sync(mode: mode)
+        t.expectEqual(report.lockedLocal, 1)
+        t.expect(report.summary.contains("잠긴 메모 1개는 이 맥에만 있습니다"))
+        t.expect(!FileManager.default.fileExists(atPath: remote.appendingPathComponent("memos").appendingPathComponent(id.rawValue).path))
+    }
+    t.expect(!FileManager.default.fileExists(atPath: remoteTrash.path))
+    _ = try second.sync(mode: .push)
+    t.expectEqual(try otherRepository.loadTrashSummaries().count, 0)
+    t.expectNil(try? otherRepository.load(id: source))
+    // 파기된 ID를 외부 파일 복사로 다시 심어도 받아들이지 않는다.
+    let resurrected = remote.appendingPathComponent("memos").appendingPathComponent(source.rawValue)
+    try FileManager.default.createDirectory(at: resurrected, withIntermediateDirectories: true)
+    try Data(FrontmatterCodec.encode(original).utf8).write(to: resurrected.appendingPathComponent("memo.md"))
+    _ = try sync.sync(mode: .pull)
+    t.expect(!FileManager.default.fileExists(atPath: resurrected.path))
+    let plain = try store.moveToPlainMemo(id: id)
+    _ = try sync.sync(mode: .push)
+    t.expectEqual(try FileMemoRepository(rootDirectory: remote, keychain: testKeychain).load(id: plain).body, original.body)
+}
+
+await runner.testAsync("로컬 전용 ID의 원격 사본은 덮어 지우고 다른 기기에서는 영구 삭제한다") { t in
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("localonly-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let local = base.appendingPathComponent("local"), remote = base.appendingPathComponent("cloud"), other = base.appendingPathComponent("other")
+    let keys = PrivacyTestKeychain()
+    let repository = try FileMemoRepository(rootDirectory: local, keychain: testKeychain)
+    let store = MemoStore(repository: repository, keychain: keys)
+    let id = try await store.createLockedMemo(password: "1234")
+    let ordinary = MemoDocument(meta: MemoMeta(id: id), body: "외부에서 되살린 평문")
+    try FileMemoRepository(rootDirectory: remote, keychain: testKeychain).save(ordinary)
+    let otherRepository = try FileMemoRepository(rootDirectory: other, keychain: testKeychain)
+    try otherRepository.save(ordinary)
+    try otherRepository.moveToTrash(id: id)
+    _ = try SyncService(localRoot: local, remoteRoot: remote, stateURL: local.appendingPathComponent("state"), keychain: keys).sync(mode: .pull)
+    let report = try SyncService(localRoot: other, remoteRoot: remote, stateURL: other.appendingPathComponent("state"), keychain: PrivacyTestKeychain()).sync(mode: .push)
+    t.expectEqual(report.removedLocalOnly, 1)
+    t.expect(report.summary.contains("다른 맥에서 잠근 메모 1개를 이 맥에서 지웠습니다"))
+    t.expectEqual(try otherRepository.loadTrashSummaries().count, 0)
+    t.expect(try repository.load(id: id).meta.isLocked)
+}
+
+await runner.testAsync("백업 ZIP에서 암호 메모를 빼고 파기한 ID 가져오기를 거부한다") { t in
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("backup-lock-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("Data")
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let keys = PrivacyTestKeychain()
+    let store = MemoStore(repository: repository, keychain: keys)
+    let ordinary = store.createMemo().id
+    store.saveBody(id: ordinary, body: "백업 본문")
+    let archive = base.appendingPathComponent("old.zip")
+    let backup = BackupService(dataRoot: root, keychain: keys)
+    _ = try backup.exportBackup(to: archive)
+    let locked = try await store.createLockedMemo(password: "1234")
+    let filtered = base.appendingPathComponent("filtered.zip")
+    t.expectEqual(try backup.exportBackup(to: filtered), 1)
+    let destination = base.appendingPathComponent("restored")
+    _ = try BackupService(dataRoot: destination, keychain: PrivacyTestKeychain()).importBackup(from: filtered, replaceExisting: false)
+    t.expectNil(try? FileMemoRepository(rootDirectory: destination, keychain: testKeychain).load(id: locked))
+    try store.destroyMemo(id: ordinary)
+    t.expectEqual(try backup.importBackup(from: archive, replaceExisting: false), 1)
+    t.expectNil(try? repository.load(id: ordinary))
+    // 통째로 교체해도 이 맥에서 만든 암호 메모와 열쇠는 유지한다.
+    _ = try backup.importBackup(from: archive, replaceExisting: true)
+    t.expect(try repository.load(id: locked).meta.isLocked)
+    t.expectNotNil(try keys.read(id: locked))
+}
+
+await runner.testAsync("암호 메모로 옮긴 뒤 읽기용 본문과 첨부 사본을 지운다") { t in
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("readable-lock-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("Data"), output = base.appendingPathComponent("Readable")
+    let store = MemoStore(repository: try FileMemoRepository(rootDirectory: root, keychain: testKeychain), keychain: PrivacyTestKeychain())
+    let id = store.createMemo().id
+    store.saveBody(id: id, body: "읽기용 본문")
+    let readable = ReadableCopy(localRoot: root, outputRoot: output)
+    _ = try readable.update()
+    _ = try await store.createLockedMemo(password: "1234", moving: id)
+    let report = try readable.update()
+    t.expect(report.removed > 0)
+    let files = FileManager.default.enumerator(at: output, includingPropertiesForKeys: nil)!
+    for url in files.allObjects.compactMap({ $0 as? URL }) where url.pathExtension == "md" {
+        t.expect(!(try String(contentsOf: url, encoding: .utf8)).contains("읽기용 본문"))
+    }
+}
+
+runner.test("장부의 손상 메모는 백업과 읽기용 사본에서 제외한다") { t in
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("privacy-corrupt-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("Data"), output = base.appendingPathComponent("Readable")
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let readable = ReadableCopy(localRoot: root, outputRoot: output)
+    for name in ["destroyed", "local-only"] {
+        let id = MemoID.generate()
+        try repository.save(MemoDocument(meta: MemoMeta(id: id), body: "제거 대상 " + name))
+        _ = try readable.update()
+        try MemoPrivacyLedger.insert(id, name: name, root: root)
+        let file = root.appendingPathComponent("memos").appendingPathComponent(id.rawValue).appendingPathComponent("memo.md")
+        try Data("손상".utf8).write(to: file)
+        t.expect(try readable.update().removed > 0)
+    }
+    let damaged = MemoID.generate()
+    let folder = root.appendingPathComponent("memos").appendingPathComponent(damaged.rawValue)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data("손상".utf8).write(to: folder.appendingPathComponent("memo.md"))
+    let archive = base.appendingPathComponent("backup.zip")
+    t.expectEqual(try BackupService(dataRoot: root).exportBackup(to: archive), 3)
+    let restored = base.appendingPathComponent("restored")
+    _ = try BackupService(dataRoot: restored, keychain: PrivacyTestKeychain()).importBackup(from: archive, replaceExisting: false)
+    t.expectEqual(try FileMemoRepository(rootDirectory: restored, keychain: testKeychain).loadSummaries().count, 0)
 }
 
 runner.finish()

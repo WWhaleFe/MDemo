@@ -3,6 +3,7 @@ import ImageIO
 import UniformTypeIdentifiers
 @testable import EditorKit
 import MarkdownEngine
+import MemoCore
 import TestKit
 
 // 화면에 보이는 것과 파일에 저장되는 것이 서로 다르다는 점이 이 계층의 핵심 위험이다.
@@ -1518,6 +1519,45 @@ runner.test("H1 첨부 파일 주소는 구분자와 폴더 및 밖을 향한 �
         t.expectNil(store.fileURL(for: name), name)
     }
     t.expectNotNil(store.fileURL(for: "missing.png"))
+}
+
+runner.test("잠긴 편집기는 노션 복사를 거부하고 열린 동안은 기존 마크다운 형식을 쓴다") { t in
+    MainActor.assumeIsolated {
+        let view = makeTextView(loading: "# 제목\n**굵은 글자**")
+        view.selectAll(nil)
+        let markdown = view.selectedMarkdown()
+        t.expectNotNil(markdown)
+        view.allowsBodyCopy = false
+        t.expectNil(view.selectedMarkdown())
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        t.expect(!view.writeSelection(to: pasteboard, types: [.string]))
+        view.allowsBodyCopy = true
+        t.expectEqual(view.selectedMarkdown(), markdown)
+    }
+}
+
+runner.test("암호 첨부는 평문 파일 없이 이미지로 표시하고 파일 주소를 노출하지 않는다") { t in
+    try MainActor.assumeIsolated {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = try makeTestPNG(in: root, name: "source.png", width: 40, height: 20)
+        let bytes = try Data(contentsOf: source)
+        let directory = root.appendingPathComponent("attachments")
+        let session = MemoLockSession(id: .generate(), key: try LockCrypto.random(count: 32))
+        let store = MemoImageStore(directory: directory, lockSession: session)
+        let saved = try store.save(bytes)
+        t.expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent(saved.fileName).path))
+        t.expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent(saved.fileName + ".enc").path))
+        t.expectEqual(try store.read(saved.fileName), bytes)
+        t.expectNil(store.fileURL(for: saved.fileName))
+        t.expectNotNil(store.naturalSize(of: saved.fileName))
+        t.expectNotNil(store.thumbnail(of: saved.fileName, displayWidth: 40, scale: 1))
+        session.clear()
+        store.purge()
+        t.expectNil(try? store.read(saved.fileName))
+    }
 }
 
 runner.finish()

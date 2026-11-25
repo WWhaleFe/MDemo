@@ -7,6 +7,19 @@ import TestKit
 
 let runner = TestRunner("MemoCore")
 
+/// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
+final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var failures: [MemoID: Int] = [:]
+    func readFailures(id: MemoID) throws -> Int { mutex.lock(); defer { mutex.unlock() }; return failures[id] ?? 0 }
+    func writeFailures(_ count: Int, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; failures[id] = count }
+    private var values: [MemoID: Data] = [:]
+    func read(id: MemoID) throws -> Data? { mutex.lock(); defer { mutex.unlock() }; return values[id] }
+    func write(_ value: Data, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = value }
+    func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = nil; failures[id] = nil }
+}
+let testKeychain = TestMemoKeychain()
+
 // MARK: - 식별자와 모델
 
 runner.test("ULID는 26자이며 생성 시각순으로 정렬된다") { t in
@@ -175,7 +188,7 @@ runner.test("구분자가 없는 파일은 오류로 거부한다") { t in
 func makeTemporaryRepository() throws -> (FileMemoRepository, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MDemoTests-\(UUID().uuidString)", isDirectory: true)
-    return (try FileMemoRepository(rootDirectory: root), root)
+    return (try FileMemoRepository(rootDirectory: root, keychain: testKeychain), root)
 }
 
 runner.test("저장한 메모를 그대로 다시 읽는다") { t in
@@ -373,7 +386,7 @@ runner.test("본문을 저장하면 파일과 요약이 함께 갱신된다 (DAT
     defer { try? FileManager.default.removeItem(at: root) }
 
     try MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let meta = store.createMemo()
 
         store.saveBody(id: meta.id, body: "# 장보기\n- [ ] 우유")
@@ -395,7 +408,7 @@ runner.test("열림 상태는 파일에 남아 재시작 복원의 근거가 된
     defer { try? FileManager.default.removeItem(at: root) }
 
     try MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let opened = store.createMemo()
         let closed = store.createMemo()
 
@@ -405,7 +418,7 @@ runner.test("열림 상태는 파일에 남아 재시작 복원의 근거가 된
         t.expectEqual(store.openMemos.first?.id, opened.id)
 
         // 새 인스턴스가 파일에서 다시 읽어도 같아야 한다 (재시작 시나리오)
-        let restarted = MemoStore(repository: repository)
+        let restarted = MemoStore(repository: repository, keychain: testKeychain)
         t.expectEqual(restarted.openMemos.count, 1)
         t.expectEqual(restarted.openMemos.first?.id, opened.id)
     }
@@ -416,7 +429,7 @@ runner.test("휴지통으로 옮기면 목록에서 사라진다 (TRS-01)") { t 
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let meta = store.createMemo()
         t.expectEqual(store.summaries.count, 1)
 
@@ -432,7 +445,7 @@ runner.test("그룹을 만들고 이름을 바꾸면 메모의 이름표도 따�
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         store.createGroup(named: "업무")
         let meta = store.createMemo(group: "업무")
 
@@ -450,7 +463,7 @@ runner.test("그룹을 지워도 메모는 남는다 (그룹 없음으로)") { t
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         store.createGroup(named: "임시")
         let meta = store.createMemo(group: "임시")
 
@@ -466,11 +479,11 @@ runner.test("그룹 목록은 다시 열어도 유지된다") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         store.createGroup(named: "업무")
         store.createGroup(named: "개인")
 
-        let reopened = MemoStore(repository: repository)
+        let reopened = MemoStore(repository: repository, keychain: testKeychain)
         t.expect(reopened.groups.contains("업무") && reopened.groups.contains("개인"), "그룹이 저장되지 않았다")
     }
 }
@@ -482,7 +495,7 @@ runner.test("휴지통으로 옮긴 메모를 되돌릴 수 있다 (TRS-02)") { 
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let meta = store.createMemo()
         store.saveBody(id: meta.id, body: "지우면 안 되는 내용")
 
@@ -502,7 +515,7 @@ runner.test("영구 삭제하면 파일까지 사라진다 (TRS-04)") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let meta = store.createMemo()
         store.moveToTrash(id: meta.id)
         store.permanentlyDelete(id: meta.id)
@@ -518,7 +531,7 @@ runner.test("보관 기간이 지나지 않은 항목은 자동으로 지워지�
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let meta = store.createMemo()
         store.moveToTrash(id: meta.id)
 
@@ -535,7 +548,7 @@ runner.test("오래 고치지 않은 메모도 버린 날부터 보관 기간을
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let meta = store.createMemo()
         // 40일 전에 마지막으로 고친 메모처럼 만든다.
         let old = Date().addingTimeInterval(-40 * 24 * 60 * 60)
@@ -563,7 +576,7 @@ runner.test("버린 지 보관 기간이 지난 항목은 자동으로 지워진
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let kept = store.createMemo()
         let expired = store.createMemo()
         store.moveToTrash(ids: [kept.id, expired.id])
@@ -584,7 +597,7 @@ runner.test("제목과 본문 모두에서 찾는다 (SRC-01)") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let titleHit = store.createMemo()
         store.saveBody(id: titleHit.id, body: "# 장보기 목록\n우유")
 
@@ -608,7 +621,7 @@ runner.test("그룹으로 검색 범위를 좁힌다 (SRC-02)") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let work = store.createMemo(group: "업무")
         store.saveBody(id: work.id, body: "회의 준비")
         let personal = store.createMemo(group: "개인")
@@ -625,7 +638,7 @@ runner.test("빈 검색어는 전체를 돌려준다") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         store.createMemo()
         store.createMemo()
         t.expectEqual(store.search(query: "").count, 2)
@@ -666,7 +679,7 @@ runner.test("메모 1,000개에서도 검색이 0.3초 안에 끝난다 (NFR-05)
     }
 
     try MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         t.expectEqual(store.summaries.count, 1000, "1,000개가 모두 읽히지 않았다")
 
         let started = Date()
@@ -726,7 +739,7 @@ runner.test("연결 교체와 해제는 양방향이고 자기 연결은 무시�
     let (repository, root) = try makeTemporaryRepository()
     defer { try? FileManager.default.removeItem(at: root) }
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let a = store.createMemo().id
         let b = store.createMemo().id
         store.link(from: a, to: a, kind: .flow)
@@ -747,7 +760,7 @@ runner.test("연결은 휴지통에서 숨고 복원되며 영구 삭제하면 �
     let (repository, root) = try makeTemporaryRepository()
     defer { try? FileManager.default.removeItem(at: root) }
     try MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let a = store.createMemo().id
         let b = store.createMemo().id
         let c = store.createMemo().id
@@ -784,7 +797,7 @@ runner.test("흐름은 분기 깊이 우선, 순환과 여러 시작점을 생�
         try repository.save(MemoDocument(meta: meta, body: ""))
     }
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         store.link(from: ids[8], to: ids[9], kind: .related)
         let flows = store.flows
         t.expectEqual(flows.count, 2)
@@ -806,7 +819,7 @@ runner.test("외부 파일의 같은 쌍 연결은 종류와 방향에 관계없
     try repository.save(MemoDocument(meta: MemoMeta(id: a, links: [MemoLink(to: b, kind: .flow), MemoLink(to: b, kind: .related)]), body: ""))
     try repository.save(MemoDocument(meta: MemoMeta(id: b, links: [MemoLink(to: a, kind: .flow)]), body: ""))
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         t.expectEqual(store.edges.count, 1)
     }
 }
@@ -816,13 +829,13 @@ runner.test("보드 배치는 저장과 재시작을 거치며 깨진 파일은 
     defer { try? FileManager.default.removeItem(at: root) }
     t.expectEqual(try repository.loadBoardLayout(), .empty)
     try MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let a = MemoID.generate()
         let b = MemoID.generate()
         store.setBoardPlacement(.init(x: -10, y: 20), for: a)
         store.setBoardPlacements([a: .init(x: 30, y: 40), b: .init(x: 50, y: 60)])
         store.setBentoSpan(.large, for: a)
-        let restarted = MemoStore(repository: repository)
+        let restarted = MemoStore(repository: repository, keychain: testKeychain)
         t.expectEqual(restarted.boardLayout, store.boardLayout)
         t.expectEqual(restarted.boardLayout.placement(for: a), .init(x: 30, y: 40))
         t.expectEqual(restarted.boardLayout.placement(for: b), .init(x: 50, y: 60))
@@ -845,7 +858,7 @@ runner.test("프론트매터 낱말로는 본문 찾기에 걸리지 않는다")
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let memo = store.createMemo()
         store.saveBody(id: memo.id, body: "우유 사기")
         t.expectEqual(store.filter(store.summaries, query: "pinned", target: .body).count, 0, "pinned가 걸렸다")
@@ -860,7 +873,7 @@ runner.test("본문 속 마크다운 제목은 본문으로 찾고, 제목 찾�
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let memo = store.createMemo()
         store.saveBody(id: memo.id, body: "첫 줄 제목\n\n# 소제목\n내용")
         t.expectEqual(store.filter(store.summaries, query: "소제목", target: .body).count, 1)
@@ -874,7 +887,7 @@ runner.test("직접 붙인 제목은 제목 찾기로만 걸린다") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let memo = store.createMemo()
         store.saveBody(id: memo.id, body: "본문 내용")
         store.updateMeta(id: memo.id) { $0.title = "직접제목" }
@@ -890,7 +903,7 @@ runner.test("휴지통 메모도 본문으로 찾는다") { t in
     defer { try? FileManager.default.removeItem(at: root) }
 
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let memo = store.createMemo()
         store.saveBody(id: memo.id, body: "제목줄\n휴지통속낱말")
         store.moveToTrash(ids: [memo.id])
@@ -980,7 +993,7 @@ runner.test("복제는 폴더 전체와 본문을 보존하고 새 메타데이�
         try bytes.write(to: attachments.appendingPathComponent("하위/파일.bin"))
         let extra = attachments.deletingLastPathComponent().appendingPathComponent("추가.json")
         try bytes.write(to: extra)
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         store.setBoardPlacement(.init(x: -40, y: 80), for: source.id)
         let started = Date()
         let copies = store.duplicate([source.id])
@@ -1007,7 +1020,7 @@ runner.test("복제는 폴더 전체와 본문을 보존하고 새 메타데이�
         t.expectEqual(try Data(contentsOf: destination.deletingLastPathComponent().appendingPathComponent("추가.json")), bytes)
         t.expectEqual(try repository.load(id: source.id), original)
         t.expectEqual(store.summaries.map(\.id), [source.id, copyID])
-        let restarted = MemoStore(repository: repository)
+        let restarted = MemoStore(repository: repository, keychain: testKeychain)
         t.expectEqual(restarted.boardLayout.placement(for: copyID), .init(x: -16, y: 104))
         t.expectEqual(restarted.summaries.first?.id, copyID)
         try Data([9]).write(to: destination.appendingPathComponent("사진.png"))
@@ -1019,7 +1032,7 @@ runner.test("복제 제목은 사본과 빈 번호를 쓰고 직접 제목이 �
     let (repository, root) = try makeTemporaryRepository()
     defer { try? FileManager.default.removeItem(at: root) }
     MainActor.assumeIsolated {
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let source = store.createMemo().id
         store.updateMeta(id: source) { $0.title = "계획" }
         let occupied = store.createMemo().id
@@ -1045,11 +1058,16 @@ runner.test("잠긴 프론트매터를 읽고 보존하며 최신 파일이 잠�
     try MainActor.assumeIsolated {
         let source = MemoMeta(id: .generate())
         try repository.save(MemoDocument(meta: source, body: "잠길 본문"))
-        let store = MemoStore(repository: repository)
+        let store = MemoStore(repository: repository, keychain: testKeychain)
         let unlocked = store.createMemo().id
         let lockedText = FrontmatterCodec.encode(MemoDocument(meta: source, body: "잠길 본문"))
             .replacingOccurrences(of: "\nopen:", with: "\nlocked: true\nopen:")
-        let decoded = try FrontmatterCodec.decode(fileContents: lockedText)
+        var decoded = try FrontmatterCodec.decode(fileContents: lockedText)
+        decoded.meta.lockSalt = Data(repeating: 1, count: 16).base64EncodedString()
+        decoded.meta.lockVersion = 1
+        decoded.meta.lockIterations = LockCrypto.minimumIterations
+        decoded.meta.lockFailures = 0
+        decoded.body = try LockCrypto.seal(Data("잠길 본문".utf8), key: Data(repeating: 2, count: 32), context: source.id.rawValue + "/body").base64EncodedString()
         t.expect(decoded.meta.isLocked)
         t.expect(FrontmatterCodec.encode(decoded).contains("locked: true"))
         t.expect(!source.isLocked)
@@ -1085,6 +1103,375 @@ runner.test("보드 직접 순서는 JSON 왕복과 이전 형식, 중복과 삭
     let c = MemoID.generate()
     let dirty = BoardLayout(manualOrder: [b, b, MemoID.generate(), a])
     t.expectEqual(dirty.normalizedOrder(among: [a, b, c]), [c, b, a])
+}
+
+runner.test("선 열 종류와 모르는 연결 토큰은 다시 저장해도 남는다") { t in
+    let id = MemoID.generate(), target = MemoID.generate()
+    let links = MemoLinkKind.allCases.map { MemoLink(to: target, kind: $0) }
+    for link in links where MemoLinkKind.basic.contains(link.kind) {
+        t.expectEqual(MemoLink(to: target, lineStyle: link.lineStyle, arrows: link.arrows), link)
+    }
+    var changed = MemoLink(to: target, kind: .flow)
+    changed.lineStyle = .dashed
+    changed.arrows = .both
+    t.expectEqual(changed.kind, .dashboth)
+    let document = MemoDocument(meta: MemoMeta(id: id, links: links), body: "본문", unknownLinkTokens: ["future:\(target.rawValue)", "새토큰"])
+    let encoded = FrontmatterCodec.encode(document)
+    t.expect(encoded.contains("flow:\(target.rawValue)"))
+    t.expect(encoded.contains("related:\(target.rawValue)"))
+    let decoded = try FrontmatterCodec.decode(fileContents: encoded)
+    t.expectEqual(decoded.meta.links, links)
+    t.expectEqual(decoded.unknownLinkTokens, document.unknownLinkTokens)
+    // 날짜는 밀리초까지만 기록되어 통째 비교는 1밀리초 아래 차이로 흔들린다. 다시 저장해도 남아야 하는 것만 비교한다.
+    let again = try FrontmatterCodec.decode(fileContents: FrontmatterCodec.encode(decoded))
+    t.expectEqual(again.meta.links, decoded.meta.links)
+    t.expectEqual(again.unknownLinkTokens, decoded.unknownLinkTokens)
+    t.expectEqual(again.body, decoded.body)
+}
+
+runner.test("실선 한쪽 화살표만 흐름을 만든다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository, keychain: testKeychain)
+        let a = store.createMemo().id, b = store.createMemo().id
+        for kind in MemoLinkKind.allCases {
+            store.link(from: a, to: b, kind: kind)
+            t.expectEqual(store.flows.count, kind == .flow ? 1 : 0)
+            t.expectEqual(store.edges.count, 1)
+        }
+        store.saveBody(id: a, body: "새 본문")
+        t.expectEqual(store.loadDocument(id: a)?.meta.links.first?.kind, .same)
+    }
+}
+
+runner.test("선 이름과 뜻은 확정한 열 종류에 대응한다") { t in
+    t.expectEqual(MemoLinkKind.allCases.map(\.displayName), ["연결", "흐름", "상호", "관련", "참고", "서로 참고", "포함", "막힘", "반대", "같음"])
+    t.expectEqual(MemoLinkKind.allCases.map(\.meaning), ["같은 주제로 이어진 메모", "다음 단계, 순서가 있는 이어짐", "서로 주고받는 대등한 관계", "느슨하게 관련된 메모", "이 메모가 저 메모를 참고하거나 기댐(화살표 쪽이 참고 대상)", "서로를 참고하는 약한 양방향 관계", "큰 주제(점 쪽)가 작은 메모를 품음", "이 일이 끝나야 저 일(⊣ 쪽)을 할 수 있음", "서로 부딪히는 생각 · 대안", "같은 내용 · 중복"])
+}
+runner.test("연결 칩은 종류 순서로 두 종류와 나머지 종류 수를 표시한다") { t in
+    t.expectEqual(MemoLinkKind.chipText(counts: [:]), "")
+    t.expectEqual(MemoLinkKind.chipText(counts: [.flow: 2]), "")
+    t.expectEqual(MemoLinkKind.chipText(counts: [.dashto: 1, .both: 1]), "상호 1 · 참고 1")
+    t.expectEqual(MemoLinkKind.chipText(counts: [.contain: 2, .block: 1, .same: 3, .oppose: 1]), "포함 2 · 막힘 1 · 외 2")
+    t.expectEqual(MemoLinkKind.chipText(counts: [.line: 0, .same: 1]), "같음 1")
+}
+runner.test("선 라벨은 구분 문자를 인코딩하고 왕복하며 빈 이름은 지운다") { t in
+    let id = MemoID.generate(), target = MemoID.generate()
+    let label = "공백 한글:쉼표,물결~ ·"
+    for kind in MemoLinkKind.allCases {
+        var doc = MemoDocument(meta: MemoMeta(id: id, links: [MemoLink(to: target, kind: kind, label: label, unknownSuffix: "~future%21")]), body: "본문")
+        let encoded = FrontmatterCodec.encode(doc)
+        t.expect(encoded.contains("%20")); t.expect(encoded.contains("%3A")); t.expect(encoded.contains("%2C")); t.expect(encoded.contains("%7E"))
+        let decoded = try FrontmatterCodec.decode(fileContents: encoded)
+        t.expectEqual(decoded.meta.links, doc.meta.links)
+        doc.meta.links[0].label = ""
+        let cleared = FrontmatterCodec.encode(doc)
+        t.expectEqual(try FrontmatterCodec.decode(fileContents: cleared).meta.links, doc.meta.links)
+        t.expect(cleared.contains("\(kind.rawValue):\(target.rawValue)~~future%21"))
+        doc.meta.links[0].unknownSuffix = ""
+        t.expect(!FrontmatterCodec.encode(doc).contains("\(target.rawValue)~"))
+    }
+    var link = MemoLink(to: target, kind: .flow, label: String(repeating: "가", count: 21))
+    t.expectEqual(link.label.count, 20)
+    link.label = String(repeating: "👨‍👩‍👧", count: 21)
+    t.expectEqual(link.label.count, 20)
+    link.label = ""
+    t.expectEqual(link.label, "")
+}
+
+runner.test("선의 모르는 꼬리와 이전 JSON 형식은 보존한다") { t in
+    let id = MemoID.generate(), target = MemoID.generate()
+    let document = MemoDocument(meta: MemoMeta(id: id, links: [MemoLink(to: target, kind: .flow)]), body: "본문")
+    let text = FrontmatterCodec.encode(document).replacingOccurrences(of: "flow:\(target.rawValue)", with: "flow:\(target.rawValue)~%ZZ~future:tail")
+    let decoded = try FrontmatterCodec.decode(fileContents: text)
+    t.expectEqual(decoded.meta.links.first?.label, "")
+    t.expectEqual(decoded.meta.links.first?.unknownSuffix, "~%ZZ~future:tail")
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: FrontmatterCodec.encode(decoded)).meta.links, decoded.meta.links)
+    let data = try JSONEncoder().encode(MemoLink(to: target, kind: .flow))
+    var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    object.removeValue(forKey: "label")
+    object.removeValue(forKey: "unknownSuffix")
+    let old = try JSONDecoder().decode(MemoLink.self, from: JSONSerialization.data(withJSONObject: object))
+    t.expectEqual(old, MemoLink(to: target, kind: .flow))
+}
+
+private enum InjectedMemoWriteFailure: Error { case expected }
+
+final class MemoryLockKeychain: MemoKeychain, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var failures: [MemoID: Int] = [:]
+    func readFailures(id: MemoID) throws -> Int { mutex.lock(); defer { mutex.unlock() }; return failures[id] ?? 0 }
+    func writeFailures(_ count: Int, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; failures[id] = count }
+    private var values: [MemoID: Data] = [:]
+    func read(id: MemoID) throws -> Data? { mutex.lock(); defer { mutex.unlock() }; return values[id] }
+    func write(_ value: Data, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = value }
+    func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = nil; failures[id] = nil }
+}
+
+runner.test("암호 규칙은 ASCII 영숫자 4~6자이고 대소문자를 구분한다") { t in
+    for valid in ["1234", "AbC9", "ABC123", "abcd"] { t.expect(LockCrypto.validPassword(valid)) }
+    for invalid in ["123", "1234567", "가나다라", "ab c", "ab!C", "éabc", "Ａabc", ""] { t.expect(!LockCrypto.validPassword(invalid)) }
+    t.expectEqual(LockCrypto.filteredPassword("가a B!c12한345"), "aBc123")
+    t.expect(!LockCrypto.constantTimeEqual("Ab12", "ab12"))
+    t.expect(LockCrypto.constantTimeEqual("Ab12", "Ab12"))
+    t.expect(!LockCrypto.constantTimeEqual("123456A", "123456B"))
+    t.expect(!LockCrypto.constantTimeEqual("123456", "123456A"))
+}
+
+runner.test("본문·첨부 AES-GCM 왕복과 잘못된 열쇠·문맥 거부") { t in
+    let id = MemoID.generate()
+    let session = MemoLockSession(id: id, key: try LockCrypto.random(count: 32))
+    let other = MemoLockSession(id: id, key: try LockCrypto.random(count: 32))
+    for name in ["body", "사진.png"] {
+        let plain = Data("보호할 내용과 사진 바이트".utf8)
+        let cipher = try session.seal(plain, name: name)
+        t.expectEqual(try session.open(cipher, name: name), plain)
+        t.expectNil(try? other.open(cipher, name: name))
+        t.expectNil(try? session.open(cipher, name: "다른 첨부"))
+    }
+    session.clear()
+    t.expectNil(try? session.seal(Data()))
+}
+
+runner.test("영구 파기는 같은 길이 덮어쓰기와 fsync 뒤 휴지통 없이 삭제한다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let original = Data(repeating: 42, count: 150000)
+    try original.write(to: root.appendingPathComponent("memo.md"))
+    var observed = false
+    try SecureMemoDeletion.remove(root) { folder in
+        let erased = try Data(contentsOf: folder.appendingPathComponent("memo.md"))
+        t.expectEqual(erased.count, 0)
+        t.expect(erased != original)
+        observed = true
+    }
+    t.expect(observed)
+    t.expect(!FileManager.default.fileExists(atPath: root.path))
+}
+
+await runner.testAsync("새 암호 메모의 첫 저장·편집은 암호문이고 검색·복제·백업에서 제외된다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let keychain = MemoryLockKeychain()
+    let store = MemoStore(repository: repository, keychain: keychain)
+    let id = try await store.createLockedMemo(password: "Ab1234")
+    let folder = root.appendingPathComponent("memos").appendingPathComponent(id.rawValue)
+    let first = try repository.load(id: id)
+    t.expect(first.meta.isLocked)
+    t.expectEqual(try store.decryptedDocument(id: id).body, "")
+    t.expectNotNil(Data(base64Encoded: first.body))
+    t.expect((first.meta.lockIterations ?? 0) >= 2_000_000)
+    t.expectEqual((try folder.resourceValues(forKeys: [.isExcludedFromBackupKey])).isExcludedFromBackup, true)
+    store.saveBody(id: id, body: "절대디스크에평문으로남기지않을내용")
+    t.expect(!(try String(contentsOf: folder.appendingPathComponent("memo.md"), encoding: .utf8)).contains("절대디스크"))
+    t.expectEqual(try store.decryptedDocument(id: id).body, "절대디스크에평문으로남기지않을내용")
+    t.expectEqual(try repository.searchBodies(matching: "절대디스크", in: [id]), [])
+    t.expectEqual(store.duplicate([id]), [])
+    t.expectEqual(store.summaries.first?.preview, "")
+    let roundTrip = try FrontmatterCodec.decode(fileContents: FrontmatterCodec.encode(try repository.load(id: id)))
+    t.expectEqual(roundTrip.meta.lockSalt, first.meta.lockSalt)
+    t.expectEqual(roundTrip.meta.lockIterations, first.meta.lockIterations)
+    t.expectEqual(roundTrip.meta.lockVersion, 1)
+    store.relock(id)
+    t.expectNil(try? store.decryptedDocument(id: id))
+    try await store.unlock(id: id, password: "Ab1234")
+    t.expectEqual(try store.decryptedDocument(id: id).body, "절대디스크에평문으로남기지않을내용")
+    try await store.changePassword(id: id, password: "New123")
+    t.expect(try repository.load(id: id).meta.lockSalt != first.meta.lockSalt)
+    let ciphertext = try repository.load(id: id).body
+    store.relock(id)
+    do { try await store.unlock(id: id, password: "Ab1234"); t.expect(false) } catch {}
+    t.expectEqual(try repository.load(id: id).meta.lockFailures, 1)
+    try await store.unlock(id: id, password: "New123")
+    t.expectEqual(try repository.load(id: id).meta.lockFailures, 0)
+    t.expectEqual(try repository.load(id: id).body, ciphertext)
+    store.relock(id)
+    try keychain.delete(id: id)
+    do { try await store.unlock(id: id, password: "New123"); t.expect(false) }
+    catch { if case MemoLockError.missingKey = error {} else { t.expect(false, "열쇠 없음은 별도 오류로 처리") } }
+    t.expectEqual(try repository.load(id: id).meta.lockFailures, 0)
+}
+
+await runner.testAsync("본문 손상은 맞는 암호의 실패 횟수를 올리지 않는다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let keys = MemoryLockKeychain()
+    let store = MemoStore(repository: repository, keychain: keys)
+    let id = try await store.createLockedMemo(password: "1234")
+    store.relock(id)
+    try keys.writeFailures(9, id: id)
+    var document = try repository.load(id: id)
+    document.meta.lockFailures = 9
+    let original = document.body
+    for broken in ["base64 아님", Data(repeating: 0, count: 40).base64EncodedString()] {
+        document.body = broken
+        let file = root.appendingPathComponent("memos").appendingPathComponent(id.rawValue).appendingPathComponent("memo.md")
+        try Data(FrontmatterCodec.encode(document).utf8).write(to: file, options: .atomic)
+        do { try await store.unlock(id: id, password: "1234"); t.expect(false) }
+        catch { if case MemoLockError.damaged = error {} else { t.expect(false) } }
+        t.expectEqual(try repository.load(id: id).meta.lockFailures, 9)
+        t.expectEqual(try keys.readFailures(id: id), 9)
+        t.expectNotNil(try keys.read(id: id))
+        t.expectNil(store.lockSession(for: id))
+    }
+    document.body = original
+    try repository.save(document)
+    try await store.unlock(id: id, password: "1234")
+    t.expectEqual(try keys.readFailures(id: id), 0)
+    store.saveBody(id: id, body: "평문 미리보기 금지")
+    store.updateMeta(id: id) { $0.title = "제목" }
+    t.expectEqual(store.summaries.first?.preview, "")
+    store.relock(id)
+    t.expectEqual(store.summaries.first?.preview, "")
+}
+
+await runner.testAsync("열 번째 실패는 열쇠·폴더를 파기하고 묘비를 남긴다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let keychain = MemoryLockKeychain()
+    let store = MemoStore(repository: repository, keychain: keychain)
+    let id = try await store.createLockedMemo(password: "1234")
+    store.relock(id)
+    do { try await store.unlock(id: id, password: "!"); t.expect(false) }
+    catch { if case MemoLockError.wrongPassword = error {} else { t.expect(false) } }
+    t.expectEqual(try keychain.readFailures(id: id), 0)
+    t.expectEqual(try repository.load(id: id).meta.lockFailures, 0)
+    for attempt in 1...10 {
+        var edited = try repository.load(id: id)
+        edited.meta.lockFailures = 0
+        try repository.save(edited)
+        do { try await store.unlock(id: id, password: "9999"); t.expect(false) } catch {}
+        if attempt < 10 {
+            t.expectEqual(try repository.load(id: id).meta.lockFailures, attempt)
+            t.expectEqual(store.lockFailureCount(id: id), attempt)
+        }
+    }
+    t.expectNil(try keychain.read(id: id))
+    t.expectEqual(try keychain.readFailures(id: id), 0)
+    t.expect((try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+    t.expectEqual(try repository.loadTrashSummaries().count, 0)
+    t.expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("memos").appendingPathComponent(id.rawValue).path))
+}
+
+await runner.testAsync("암호 메모 이동은 새 ID·첨부 암호화·원본 파기·연결 제거를 수행한다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let keychain = MemoryLockKeychain()
+    let store = MemoStore(repository: repository, keychain: keychain)
+    let source = store.createMemo(group: "업무").id
+    store.updateMeta(id: source) { $0.title = "보이는 제목"; $0.backgroundAlpha = 0.7 }
+    store.saveBody(id: source, body: "내용 ![사진](attachments/test.png)")
+    let attachment = store.attachmentsDirectory(for: source)
+    try FileManager.default.createDirectory(at: attachment, withIntermediateDirectories: true)
+    let photo = Data([1, 2, 3, 4, 5])
+    try photo.write(to: attachment.appendingPathComponent("test.png"))
+    let linked = store.createMemo().id
+    store.link(from: linked, to: source, kind: .flow)
+    let id = try await store.createLockedMemo(password: "1234", moving: source)
+    t.expect(id != source)
+    t.expectNil(store.loadDocument(id: source))
+    t.expect((try MemoPrivacyLedger.read("destroyed", root: root)).contains(source.rawValue))
+    t.expectEqual(store.loadDocument(id: linked)?.meta.links, [])
+    let document = try store.decryptedDocument(id: id)
+    t.expectEqual(document.meta.title, "보이는 제목")
+    t.expectEqual(document.meta.group, "업무")
+    t.expectEqual(document.meta.backgroundAlpha, 0.7)
+    t.expectEqual(document.meta.links, [])
+    let cipher = try Data(contentsOf: store.attachmentsDirectory(for: id).appendingPathComponent("test.png.enc"))
+    t.expectEqual(try store.lockSession(for: id)?.open(cipher, name: "test.png"), photo)
+    t.expect(!FileManager.default.fileExists(atPath: store.attachmentsDirectory(for: id).appendingPathComponent("test.png").path))
+    let plainID = try store.moveToPlainMemo(id: id)
+    t.expectEqual(store.loadDocument(id: plainID)?.body, document.body)
+    t.expectNil(try keychain.read(id: id))
+    t.expect((try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+    t.expectEqual(try Data(contentsOf: store.attachmentsDirectory(for: plainID).appendingPathComponent("test.png")), photo)
+}
+
+await runner.testAsync("암호 메모 쓰기를 가로채도 평문이 없고 쓰기 실패 시 원본을 보존한다") { t in
+    let (base, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = MemoMeta(id: .generate())
+    let original = MemoDocument(meta: source, body: "저장실패에도남아야하는원본")
+    try base.save(original)
+    var checked = base
+    checked.beforeMemoWrite = { _, bytes in
+        let document = try FrontmatterCodec.decode(fileContents: String(decoding: bytes, as: UTF8.self))
+        if document.meta.isLocked {
+            // 본문뿐 아니라 제목 등 파일 어디에도 원본 글이 평문으로 없어야 한다.
+            guard Data(base64Encoded: document.body) != nil,
+                  !String(decoding: bytes, as: UTF8.self).contains("저장실패에도남아야하는원본") else { throw MemoLockError.damaged }
+            throw InjectedMemoWriteFailure.expected
+        }
+    }
+    let store = MemoStore(repository: checked, keychain: MemoryLockKeychain())
+    do { _ = try await store.createLockedMemo(password: "1234", moving: source.id); t.expect(false) }
+    catch { if case InjectedMemoWriteFailure.expected = error {} else { t.expect(false, "쓰기 가로채기까지 도달하지 못함: \(error)") } }
+    // 날짜는 파일에 밀리초로 적혀 다시 읽으면 소수점 끝자리가 달라질 수 있어, 보존돼야 할 것만 비교한다.
+    let kept = try base.load(id: source.id)
+    t.expectEqual(kept.body, original.body)
+    t.expect(!kept.meta.isLocked)
+    t.expectEqual(try base.loadSummaries().count, 1)
+    t.expect(!(try MemoPrivacyLedger.read("destroyed", root: root)).contains(source.id.rawValue))
+}
+
+runner.test("구버전의 모르는 잠금 키 보존 규칙으로 암호문과 열쇠 메타데이터가 유지된다") { t in
+    let id = MemoID.generate()
+    var legacyMeta = MemoMeta(id: id, isLocked: true)
+    legacyMeta.title = "제목"
+    let ciphertext = Data(repeating: 1, count: 48).base64EncodedString()
+    let legacy = MemoDocument(meta: legacyMeta, body: ciphertext, unknownFrontmatterLines: [
+        "lockSalt: " + Data(repeating: 3, count: 16).base64EncodedString(),
+        "lockIterations: 2000000", "lockVersion: 1", "lockFailures: 2", "futureLockField: 그대로"])
+    let decoded = try FrontmatterCodec.decode(fileContents: FrontmatterCodec.encode(legacy))
+    t.expectEqual(decoded.body, ciphertext)
+    t.expectEqual(decoded.meta.lockFailures, 2)
+    t.expectEqual(decoded.meta.lockVersion, 1)
+    t.expectEqual(decoded.meta.lockIterations, 2_000_000)
+    t.expect(decoded.unknownFrontmatterLines.contains("futureLockField: 그대로"))
+}
+
+runner.test("본문 저장 실패는 실패 결과를 돌려주고 원본을 보존한다") { t in
+    let (base, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let id = MemoID.generate()
+    try base.save(MemoDocument(meta: MemoMeta(id: id), body: "원본"))
+    var failing = base
+    failing.beforeMemoWrite = { _, _ in throw InjectedMemoWriteFailure.expected }
+    let store = MemoStore(repository: failing, keychain: MemoryLockKeychain())
+    t.expect(!store.saveBody(id: id, body: "편집 내용"))
+    t.expectEqual(try base.load(id: id).body, "원본")
+    t.expect(!(try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+}
+
+runner.test("손상된 암호 메모도 영구 삭제하면 열쇠와 폴더를 지운다") { t in
+    let (_, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let keys = MemoryLockKeychain()
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: keys)
+    let id = MemoID.generate()
+    try keys.write(Data([1, 2, 3]), id: id)
+    let folder = root.appendingPathComponent("trash").appendingPathComponent(id.rawValue)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data("손상\nlocked: true".utf8).write(to: folder.appendingPathComponent("memo.md"))
+    try repository.permanentlyDelete(id: id)
+    t.expectNil(try keys.read(id: id))
+    t.expect(!FileManager.default.fileExists(atPath: folder.path))
+    t.expect((try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+}
+
+runner.test("묘비 기록 후 파기 실패에도 정리 콜백을 호출한다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = MemoStore(repository: repository, keychain: MemoryLockKeychain())
+    let id = store.createMemo().id
+    store.beforePrivacyRemoval = { _ in throw InjectedMemoWriteFailure.expected }
+    var called = false
+    store.onPrivacyChange = { called = true }
+    do { try store.destroyMemo(id: id); t.expect(false) } catch {}
+    t.expect(called)
+    t.expect((try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
 }
 
 runner.finish()

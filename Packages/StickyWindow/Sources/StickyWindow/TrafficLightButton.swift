@@ -157,9 +157,15 @@ final class OpacitySliderCell: NSSliderCell {
     private static let knobColor = NSColor(srgbRed: 0.369, green: 0.373, blue: 0.380, alpha: 1)
     private static let trackColor = NSColor.black.withAlphaComponent(0.30)
 
+    /// 손잡이 막대의 폭. 줄 양 끝도 이 폭만큼만 남겨, 손잡이가 끝까지 가면 줄 끝에 딱 닿아 보이게 한다.
+    private static let pillWidth: CGFloat = 6
+
     override func drawBar(inside rect: NSRect, flipped: Bool) {
         let height: CGFloat = 3
-        let bar = NSRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+        // 손잡이 가운데가 움직이는 범위는 줄 양 끝에서 손잡이 칸 절반씩 안쪽이다.
+        // 줄을 그 범위(+ 손잡이 막대 절반)로 맞춰야 손잡이가 끝까지 간 것으로 보인다.
+        let inset = max(0, knobThickness / 2 - Self.pillWidth / 2)
+        let bar = NSRect(x: rect.minX + inset, y: rect.midY - height / 2, width: max(0, rect.width - inset * 2), height: height)
         let radius = height / 2
 
         Self.trackColor.setFill()
@@ -168,7 +174,7 @@ final class OpacitySliderCell: NSSliderCell {
 
     override func drawKnob(_ knobRect: NSRect) {
         let height = max(10, min(knobRect.height - 1, 18))
-        let width = max(4, (height / 3).rounded())
+        let width = Self.pillWidth
         let pill = NSRect(
             x: knobRect.midX - width / 2,
             y: knobRect.midY - height / 2,

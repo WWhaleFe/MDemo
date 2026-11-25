@@ -19,6 +19,11 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     private(set) var hasFlow = false
     let rootView: StickyRootView
     let textView: MemoTextView
+    private var lockView: MemoLockView?
+    var isShowingDestruction = false
+    private var unlockTask: Task<Void, Never>?
+    private let lockMenuButton = TopBarButton()
+    private var lockObservers: [NSObjectProtocol] = []
     private let scrollView: NSScrollView
     /// 입력 중 마크다운 기호를 서식으로 바꾼다. 한글 조합 처리를 여기에 가둬 둔다 (NFR-08).
     var formatController: LiveFormatController?
@@ -189,17 +194,18 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         applyAppearance()
 
         // 이미지는 이 메모의 첨부 폴더에서 읽는다. 썸네일 캐시는 이 창과 함께 사라진다 (IMG-01).
-        textView.imageStore = MemoImageStore(directory: store.attachmentsDirectory(for: meta.id))
+        textView.imageStore = MemoImageStore(directory: store.attachmentsDirectory(for: meta.id), lockSession: store.lockSession(for: meta.id))
 
         // 슬래시 명령이 있다는 걸 모르면 쓸 수 없으니, 빈 메모에서 한 줄로 알려 준다.
         textView.placeholderText = "/ 를 입력하면 서식 목록"
-        textView.loadMarkdown(body, theme: theme, textAlpha: meta.textAlpha)
+        textView.loadMarkdown(meta.isLocked ? ((try? store.decryptedDocument(id: meta.id).body) ?? "") : body, theme: theme, textAlpha: meta.textAlpha)
         textView.resetTypingAttributes(theme: theme, textAlpha: meta.textAlpha)
         formatController = LiveFormatController(textView: textView, theme: theme, textAlpha: meta.textAlpha)
 
         textView.delegate = self
         panel.delegate = self
         panel.setAlwaysOnTop(meta.isPinned)
+        installLockControls()
 
         // 마우스를 올리면 잠깐 또렷해지게 한다 (OPA-04).
         rootView.onHoverChange = { [weak self] isHovering in
@@ -351,7 +357,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         iconStack.orientation = .horizontal
         iconStack.alignment = .centerY
         iconStack.spacing = 6
-        for view in [opacitySlider, airDropButton, exportButton, iconDivider, pinButton, foldButton, appearanceButton] {
+        for view in [opacitySlider, airDropButton, exportButton, lockMenuButton, iconDivider, pinButton, foldButton, appearanceButton] {
             iconStack.addArrangedSubview(view)
         }
         iconStack.setCustomSpacing(8, after: opacitySlider)
@@ -950,6 +956,154 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         formatController?.slashPopupDiagnostics ?? "편집기 없음"
     }
 
+    private func installLockControls() {
+        configure(lockMenuButton, symbol: "lock", description: "암호 메모", help: "암호 메모 메뉴", action: #selector(showLockMenu), size: 20)
+        lockMenuButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
+        lockMenuButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        if meta.isLocked {
+            // 열려 있는 동안에도 디스크로 내보내는 경로는 제공하지 않는다.
+            exportButton.isEnabled = false
+            airDropButton.isEnabled = false
+            textView.onRequestImageText = nil
+            if store?.lockSession(for: memoID) == nil { showLockedBody() }
+            let workspace = NSWorkspace.shared.notificationCenter
+            lockObservers.append(workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.relockBody() }
+            })
+            lockObservers.append(DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.relockBody() }
+            })
+        }
+    }
+
+    private func removeLockObservers() {
+        for observer in lockObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
+        lockObservers.removeAll()
+    }
+
+    public func relockBody() {
+        guard meta.isLocked else { return }
+        unlockTask?.cancel()
+        unlockTask = nil
+        textView.commitComposition()
+        if store?.lockSession(for: memoID) != nil {
+            saveBodyNow()
+        }
+        saveTimer?.invalidate()
+        saveTimer = nil
+        formatController?.dismissPopups()
+        tearDownAirDropAndSheets()
+        store?.relock(memoID)
+        textView.undoManager?.removeAllActions()
+        // NSTextStorage의 평문을 가능한 범위에서 덮은 뒤 비운다.
+        if let storage = textView.textStorage {
+            storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: String(repeating: "\0", count: storage.length))
+            storage.setAttributedString(NSAttributedString(string: ""))
+        }
+        formatController = nil
+        textView.imageStore?.purge()
+        textView.imageStore = nil
+        if let view = lockView {
+            view.fields.clear()
+            let failures = store?.lockFailureCount(id: memoID) ?? 0
+            view.finish(message: Self.lockMessage(failures: failures))
+        }
+        showLockedBody()
+    }
+
+    /// 잠금 화면 안내. 9번 틀린 뒤에는 창을 다시 열어도 마지막 경고를 보인다.
+    static func lockMessage(failures: Int) -> String {
+        if failures >= 9 { return "한 번 더 틀리면 이 메모는 영구 삭제됩니다" }
+        return failures > 0 ? "\(10 - failures)번 남음" : "잠긴 메모입니다"
+    }
+
+    private func showLockedBody() {
+        formatController = nil
+        textView.imageStore = nil
+        textView.onRequestImageText = nil
+        textView.allowsBodyCopy = false
+        scrollView.isHidden = true
+        formatToolbar.isHidden = true
+        textView.isEditable = false
+        if lockView != nil { return }
+        let view = MemoLockView(frame: .zero)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor), view.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            view.topAnchor.constraint(equalTo: scrollView.topAnchor), view.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor)])
+        lockView = view
+        let failures = store?.lockFailureCount(id: memoID) ?? 0
+        view.finish(message: Self.lockMessage(failures: failures))
+        view.open = { [weak self] password in
+            guard let self, let store = self.store else { return }
+            self.unlockTask = Task { @MainActor [weak self] in
+                do {
+                    guard let id = self?.memoID else { return }
+                    try await store.unlock(id: id, password: password)
+                    guard !Task.isCancelled, let self else { return }
+                    let document = try store.decryptedDocument(id: self.memoID)
+                    self.textView.imageStore = MemoImageStore(directory: store.attachmentsDirectory(for: self.memoID), lockSession: store.lockSession(for: self.memoID))
+                    self.textView.loadMarkdown(document.body, theme: self.theme, textAlpha: self.meta.textAlpha)
+                    self.textView.resetTypingAttributes(theme: self.theme, textAlpha: self.meta.textAlpha)
+                    self.formatController = LiveFormatController(textView: self.textView, theme: self.theme, textAlpha: self.meta.textAlpha)
+                    self.textView.allowsBodyCopy = true
+                    self.textView.isEditable = true
+                    self.lockView?.removeFromSuperview()
+                    self.lockView = nil
+                    self.scrollView.isHidden = false
+                    self.formatToolbar.isHidden = false
+                    self.panel.makeFirstResponder(self.textView)
+                } catch {
+                    guard !Task.isCancelled, let self else { return }
+                    if case MemoLockError.destroyed = error {
+                        self.isShowingDestruction = true
+                        self.lockView?.finish(message: "이 메모는 파기되었습니다")
+                        self.lockView?.fields.password.isEnabled = false
+                        try? await Task.sleep(for: .seconds(1.5))
+                        self.closeWithoutMarkingClosed()
+                        self.onClose?(self.memoID)
+                    } else {
+                        let failures = store.lockFailureCount(id: self.memoID)
+                        let lastWarning: Bool
+                        if case MemoLockError.wrongPassword = error { lastWarning = failures == 9 } else { lastWarning = false }
+                        let message = lastWarning ? "한 번 더 틀리면 이 메모는 영구 삭제됩니다" : error.localizedDescription + (failures > 0 ? " · \(10 - failures)번 남음" : "")
+                        self.lockView?.finish(message: message)
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func showLockMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let titles = meta.isLocked ? ["암호 바꾸기…", "일반 메모로 옮기기…"] : ["암호 메모로 옮기기…"]
+        for title in titles {
+            let item = NSMenuItem(title: title, action: #selector(lockMenuSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.isEnabled = !meta.isLocked || store?.lockSession(for: memoID) != nil
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: lockMenuButton.bounds.maxY), in: lockMenuButton)
+    }
+
+    public var onMoveToLocked: ((MemoID) -> Void)?
+    public var onMoveToPlain: ((MemoID) -> Void)?
+    @objc private func lockMenuSelected(_ sender: NSMenuItem) {
+        if !meta.isLocked { onMoveToLocked?(memoID); return }
+        if sender.title == "일반 메모로 옮기기…" { onMoveToPlain?(memoID); return }
+        guard let password = MemoLockDialogs.password(title: "암호 바꾸기") else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do { try await self.store?.changePassword(id: self.memoID, password: password) }
+            catch { MemoLockDialogs.showError(error) }
+        }
+    }
+
     // MARK: - 저장
 
     /// 입력이 있을 때마다 서식을 갱신하고, 저장 타이머를 미룬다.
@@ -970,21 +1124,34 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 지금 즉시 저장한다. 창을 닫거나 앱이 종료될 때는 디바운스를 기다리지 않는다.
     ///
     /// 화면에는 기호가 숨겨져 있으므로, 저장할 때 표준 마크다운으로 되돌린다 (DOC-01).
-    public func saveBodyNow() {
+    @discardableResult
+    public func finishPendingEdits() async -> Bool {
+        await formatController?.finishPendingImageInsertion()
+        textView.commitComposition()
+        return saveBodyNow()
+    }
+
+    @discardableResult
+    public func saveBodyNow() -> Bool {
         saveTimer?.invalidate()
         saveTimer = nil
         // 조합 중에는 저장하지 않는다. 미완성 글자가 파일에 남으면 다시 열 때 깨진다 (NFR-08).
         guard !textView.isComposingText else {
             scheduleBodySave()
-            return
+            return false
         }
-        store?.saveBody(id: memoID, body: textView.currentMarkdown())
+        guard !meta.isLocked || store?.lockSession(for: memoID) != nil else { return false }
+        let saved = store?.saveBody(id: memoID, body: textView.currentMarkdown()) ?? false
+        if !saved { scheduleBodySave() }
+        return saved
     }
 
     // MARK: - 창 상태
 
     /// 다른 창으로 넘어가면 떠 있던 팝업을 정리한다.
     /// 팝업이 남아 있으면 엔터·방향키를 계속 가로채 입력이 먹통처럼 보인다.
+    public func windowDidMiniaturize(_ notification: Notification) { relockBody() }
+
     public func windowDidResignKey(_ notification: Notification) {
         formatController?.dismissPopups()
     }
@@ -1145,7 +1312,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         resizeOverlay.minimumSize = panel.minSize
         layoutSections()
         panel.setFrame(frame, display: true, animate: false)
-        scrollView.isHidden = isCollapsed
+        scrollView.isHidden = isCollapsed || lockView != nil
         updateFoldButtonImage()
         saveFrameNow()
     }
@@ -1160,6 +1327,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         saveAlphaNowIfPending()
         store?.setOpen(id: memoID, isOpen: false)
         meta.isOpen = false
+        relockBody()
+        removeLockObservers()
         panel.orderOut(nil)
         onClose?(memoID)
     }
@@ -1172,12 +1341,14 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         tearDownAirDropAndSheets()
         formatController?.dismissPopups()
         saveFrameNow()
+        relockBody()
+        removeLockObservers()
         panel.orderOut(nil)
     }
 
     /// 동기화로 파일이 바뀌었을 때 화면 내용을 다시 읽는다 (SYNC-08).
     public func reloadBodyFromStore() {
-        guard let document = store?.loadDocument(id: memoID) else { return }
+        guard !meta.isLocked, let document = store?.loadDocument(id: memoID) else { return }
         // 지금 쓰고 있는 중이면 건드리지 않는다. 사용자의 입력이 우선이다.
         guard !textView.isComposingText else { return }
         guard document.body != textView.currentMarkdown() else { return }
@@ -1197,6 +1368,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         saveBodyNow()
         saveFrameNow()
         saveAlphaNowIfPending()
+        relockBody()
     }
 
     private func saveAlphaNowIfPending() {
@@ -1218,6 +1390,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     public func setHidden(_ hidden: Bool) {
         if hidden {
+            relockBody()
             stopAirDropReceiving()
             formatController?.dismissPopups()
             panel.orderOut(nil)

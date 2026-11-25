@@ -227,6 +227,9 @@ public struct ReadableCopy: Sendable {
     /// 휴지통이 아닌 메모만 읽는다.
     private func loadMemos() -> LoadResult {
         var result = LoadResult()
+        guard let destroyed = try? MemoPrivacyLedger.read("destroyed", root: localRoot),
+              let localOnly = try? MemoPrivacyLedger.read("local-only", root: localRoot) else { return result }
+        let privateIDs = destroyed.union(localOnly)
         let folder = localRoot.appendingPathComponent("memos", isDirectory: true)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
@@ -235,7 +238,7 @@ public struct ReadableCopy: Sendable {
 
         for directory in entries {
             let id = directory.lastPathComponent
-            guard MemoID(rawValue: id).isValid else { continue }
+            guard MemoID(rawValue: id).isValid, !privateIDs.contains(id) else { continue }
             let file = directory.appendingPathComponent("memo.md")
             guard FileManager.default.fileExists(atPath: file.path) else { continue }
             guard let text = try? String(contentsOf: file, encoding: .utf8),
@@ -244,6 +247,7 @@ public struct ReadableCopy: Sendable {
                 result.failed.insert(id)
                 continue
             }
+            guard !document.meta.isLocked else { continue }
             result.memos.append(LoadedMemo(meta: document.meta, body: document.body, directory: directory))
         }
         return result

@@ -272,7 +272,10 @@ public final class MemoTextView: NSTextView {
     public var onPasteText: ((String) -> Bool)?
 
     /// 고른 부분의 마크다운 (클립보드용).
+    public var allowsBodyCopy = true
+
     public func selectedMarkdown() -> String? {
+        guard allowsBodyCopy else { return nil }
         guard let textStorage else { return nil }
         let selection = selectedRange()
         guard selection.length > 0 else { return nil }
@@ -281,6 +284,7 @@ public final class MemoTextView: NSTextView {
     }
 
     public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard allowsBodyCopy else { return false }
         guard let markdown = selectedMarkdown() else {
             return super.writeSelection(to: pboard, types: types)
         }

@@ -15,7 +15,7 @@ public struct MemoSummary: Equatable, Sendable, Identifiable {
 
     public init(meta: MemoMeta, preview: String, deletedAt: Date? = nil) {
         self.meta = meta
-        self.preview = preview
+        self.preview = meta.isLocked ? "" : preview
         self.deletedAt = deletedAt
     }
 
@@ -26,6 +26,7 @@ public struct MemoSummary: Equatable, Sendable, Identifiable {
         if let given = meta.title, !given.trimmingCharacters(in: .whitespaces).isEmpty {
             return given
         }
+        if meta.isLocked { return "제목 없는 메모" }
         // 이미지 줄(`![..](..)`)은 제목 후보에서 뺀다.
         let firstLine = preview
             .components(separatedBy: "\n")

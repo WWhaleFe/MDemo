@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var devSettingObserver: NSObjectProtocol?
 
+    @objc private func newLockedMemo() { container?.windowRegistry.createLockedMemo() }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // ⌘C · ⌘V 같은 편집 단축키는 메인 메뉴가 있어야 동작한다 (EditMenu 참고).
         EditMenu.install()
@@ -22,6 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             syncCoordinator: container.syncCoordinator,
             updateChecker: container.updateChecker
         )
+
+        let lockedMenu = NSMenuItem(title: "새 암호 메모", action: #selector(newLockedMemo), keyEquivalent: "n")
+        lockedMenu.keyEquivalentModifierMask = [.command, .option]
+        lockedMenu.target = self
+        NSApp.mainMenu?.items.first?.submenu?.insertItem(lockedMenu, at: 0)
 
         // 새 버전 확인 (켤 때 한 번, 그 뒤 하루에 한 번). 설정에서 끌 수 있다.
         container.updateChecker.startAutomaticChecks()

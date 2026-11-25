@@ -20,6 +20,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let listWindow: MemoListWindowController
 
     private let memoryItem = NSMenuItem.info(NSAttributedString(string: ""))
+    private var pipeLabelsItem: NSMenuItem?
+    private var lineStyleItems: [NSMenuItem] = []
     private var hoverOpaqueItem: NSMenuItem?
     private var wrapsLinesItem: NSMenuItem?
     private var autoEmptyTrashItem: NSMenuItem?
@@ -182,6 +184,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(onTopItem)
 
         menu.addItem(item(title: "새 메모  (어디서든 ⌘⇧N)", action: #selector(newMemo), key: "n"))
+        let lockedItem = item(title: "새 암호 메모", action: #selector(newLockedMemo), key: "n")
+        lockedItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(lockedItem)
         let airDropItem = item(title: "AirDrop으로 새 메모 만들기", action: #selector(newMemoReceivingAirDrop), key: "")
         airDropItem.toolTip = "새 메모를 만들고 iPhone이 AirDrop으로 보낸 사진을 바로 받아 넣습니다"
         airDropItem.image = MemoGlyphs.airDrop(pointSize: 18)
@@ -196,6 +201,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         appearanceItem.submenu = appearanceMenu
         appearanceItem.toolTip = "메모 목록과 흐름 줄의 라이트 · 다크를 정합니다"
         menu.addItem(appearanceItem)
+
+        let viewSettings = NSMenu(title: "보기 설정")
+        let viewItem = NSMenuItem(title: "보기 설정", action: nil, keyEquivalent: "")
+        viewItem.submenu = viewSettings
+        menu.addItem(viewItem)
+        let labelsItem = item(title: "보드 선 이름표 보이기", action: #selector(togglePipeLabels), key: "")
+        pipeLabelsItem = labelsItem
+        viewSettings.addItem(labelsItem)
+        let styleItem = NSMenuItem(title: "단추 모양", action: nil, keyEquivalent: "")
+        let styles = NSMenu(title: "단추 모양")
+        styleItem.submenu = styles
+        viewSettings.addItem(styleItem)
+        for (title, value) in [("이름 함께(A, 기본)", "A"), ("견본만(C)", "C")] {
+            let entry = item(title: title, action: #selector(selectLineButtonStyle(_:)), key: "")
+            entry.representedObject = value
+            styles.addItem(entry)
+            lineStyleItems.append(entry)
+        }
 
         let fontItem = NSMenuItem(title: "글꼴", action: nil, keyEquivalent: "")
         fontItem.submenu = fontMenu
@@ -303,8 +326,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try backupService.exportBackup(to: url)
-            showInfo("백업을 저장했습니다", detail: url.lastPathComponent)
+            let excluded = try backupService.exportBackup(to: url)
+            showInfo("백업을 저장했습니다", detail: url.lastPathComponent + (excluded > 0 ? "\n잠금·파기·로컬 전용 또는 읽지 못한 메모 \(excluded)개는 백업에서 제외했습니다" : ""))
         } catch {
             showError("백업에 실패했습니다", error: error)
         }
@@ -330,13 +353,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let replace = (choice == .alertSecondButtonReturn)
 
         do {
-            try backupService.importBackup(from: url, replaceExisting: replace)
+            let skipped = try backupService.importBackup(from: url, replaceExisting: replace)
             store.reloadSummaries()
             store.reloadGroups()
             windowRegistry.reconcileOpenWindows(with: store)
             listWindow.refreshIfOpen()
             windowRegistry.refreshFlowStrips()
-            showInfo("복원했습니다", detail: "메모 \(store.summaries.count)개")
+            showInfo("복원했습니다", detail: "메모 \(store.summaries.count)개" + (skipped > 0 ? "\n파기된 메모 \(skipped)개는 가져오지 않았습니다" : ""))
         } catch {
             showError("복원에 실패했습니다", error: error)
         }
@@ -685,6 +708,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         setInfoTitle(memoryItem, "메모리 \(MemoryReporter.formattedFootprint())"
             + "  ·  열린 창 \(windowRegistry.openCount)개"
             + "  ·  전체 \(store.summaries.count)개")
+        pipeLabelsItem?.state = (UserDefaults.standard.object(forKey: "board.showPipeLabels") as? Bool ?? true) ? .on : .off
+        for entry in lineStyleItems { entry.state = (entry.representedObject as? String) == (UserDefaults.standard.string(forKey: "board.lineButtonStyle") ?? "A") ? .on : .off }
         refreshFontSizeMenuState()
         refreshMemoSizeMenuState()
         refreshToolbarMenuState()
@@ -703,6 +728,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if LaunchAtLoginService.isBlockedBySystemSettings {
             launchAtLoginItem?.title = "로그인할 때 자동 실행  (시스템 설정에서 허용 필요)"
         }
+    }
+
+    @objc private func togglePipeLabels() {
+        let value = UserDefaults.standard.object(forKey: "board.showPipeLabels") as? Bool ?? true
+        UserDefaults.standard.set(!value, forKey: "board.showPipeLabels")
+    }
+    @objc private func selectLineButtonStyle(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.representedObject as? String ?? "A", forKey: "board.lineButtonStyle")
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -752,6 +785,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - 동작
+
+    @objc private func newLockedMemo() { windowRegistry.createLockedMemo() }
 
     @objc private func newMemo() {
         windowRegistry.createMemo()

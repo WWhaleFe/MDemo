@@ -1,5 +1,6 @@
 @testable import Features
 import Foundation
+import SwiftUI
 import ImageIO
 import Services
 import UniformTypeIdentifiers
@@ -11,12 +12,25 @@ import TestKit
 
 let runner = TestRunner("Features")
 
+/// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
+final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
+    private let mutex = NSLock()
+    private var failures: [MemoID: Int] = [:]
+    func readFailures(id: MemoID) throws -> Int { mutex.lock(); defer { mutex.unlock() }; return failures[id] ?? 0 }
+    func writeFailures(_ count: Int, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; failures[id] = count }
+    private var values: [MemoID: Data] = [:]
+    func read(id: MemoID) throws -> Data? { mutex.lock(); defer { mutex.unlock() }; return values[id] }
+    func write(_ value: Data, id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = value }
+    func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = nil; failures[id] = nil }
+}
+let testKeychain = TestMemoKeychain()
+
 @MainActor
 func makeModel() throws -> (MemoListModel, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MDemoFeatureTests-\(UUID().uuidString)", isDirectory: true)
-    let repository = try FileMemoRepository(rootDirectory: root)
-    let model = MemoListModel(store: MemoStore(repository: repository))
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let model = MemoListModel(store: MemoStore(repository: repository, keychain: testKeychain))
     model.searchDebounce = 0
     return (model, root)
 }
@@ -41,9 +55,9 @@ final class FakeWindows {
 func makeModelWithWindows() throws -> (MemoListModel, FakeWindows, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MDemoFeatureTests-\(UUID().uuidString)", isDirectory: true)
-    let repository = try FileMemoRepository(rootDirectory: root)
+    let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
     let windows = FakeWindows()
-    let model = MemoListModel(store: MemoStore(repository: repository), windowActions: windows.actions)
+    let model = MemoListModel(store: MemoStore(repository: repository, keychain: testKeychain), windowActions: windows.actions)
     model.searchDebounce = 0
     return (model, windows, root)
 }
@@ -386,28 +400,36 @@ runner.test("보드 기본 배치는 저장하지 않고 네 열로 채우며 �
     }
 }
 
-runner.test("자동 정리는 흐름마다 한 줄을 만들고 관련 연결을 위치에 쓰지 않는다") { t in
+runner.test("재정렬은 이어진 메모끼리 한 무리로 모으고 흐름은 한 줄로, 외톨이는 맨 아래에 둔다") { t in
     try MainActor.assumeIsolated {
         let (model, root) = try makeModel()
         defer { try? FileManager.default.removeItem(at: root) }
-        let ids = (0..<7).map { _ in model.store.createMemo().id }
+        let ids = (0..<9).map { _ in model.store.createMemo().id }
         model.link(from: ids[0], to: ids[1], kind: .flow)
         model.link(from: ids[1], to: ids[2], kind: .flow)
+        model.link(from: ids[2], to: ids[7], kind: .related)
         model.link(from: ids[3], to: ids[4], kind: .flow)
         model.link(from: ids[5], to: ids[6], kind: .related)
         let memos = ids.compactMap { id in model.store.summaries.first { $0.id == id } }
         let positions = model.autoArrangedPlacements(for: memos)
-        for (row, flow) in model.linkIndex.flows.enumerated() {
-            for (column, id) in flow.memoIDs.enumerated() {
-                t.expectEqual(positions[id], .init(x: 40 + Double(column) * 280, y: 100 + Double(row) * 180))
-            }
-        }
-        t.expectEqual(positions[ids[5]], .init(x: 40, y: 460))
-        t.expectEqual(positions[ids[6]], .init(x: 300, y: 460))
+        // 가장 큰 무리(0-1-2 흐름 + 관련 7)는 왼쪽 위: 흐름 한 줄, 관련은 그 아래 줄.
+        t.expectEqual(positions[ids[0]], .init(x: 40, y: 100))
+        t.expectEqual(positions[ids[1]], .init(x: 320, y: 100))
+        t.expectEqual(positions[ids[2]], .init(x: 600, y: 100))
+        t.expectEqual(positions[ids[7]], .init(x: 40, y: 280))
+        // 다음 무리들은 오른쪽으로 이어 붙고, 넘치면 아래 줄로.
+        t.expectEqual(positions[ids[3]], .init(x: 40 + 760 + 80, y: 100))
+        t.expectEqual(positions[ids[4]], .init(x: 40 + 760 + 80 + 280, y: 100))
+        t.expectEqual(positions[ids[5]]?.y, positions[ids[6]]?.y)
+        t.expect((positions[ids[5]]?.y ?? 0) > 280)
+        // 외톨이 8은 모든 무리보다 아래.
+        let lowest = [0, 1, 2, 3, 4, 5, 6, 7].compactMap { positions[ids[$0]]?.y }.max() ?? 0
+        t.expect((positions[ids[8]]?.y ?? 0) > lowest)
+        t.expectEqual(positions[ids[8]]?.x, 40)
         var ordered: [MemoID] = []
         model.windowActions.arrangeInOrder = { ordered = $0 }
         let revision = model.windowStateRevision
-        let flow = model.linkIndex.flows.first { $0.id == ids[0] }!
+        let flow = model.linkIndex.flows.first { $0.memoIDs.first == ids[0] }!
         model.arrangeFlow(flow)
         t.expectEqual(ordered, [ids[0], ids[1], ids[2]])
         t.expectEqual(model.windowStateRevision, revision + 1)
@@ -432,7 +454,7 @@ runner.test("보드 붙여넣기는 본문과 그룹을 보존하고 위치와 �
         t.expectEqual(memo.meta.group, "작업")
         t.expectEqual(model.selection, [memo.id])
         t.expectEqual(model.store.boardLayout.placement(for: memo.id), .init(x: 60, y: 100))
-        let restarted = MemoStore(repository: try FileMemoRepository(rootDirectory: root))
+        let restarted = MemoStore(repository: try FileMemoRepository(rootDirectory: root, keychain: testKeychain))
         t.expectEqual(restarted.boardLayout.placement(for: memo.id), .init(x: 60, y: 100))
     }
 }
@@ -636,7 +658,13 @@ runner.test("복제 메뉴는 잠금과 휴지통에서 차단하고 복제본 �
             let source = copy.meta.title == "가나다 사본" ? a : b
             t.expectEqual(model.store.boardLayout.placement(for: copy.id), positions[source].map { .init(x: $0.x + 24, y: $0.y + 24) })
         }
-        model.store.updateMeta(id: a) { $0.isLocked = true }
+        var lockedDocument = model.store.loadDocument(id: a)!
+        lockedDocument.meta.isLocked = true
+        lockedDocument.meta.lockSalt = Data(repeating: 0, count: 16).base64EncodedString()
+        lockedDocument.meta.lockVersion = 1
+        lockedDocument.body = Data(repeating: 0, count: 28).base64EncodedString()
+        try FileMemoRepository(rootDirectory: root, keychain: testKeychain).save(lockedDocument)
+        model.store.reloadSummaries()
         t.expect(!model.canDuplicate([a]))
         t.expect(!model.canDuplicate([a, b]))
         let count = model.store.summaries.count
@@ -729,8 +757,8 @@ runner.test("직접 순서는 새 메모를 맨 위에 놓고 삭제를 정리�
         t.expectEqual(model.visibleMemos.map(\.id), [c, a, b])
         model.store.moveToTrash(id: a)
         t.expectEqual(model.store.boardLayout.manualOrder, [c, b])
-        let repository = try FileMemoRepository(rootDirectory: root)
-        let restarted = MemoStore(repository: repository)
+        let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+        let restarted = MemoStore(repository: repository, keychain: testKeychain)
         t.expectEqual(restarted.boardLayout.manualOrder, [c, b])
     }
 }
@@ -741,7 +769,7 @@ runner.test("새로고침은 동기화로 받은 직접 순서를 보존한다")
         defer { try? FileManager.default.removeItem(at: root) }
         let a = model.store.createMemo().id
         let b = model.store.createMemo().id
-        let repository = try FileMemoRepository(rootDirectory: root)
+        let repository = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
         let c = MemoMeta(id: .generate())
         try repository.save(MemoDocument(meta: c, body: "새 메모"))
         try repository.saveBoardLayout(BoardLayout(manualOrder: [b, c.id, a]))
@@ -758,6 +786,160 @@ runner.test("직접 순서의 벤토는 뒤의 작은 카드로 앞 빈칸을 �
     for pair in zip(cells, cells.dropFirst()) {
         t.expect(pair.0.minY < pair.1.minY || (pair.0.minY == pair.1.minY && pair.0.minX < pair.1.minX))
     }
+}
+
+runner.test("보드 연결과 모양 변경은 되돌리고 다시 실행할 수 있다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let a = model.store.createMemo().id, b = model.store.createMemo().id
+        undo.beginUndoGrouping()
+        model.link(from: a, to: b, kind: .flow, undoManager: undo)
+        undo.endUndoGrouping()
+        t.expectEqual(undo.undoActionName, "선 잇기")
+        undo.undo()
+        t.expectEqual(model.store.edges.count, 0)
+        undo.redo()
+        t.expectEqual(model.store.edges, [MemoEdge(from: a, to: b, kind: .flow)])
+        undo.beginUndoGrouping()
+        model.changeLink(model.store.edges[0], kind: .dashboth, undoManager: undo)
+        undo.endUndoGrouping()
+        t.expectEqual(model.store.edges[0].kind, .dashboth)
+        undo.undo()
+        t.expectEqual(model.store.edges[0].kind, .flow)
+        undo.redo()
+        t.expectEqual(model.store.edges[0].kind, .dashboth)
+        undo.beginUndoGrouping()
+        model.unlink(a, b, undoManager: undo)
+        undo.endUndoGrouping()
+        undo.undo()
+        t.expectEqual(model.store.edges[0].kind, .dashboth)
+    }
+}
+
+runner.test("보드 여러 카드 이동과 재정렬은 이전 배치를 복원한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let a = model.store.createMemo().id, b = model.store.createMemo().id
+        let before = model.boardPlacements(for: model.visibleMemos)
+        undo.beginUndoGrouping()
+        model.moveCards([a: .init(x: 800, y: 600), b: .init(x: 100, y: 200)], undoManager: undo)
+        undo.endUndoGrouping()
+        let moved = model.store.boardLayout.placements
+        undo.undo()
+        t.expectEqual(model.boardPlacements(for: model.visibleMemos), before)
+        undo.redo()
+        t.expectEqual(model.store.boardLayout.placements, moved)
+        undo.beginUndoGrouping()
+        model.autoArrange(model.visibleMemos, undoManager: undo)
+        undo.endUndoGrouping()
+        undo.undo()
+        t.expectEqual(model.store.boardLayout.placements, moved)
+    }
+}
+
+runner.test("보드 붙여넣기는 휴지통으로 되돌리고 같은 메모를 복원한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        model.pasteMemo("붙인 본문", at: .init(x: 40, y: 80), undoManager: undo)
+        undo.endUndoGrouping()
+        let id = model.store.summaries[0].id
+        undo.undo()
+        t.expectEqual(model.store.summaries.count, 0)
+        t.expectEqual(model.store.trashed.map(\.id), [id])
+        undo.redo()
+        t.expectEqual(model.store.summaries.map(\.id), [id])
+        t.expectEqual(model.store.loadDocument(id: id)?.body, "붙인 본문")
+        t.expectEqual(model.store.boardLayout.placement(for: id), .init(x: 40, y: 80))
+    }
+}
+
+runner.test("보드 내보내기는 잠긴 메모와 선을 빼고 남은 배치로 크기를 계산한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = model.store.createMemo().id, b = model.store.createMemo().id, locked = model.store.createMemo().id
+        var lockedDocument = model.store.loadDocument(id: locked)!
+        lockedDocument.meta.isLocked = true
+        lockedDocument.meta.title = "숨긴 제목"
+        lockedDocument.meta.lockSalt = Data(repeating: 0, count: 16).base64EncodedString()
+        lockedDocument.meta.lockVersion = 1
+        lockedDocument.body = Data(repeating: 0, count: 28).base64EncodedString()
+        try FileMemoRepository(rootDirectory: root, keychain: testKeychain).save(lockedDocument)
+        model.store.reloadSummaries()
+        model.link(from: a, to: b, kind: .both)
+        model.link(from: b, to: locked, kind: .flow)
+        let positions: [MemoID: BoardLayout.Placement] = [a: .init(x: -100, y: -60), b: .init(x: 200, y: 120), locked: .init(x: 10000, y: 10000)]
+        let content = BoardExportContent(memos: model.visibleMemos, positions: positions, index: model.linkIndex)
+        t.expectEqual(Set(content.memos.map(\.id)), Set([a, b]))
+        t.expectEqual(content.positions[b], positions[b])
+        t.expectEqual(content.excludedCount, 1)
+        t.expectEqual(content.edges, [MemoEdge(from: a, to: b, kind: .both)])
+        t.expectEqual(content.index.summaries[locked], nil)
+        t.expectEqual(content.index.flows.count, 0)
+        t.expectEqual(content.size(footer: false), CGSize(width: 580, height: 380))
+        t.expectEqual(content.size(footer: true, scale: 2), CGSize(width: 1160, height: 816))
+        let large = BoardExportContent(memos: model.visibleMemos, positions: [a: .init(x: 0, y: 0), b: .init(x: 8000, y: 0)], index: model.linkIndex)
+        t.expect(large.isTooLarge(footer: true, scale: 2))
+        t.expect(!large.isTooLarge(footer: true, scale: 1))
+    }
+}
+
+runner.test("보드 화살표는 양 끝에 길이 10 폭 9 삼각형을 그린다") { t in
+    let a = MemoID.generate(), b = MemoID.generate()
+    let points = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)]
+    for kind in MemoLinkKind.allCases {
+        let geometry = PipeGeometry(edge: MemoEdge(from: a, to: b, kind: kind), points: points)
+        t.expectEqual(geometry.arrow.isEmpty, kind.arrows == .none)
+        if kind.arrows != .none {
+            t.expectEqual(geometry.arrow.boundingRect.height, 9)
+            t.expectEqual(geometry.arrow.boundingRect.width, kind.arrows == .both ? 100 : 10)
+        }
+    }
+}
+
+runner.test("선 이름 변경과 지우기는 되돌릴 수 있고 종류 변경에도 보존된다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = model.store.createMemo().id, b = model.store.createMemo().id
+        model.link(from: a, to: b, kind: .flow)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        model.renameLink(model.store.edges[0], label: "검토 후", undoManager: undo)
+        undo.endUndoGrouping()
+        t.expectEqual(undo.undoActionName, "선 이름 바꾸기")
+        t.expectEqual(model.store.edges[0].displayLabel, "흐름 · 검토 후")
+        undo.undo()
+        t.expectEqual(model.store.edges[0].label, "")
+        undo.redo()
+        model.changeLink(model.store.edges[0], kind: .contain)
+        t.expectEqual(model.store.edges[0].displayLabel, "포함 · 검토 후")
+        undo.beginUndoGrouping()
+        model.renameLink(model.store.edges[0], label: "", undoManager: undo)
+        undo.endUndoGrouping()
+        t.expectEqual(model.store.edges[0].displayLabel, "포함")
+        undo.undo()
+        t.expectEqual(model.store.edges[0].label, "검토 후")
+    }
+}
+runner.test("짧은 선의 이름표는 카드 위로 옮긴다") { t in
+    let edge = MemoEdge(from: .generate(), to: .generate(), kind: .flow, label: "검토 후")
+    let cards = [CGRect(x: 0, y: 0, width: 200, height: 120), CGRect(x: 210, y: 0, width: 200, height: 120)]
+    let pipe = PipeGeometry(edge: edge, a: cards[0], b: cards[1])
+    let point = pipe.labelPoint(avoiding: cards)
+    t.expect(point.y < 0)
+    t.expectEqual(point.x, pipe.midpoint.x)
 }
 
 runner.finish()

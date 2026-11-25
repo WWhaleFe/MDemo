@@ -39,7 +39,8 @@ struct CardSurface: ViewModifier {
                 RoundedRectangle(cornerRadius: 14).fill(ListTheme.card)
                     .shadow(color: scheme == .dark ? .clear : ListTheme.ink.opacity(0.07), radius: 3, y: 1)
             }
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? ListTheme.ink : ListTheme.hairline, lineWidth: selected ? 2 : 1))
+            // 테두리를 카드 안쪽에 그린다. 바깥으로 반쯤 나가면 스크롤 영역 맨 위 카드의 고른 테두리가 잘린다.
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(selected ? ListTheme.ink : ListTheme.hairline, lineWidth: selected ? 2 : 1))
     }
 }
 

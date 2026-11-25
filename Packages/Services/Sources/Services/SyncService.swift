@@ -12,6 +12,7 @@ import MemoCore
 /// **작업 데이터는 늘 로컬에 둔다**: iCloud 폴더를 직접 작업 폴더로 쓰면
 /// 아직 내려받지 않은 파일이나 동기화 지연이 편집 경로에 끼어든다.
 public struct SyncReport: Sendable, Equatable {
+    public init() {}
     /// 내 것을 iCloud로 올린 메모 수.
     public var pushed = 0
     /// iCloud 것을 내려받은 메모 수.
@@ -22,19 +23,23 @@ public struct SyncReport: Sendable, Equatable {
     public var deletions = 0
     /// 프론트매터가 깨져 받지 않고 건너뛴 파일 수.
     public var unreadable = 0
+    public var lockedLocal = 0
+    public var removedLocalOnly = 0
 
     public var isEmpty: Bool {
-        pushed == 0 && pulled == 0 && conflicts == 0 && deletions == 0 && unreadable == 0
+        pushed == 0 && pulled == 0 && conflicts == 0 && deletions == 0 && unreadable == 0 && removedLocalOnly == 0
     }
 
     public var summary: String {
-        guard !isEmpty else { return "변경 없음" }
+        guard !isEmpty || lockedLocal > 0 || removedLocalOnly > 0 else { return "변경 없음" }
         var parts: [String] = []
         if pushed > 0 { parts.append("올림 \(pushed)") }
         if pulled > 0 { parts.append("내려받음 \(pulled)") }
         if deletions > 0 { parts.append("삭제 반영 \(deletions)") }
         if conflicts > 0 { parts.append("충돌 사본 \(conflicts)") }
         if unreadable > 0 { parts.append("읽지 못한 파일 \(unreadable)") }
+        if lockedLocal > 0 { parts.append("잠긴 메모 \(lockedLocal)개는 이 맥에만 있습니다") }
+        if removedLocalOnly > 0 { parts.append("다른 맥에서 잠근 메모 \(removedLocalOnly)개를 이 맥에서 지웠습니다") }
         return parts.joined(separator: " · ")
     }
 }
@@ -66,6 +71,7 @@ public struct SyncService: Sendable {
     public let localRoot: URL
     public let remoteRoot: URL
     /// 마지막으로 맞춰 둔 시각을 메모별로 적어 둔다. 기기마다 따로 갖는다.
+    private let keychain: any MemoKeychain
     private let stateURL: URL
     /// 시험용: 폴더를 훑은 직후, 반영하기 직전에 불린다. 그 사이 다른 쪽이 바뀌는 경쟁 상황을 흉내 낸다.
     public var afterScan: (@Sendable () -> Void)?
@@ -76,7 +82,8 @@ public struct SyncService: Sendable {
     private static let groupsFileName = "groups.json"
     private static let boardFileName = "board.json"
 
-    public init(localRoot: URL, remoteRoot: URL, stateURL: URL) {
+    public init(localRoot: URL, remoteRoot: URL, stateURL: URL, keychain: any MemoKeychain = DeviceMemoKeychain()) {
+        self.keychain = keychain
         self.localRoot = localRoot
         self.remoteRoot = remoteRoot
         self.stateURL = stateURL
@@ -110,6 +117,10 @@ public struct SyncService: Sendable {
         var state = loadState()
         var report = SyncReport()
 
+        let excluded = try applyPrivacy(report: &report)
+        let destroyed = excluded.destroyed
+        let localOnly = excluded.localOnly
+        for raw in destroyed.union(localOnly) { state.forget(raw) }
         let localScan = scan(root: localRoot)
         let remoteScan = scan(root: remoteRoot)
         let local = localScan.entries
@@ -119,7 +130,7 @@ public struct SyncService: Sendable {
         report.unreadable = skipped.count
         afterScan?()
 
-        for id in Set(local.keys).union(remote.keys) where !skipped.contains(id) {
+        for id in Set(local.keys).union(remote.keys) where !skipped.contains(id) && !destroyed.contains(id.rawValue) && !localOnly.contains(id.rawValue) {
             do {
                 try reconcile(
                     id: id,
@@ -139,6 +150,43 @@ public struct SyncService: Sendable {
         try syncBoard(mode: mode, state: &state)
         saveState(state)
         return report
+    }
+
+    /// 자동 동기화가 꺼져 있어도 원본 파기와 로컬 전용 삭제 기록은 즉시 반영한다.
+    public func enforcePrivacy() throws -> SyncReport {
+        try prepareFolders()
+        var report = SyncReport()
+        _ = try applyPrivacy(report: &report)
+        return report
+    }
+
+    private func applyPrivacy(report: inout SyncReport) throws -> (destroyed: Set<String>, localOnly: Set<String>) {
+        // 개인정보 삭제 기록은 방향 설정과 무관하게 먼저 합친다.
+        let destroyed = try MemoPrivacyLedger.read("destroyed", root: localRoot).union(MemoPrivacyLedger.read("destroyed", root: remoteRoot))
+        var localOnly = try MemoPrivacyLedger.read("local-only", root: localRoot).union(MemoPrivacyLedger.read("local-only", root: remoteRoot))
+        let privacyRepository = try FileMemoRepository(rootDirectory: localRoot)
+        let localLocked = try (privacyRepository.loadSummaries() + privacyRepository.loadTrashSummaries()).filter { $0.meta.isLocked }
+        localOnly.formUnion(localLocked.map { $0.id.rawValue })
+        for (name, ids) in [("destroyed", destroyed), ("local-only", localOnly)] {
+            try MemoPrivacyLedger.write(ids, name: name, root: localRoot)
+            try MemoPrivacyLedger.write(ids, name: name, root: remoteRoot)
+        }
+        report.lockedLocal = localLocked.count
+        for raw in destroyed.union(localOnly) {
+            let id = MemoID(rawValue: raw)
+            try SecureMemoDeletion.removeCopies(id: id, root: remoteRoot)
+            let lockedHere = localLocked.contains { $0.id == id }
+            if destroyed.contains(raw) || !lockedHere {
+                let exists = ["memos", "trash"].contains { FileManager.default.fileExists(atPath: localRoot.appendingPathComponent($0).appendingPathComponent(raw).path) }
+                if destroyed.contains(raw) { try keychain.delete(id: id) }
+                try SecureMemoDeletion.removeCopies(id: id, root: localRoot)
+                if exists {
+                    if destroyed.contains(raw) { report.deletions += 1 }
+                    else { report.removedLocalOnly += 1 }
+                }
+            }
+        }
+        return (destroyed, localOnly)
     }
 
     /// 한 메모에 대해 무엇을 할지 정하고 실행한다.
@@ -508,6 +556,7 @@ public struct SyncService: Sendable {
                     result.unreadable.insert(id)
                     continue
                 }
+                guard !document.meta.isLocked else { continue }
                 result.entries[id] = Entry(
                     modified: document.meta.modified,
                     isInTrash: inTrash,

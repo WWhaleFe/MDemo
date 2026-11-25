@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import CryptoKit
 import Observation
 
 /// 앱 전체의 단일 진실 공급원 (설계서 §4-3).
@@ -20,9 +22,13 @@ public final class MemoStore {
     /// 메모 내용과 별도로 저장하는 공유 배치 (설계서 §4).
     public private(set) var boardLayout: BoardLayout = .empty
 
+    @ObservationIgnored public let keychain: any MemoKeychain
+    @ObservationIgnored private var unlocking = Set<MemoID>()
+    @ObservationIgnored private var lockSessions: [MemoID: MemoLockSession] = [:]
     @ObservationIgnored private let repository: any MemoRepository
 
-    public init(repository: any MemoRepository) {
+    public init(repository: any MemoRepository, keychain: any MemoKeychain = DeviceMemoKeychain()) {
+        self.keychain = keychain
         self.repository = repository
         summaries = (try? repository.loadSummaries()) ?? []
         reloadGroups()
@@ -99,7 +105,7 @@ public final class MemoStore {
             } catch {
                 continue
             }
-            let summary = MemoSummary(meta: document.meta, preview: String(document.body.prefix(200)))
+            let summary = MemoSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(document.body.prefix(200)))
             titles.insert(summary.title)
             summaries.insert(summary, at: index + 1)
             if let position = positions[id.rawValue] {
@@ -118,9 +124,10 @@ public final class MemoStore {
 
     /// 밖에서 만든 문서를 그대로 들여온다 (DAT-07).
     public func importDocument(_ document: MemoDocument) {
+        guard !document.meta.isLocked else { return }
         try? repository.save(document)
         summaries.insert(
-            MemoSummary(meta: document.meta, preview: String(document.body.prefix(200))),
+            MemoSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(document.body.prefix(200))),
             at: 0
         )
     }
@@ -142,21 +149,30 @@ public final class MemoStore {
     }
 
     /// 본문을 저장하고 요약을 갱신한다. 호출자가 디바운스한다 (DAT-03).
-    public func saveBody(id: MemoID, body: String) {
-        guard var document = try? repository.load(id: id) else { return }
-        document.body = body
+    @discardableResult
+    public func saveBody(id: MemoID, body: String) -> Bool {
+        guard var document = try? repository.load(id: id) else { return false }
+        if document.meta.isLocked {
+            var plaintext = Data(body.utf8)
+            defer { plaintext.resetBytes(in: 0..<plaintext.count) }
+            guard let session = lockSessions[id], let encrypted = try? session.seal(plaintext) else { return false }
+            document.body = encrypted.base64EncodedString()
+        } else { document.body = body }
         document.meta.modified = Date()
-        try? repository.save(document)
-        updateSummary(meta: document.meta, preview: String(body.prefix(200)))
+        do { try repository.save(document) } catch { return false }
+        updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(body.prefix(200)))
+        return true
     }
 
     /// 메타데이터만 갱신한다 (색상·투명도·열림 상태 등).
     public func updateMeta(id: MemoID, _ transform: (inout MemoMeta) -> Void) {
         guard var document = try? repository.load(id: id) else { return }
+        let wasLocked = document.meta.isLocked
         transform(&document.meta)
+        guard document.meta.isLocked == wasLocked else { return }
         document.meta.modified = Date()
-        try? repository.save(document)
-        updateSummary(meta: document.meta, preview: String(document.body.prefix(200)))
+        do { try repository.save(document) } catch { return }
+        updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(document.body.prefix(200)))
     }
 
     /// 창 열림 상태를 기록한다. 이 값이 기기 간 미러링의 근거가 된다 (SYNC-08).
@@ -199,6 +215,12 @@ public final class MemoStore {
         try? repository.saveBoardLayout(boardLayout)
     }
 
+    /// 되돌리기에서 아직 배치하지 않았던 카드 상태까지 복원한다.
+    public func replaceBoardPlacements(_ placements: [String: BoardLayout.Placement]) {
+        boardLayout.placements = placements
+        try? repository.saveBoardLayout(boardLayout)
+    }
+
     public func setBentoSpan(_ span: BoardLayout.BentoSpan?, for id: MemoID) {
         boardLayout.bentoSpans[id.rawValue] = span
         try? repository.saveBoardLayout(boardLayout)
@@ -211,9 +233,10 @@ public final class MemoStore {
         if summaries.first(where: { $0.id == to })?.meta.links.contains(where: { $0.to == from }) == true {
             updateMeta(id: to) { $0.links.removeAll { $0.to == from } }
         }
+        let previous = summaries.first(where: { $0.id == from })?.meta.links.first(where: { $0.to == to })
         updateMeta(id: from) {
             $0.links.removeAll { $0.to == to }
-            $0.links.append(MemoLink(to: to, kind: kind))
+            $0.links.append(MemoLink(to: to, kind: kind, label: previous?.label ?? "", unknownSuffix: previous?.unknownSuffix ?? ""))
         }
     }
 
@@ -234,7 +257,7 @@ public final class MemoStore {
             for link in summary.meta.links where link.to != summary.id && ids.contains(link.to) {
                 let pair = [summary.id.rawValue, link.to.rawValue].sorted()
                 guard seen.insert(pair).inserted else { continue }
-                result.append(MemoEdge(from: summary.id, to: link.to, kind: link.kind))
+                result.append(MemoEdge(from: summary.id, to: link.to, kind: link.kind, label: link.label))
             }
         }
         return result
@@ -354,6 +377,7 @@ public final class MemoStore {
     public func moveToTrash(ids: [MemoID]) {
         guard !ids.isEmpty else { return }
         for id in ids {
+            relock(id)
             try? repository.moveToTrash(id: id)
         }
         let removed = Set(ids)
@@ -380,11 +404,13 @@ public final class MemoStore {
     }
 
     public func permanentlyDelete(ids: [MemoID]) {
+        defer { onPrivacyChange?() }
         guard !ids.isEmpty else { return }
         var removed = Set<MemoID>()
         for id in ids {
             do {
-                try repository.permanentlyDelete(id: id)
+                if trashed.first(where: { $0.id == id })?.meta.isLocked == true { try destroyMemo(id: id) }
+                else { try repository.permanentlyDelete(id: id) }
                 removed.insert(id)
             } catch {
                 // 지우지 못한 메모의 연결은 복원을 위해 남긴다 (TRS-04).
@@ -399,6 +425,8 @@ public final class MemoStore {
     }
 
     public func emptyTrash() {
+        defer { onPrivacyChange?() }
+        for memo in (try? repository.loadTrashSummaries()) ?? [] where memo.meta.isLocked { try? destroyMemo(id: memo.id) }
         try? repository.emptyTrash(deletedBefore: nil)
         reloadSummaries()
         reloadTrash()
@@ -406,8 +434,10 @@ public final class MemoStore {
 
     /// 보관 기간이 지난 항목을 자동으로 비운다 (TRS-03). 앱 시작 시 한 번 호출한다.
     public func emptyTrash(olderThan days: Int) {
+        defer { onPrivacyChange?() }
         guard days > 0 else { return }
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        for memo in (try? repository.loadTrashSummaries()) ?? [] where memo.meta.isLocked && (memo.deletedAt ?? .distantFuture) < cutoff { try? destroyMemo(id: memo.id) }
         try? repository.emptyTrash(deletedBefore: cutoff)
         reloadSummaries()
         reloadTrash()
@@ -444,6 +474,272 @@ public final class MemoStore {
             let bodyHits = remaining.isEmpty ? [] : ((try? repository.searchBodies(matching: needle, in: remaining)) ?? [])
             return summaries.filter { titleHits.contains($0.id) || bodyHits.contains($0.id) }
         }
+    }
+
+    public func lockFailureCount(id: MemoID) -> Int {
+        max(summaries.first(where: { $0.id == id })?.meta.lockFailures ?? 0, (try? keychain.readFailures(id: id)) ?? 0)
+    }
+
+    public func lockSession(for id: MemoID) -> MemoLockSession? { lockSessions[id] }
+
+    public func relock(_ id: MemoID) {
+        lockSessions.removeValue(forKey: id)?.clear()
+        if let meta = summaries.first(where: { $0.id == id })?.meta { updateSummary(meta: meta, preview: "") }
+    }
+
+    public func decryptedDocument(id: MemoID) throws -> MemoDocument {
+        var document = try repository.load(id: id)
+        guard document.meta.isLocked else { return document }
+        guard let session = lockSessions[id], let cipher = Data(base64Encoded: document.body) else { throw MemoLockError.locked }
+        var plain = try session.open(cipher)
+        defer { plain.resetBytes(in: 0..<plain.count) }
+        guard let body = String(data: plain, encoding: .utf8) else { throw MemoLockError.damaged }
+        document.body = body
+        return document
+    }
+
+    /// 무거운 키 유도는 호출자가 백그라운드에서 수행한다. 실패 횟수 기록은 메인에서 직렬화한다.
+    public func unlock(id: MemoID, password: String) async throws {
+        guard LockCrypto.validPassword(password) else { throw MemoLockError.wrongPassword }
+        guard unlocking.insert(id).inserted else { throw MemoLockError.locked }
+        defer { unlocking.remove(id) }
+        var document = try repository.load(id: id)
+        guard document.meta.isLocked, document.meta.lockVersion == 1,
+              let salt = document.meta.lockSalt.flatMap({ Data(base64Encoded: $0) }),
+              let iterations = document.meta.lockIterations else { throw MemoLockError.damaged }
+        let failures = max(document.meta.lockFailures ?? 0, try keychain.readFailures(id: id))
+        if failures >= 10 { try destroyMemo(id: id); throw MemoLockError.destroyed }
+        guard let wrapped = try keychain.read(id: id) else { throw MemoLockError.missingKey }
+        // 결과가 나오기 전에 시도를 기록한다. 인증 성공이나 본문 손상 때 아래에서 복구한다.
+        guard salt.count == 16, (LockCrypto.minimumIterations...20_000_000).contains(iterations), wrapped.count >= 28 else { throw MemoLockError.damaged }
+        try keychain.writeFailures(failures + 1, id: id)
+        var key: Data
+        do {
+            key = try await Task.detached(priority: .userInitiated) {
+                var kek = try LockCrypto.derive(password: password, salt: salt, iterations: iterations)
+                defer { kek.resetBytes(in: 0..<kek.count) }
+                do { return try LockCrypto.open(wrapped, key: kek, context: id.rawValue + "/key") }
+                catch CryptoKitError.authenticationFailure { throw MemoLockError.wrongPassword }
+            }.value
+        } catch MemoLockError.wrongPassword {
+            document = try repository.load(id: id)
+            document.meta.lockFailures = failures + 1
+            try repository.save(document)
+            updateSummary(meta: document.meta, preview: "")
+            if document.meta.lockFailures! >= 10 { try destroyMemo(id: id); throw MemoLockError.destroyed }
+            throw MemoLockError.wrongPassword
+        } catch {
+            try keychain.writeFailures(failures, id: id)
+            throw error
+        }
+        defer { key.resetBytes(in: 0..<key.count) }
+        try keychain.writeFailures(failures, id: id)
+        try Task.checkCancellation()
+        document = try repository.load(id: id)
+        let session = MemoLockSession(id: id, key: key)
+        var installed = false
+        defer { if !installed { session.clear() } }
+        guard let cipher = Data(base64Encoded: document.body) else { session.clear(); throw MemoLockError.damaged }
+        do {
+            var verification = try session.open(cipher)
+            defer { verification.resetBytes(in: 0..<verification.count) }
+            guard String(data: verification, encoding: .utf8) != nil else { throw MemoLockError.damaged }
+        } catch {
+            session.clear()
+            throw MemoLockError.damaged
+        }
+        document.meta.lockFailures = 0
+        try keychain.writeFailures(0, id: id)
+        try repository.save(document)
+        lockSessions[id]?.clear()
+        lockSessions[id] = session
+        installed = true
+        updateSummary(meta: document.meta, preview: "")
+    }
+
+    /// 새 ID에는 첫 기록부터 암호문만 쓴다. 원본은 검증 완료 전에는 건드리지 않는다.
+    @discardableResult
+    public func createLockedMemo(password: String, moving source: MemoID? = nil) async throws -> MemoID {
+        guard LockCrypto.validPassword(password) else { throw MemoLockError.invalidPassword }
+        let original = try source.map { try repository.load(id: $0) }
+        guard original?.meta.isLocked != true else { throw MemoLockError.locked }
+        var document = original ?? MemoDocument(meta: MemoMeta(id: .generate()), body: "")
+        document.meta.id = .generate()
+        let id = document.meta.id
+        // 직접 붙인 제목만 가져온다. 제목이 없는 메모의 "보이는 제목"은 본문 첫 줄이라,
+        // 그것을 평문 제목으로 적으면 본문 일부가 암호 밖으로 새어 나간다.
+        document.meta.title = original.flatMap { $0.meta.title?.trimmingCharacters(in: .whitespaces).isEmpty == false ? $0.meta.title : nil }
+        document.meta.created = MemoMeta.now()
+        document.meta.modified = MemoMeta.now()
+        document.meta.links = []
+        document.meta.conflictOf = nil
+        document.unknownLinkTokens = []
+        document.meta.isLocked = true
+        document.meta.isOpen = true
+        document.meta.lockSalt = try LockCrypto.random(count: 16).base64EncodedString()
+        document.meta.lockIterations = LockCrypto.calibratedIterations()
+        document.meta.lockVersion = 1
+        document.meta.lockFailures = 0
+        let salt = Data(base64Encoded: document.meta.lockSalt!)!
+        let iterations = document.meta.lockIterations!
+        let session = try MemoLockSession(id: id, key: LockCrypto.random(count: 32))
+        var attachmentHashes: [String: Data] = [:]
+        do {
+            let wrapped = try await Task.detached(priority: .userInitiated) {
+                try session.wrapped(password: password, salt: salt, iterations: iterations)
+            }.value
+            try keychain.write(wrapped, id: id)
+            let privacyRoot = repository.attachmentsDirectory(for: id).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            try MemoPrivacyLedger.insert(id, name: "local-only", root: privacyRoot)
+            document.body = try session.seal(Data(document.body.utf8)).base64EncodedString()
+            try repository.save(document)
+            try FileManager.default.createDirectory(at: repository.attachmentsDirectory(for: id), withIntermediateDirectories: true)
+            if let source {
+                let from = repository.attachmentsDirectory(for: source)
+                let to = repository.attachmentsDirectory(for: id)
+                try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+                let files = FileManager.default.fileExists(atPath: from.path)
+                    ? try FileManager.default.contentsOfDirectory(at: from, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) : []
+                for file in files {
+                    let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                    guard values.isRegularFile == true, values.isSymbolicLink != true else { throw MemoLockError.damaged }
+                    var plain = try Data(contentsOf: file)
+                    defer { plain.resetBytes(in: 0..<plain.count) }
+                    attachmentHashes[file.lastPathComponent] = Data(SHA256.hash(data: plain))
+                    let cipher = try session.seal(plain, name: file.lastPathComponent)
+                    try cipher.write(to: to.appendingPathComponent(file.lastPathComponent + ".enc"), options: .atomic)
+                    var verified = try session.open(Data(contentsOf: to.appendingPathComponent(file.lastPathComponent + ".enc")), name: file.lastPathComponent)
+                    guard verified == plain else { throw MemoLockError.damaged }
+                    verified.resetBytes(in: 0..<verified.count)
+                }
+            }
+            if let source, try repository.load(id: source) != original { throw MemoLockError.damaged }
+            try SecureMemoDeletion.synchronize(repository.attachmentsDirectory(for: id).deletingLastPathComponent())
+            let saved = try repository.load(id: id)
+            guard let persisted = try keychain.read(id: id) else { throw MemoLockError.missingKey }
+            let reopened = try await Task.detached(priority: .userInitiated) {
+                var kek = try LockCrypto.derive(password: password, salt: salt, iterations: iterations)
+                defer { kek.resetBytes(in: 0..<kek.count) }
+                var key = try LockCrypto.open(persisted, key: kek, context: id.rawValue + "/key")
+                defer { key.resetBytes(in: 0..<key.count) }
+                return MemoLockSession(id: id, key: key)
+            }.value
+            defer { reopened.clear() }
+            var verified = try reopened.open(Data(base64Encoded: saved.body)!)
+            defer { verified.resetBytes(in: 0..<verified.count) }
+            guard verified == Data((original?.body ?? "").utf8) else { throw MemoLockError.damaged }
+            for (name, hash) in attachmentHashes {
+                var bytes = try reopened.open(Data(contentsOf: repository.attachmentsDirectory(for: id).appendingPathComponent(name + ".enc")), name: name)
+                defer { bytes.resetBytes(in: 0..<bytes.count) }
+                guard Data(SHA256.hash(data: bytes)) == hash else { throw MemoLockError.damaged }
+            }
+            if let source {
+                guard try repository.load(id: source) == original else { throw MemoLockError.damaged }
+                let from = repository.attachmentsDirectory(for: source)
+                let files = FileManager.default.fileExists(atPath: from.path)
+                    ? try FileManager.default.contentsOfDirectory(at: from, includingPropertiesForKeys: nil) : []
+                guard Set(files.map(\.lastPathComponent)) == Set(attachmentHashes.keys) else { throw MemoLockError.damaged }
+                for file in files {
+                    var bytes = try Data(contentsOf: file)
+                    defer { bytes.resetBytes(in: 0..<bytes.count) }
+                    guard Data(SHA256.hash(data: bytes)) == attachmentHashes[file.lastPathComponent] else { throw MemoLockError.damaged }
+                }
+            }
+        } catch {
+            session.clear()
+            try? keychain.delete(id: id)
+            try? SecureMemoDeletion.remove(repository.attachmentsDirectory(for: id).deletingLastPathComponent())
+            throw error
+        }
+        lockSessions[id] = session
+        updateSummary(meta: document.meta, preview: "")
+        if let source { try destroyMemo(id: source) }
+        return id
+    }
+
+    public func changePassword(id: MemoID, password: String) async throws {
+        guard LockCrypto.validPassword(password) else { throw MemoLockError.invalidPassword }
+        guard let session = lockSessions[id] else { throw MemoLockError.locked }
+        guard let previous = try keychain.read(id: id) else { throw MemoLockError.missingKey }
+        let salt = try LockCrypto.random(count: 16)
+        let iterations = LockCrypto.calibratedIterations()
+        let wrapped = try await Task.detached(priority: .userInitiated) { try session.wrapped(password: password, salt: salt, iterations: iterations) }.value
+        var document = try repository.load(id: id)
+        try keychain.write(wrapped, id: id)
+        document.meta.lockSalt = salt.base64EncodedString()
+        document.meta.lockIterations = iterations
+        do { try repository.save(document) }
+        catch {
+            try keychain.write(previous, id: id)
+            throw error
+        }
+        updateSummary(meta: document.meta, preview: "")
+    }
+
+    @discardableResult
+    public func moveToPlainMemo(id: MemoID) throws -> MemoID {
+        var document = try decryptedDocument(id: id)
+        guard document.meta.isLocked, let session = lockSessions[id] else { throw MemoLockError.locked }
+        let newID = MemoID.generate()
+        document.meta.id = newID
+        document.meta.isLocked = false
+        document.meta.lockSalt = nil; document.meta.lockIterations = nil
+        document.meta.lockVersion = nil; document.meta.lockFailures = nil
+        document.meta.links = []
+        document.meta.created = MemoMeta.now(); document.meta.modified = MemoMeta.now()
+        do {
+            try repository.save(document)
+            let to = repository.attachmentsDirectory(for: newID)
+            try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+            for file in try FileManager.default.contentsOfDirectory(at: repository.attachmentsDirectory(for: id), includingPropertiesForKeys: nil) where file.pathExtension == "enc" {
+                let name = file.deletingPathExtension().lastPathComponent
+                var plain = try session.open(Data(contentsOf: file), name: name)
+                defer { plain.resetBytes(in: 0..<plain.count) }
+                try plain.write(to: to.appendingPathComponent(name), options: .atomic)
+                var verified = try Data(contentsOf: to.appendingPathComponent(name))
+                defer { verified.resetBytes(in: 0..<verified.count) }
+                guard verified == plain else { throw MemoLockError.damaged }
+            }
+            try SecureMemoDeletion.synchronize(repository.attachmentsDirectory(for: newID).deletingLastPathComponent())
+            guard try repository.load(id: newID).body == document.body else { throw MemoLockError.damaged }
+            for file in try FileManager.default.contentsOfDirectory(at: repository.attachmentsDirectory(for: id), includingPropertiesForKeys: nil) where file.pathExtension == "enc" {
+                let name = file.deletingPathExtension().lastPathComponent
+                var plain = try session.open(Data(contentsOf: file), name: name)
+                defer { plain.resetBytes(in: 0..<plain.count) }
+                guard try Data(contentsOf: to.appendingPathComponent(name)) == plain else { throw MemoLockError.damaged }
+            }
+        } catch {
+            try? SecureMemoDeletion.remove(repository.attachmentsDirectory(for: newID).deletingLastPathComponent())
+            throw error
+        }
+        updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(document.body.prefix(200)))
+        try destroyMemo(id: id)
+        return newID
+    }
+
+    /// 열쇠 삭제, 묘비 기록, 덮어쓰기 순서를 지킨다. 실패한 삭제는 묘비로 다음 동기화에서 재시도한다.
+    @ObservationIgnored public var onPrivacyChange: (() -> Void)?
+    /// 파기 실패를 재현하는 검증용 주입 지점이다.
+    @ObservationIgnored public var beforePrivacyRemoval: ((MemoID) throws -> Void)?
+
+    public func destroyMemo(id: MemoID) throws {
+        try keychain.delete(id: id)
+        relock(id)
+        let root = repository.attachmentsDirectory(for: id).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        try MemoPrivacyLedger.insert(id, name: "destroyed", root: root)
+        defer { onPrivacyChange?() }
+        try beforePrivacyRemoval?(id)
+        try SecureMemoDeletion.removeCopies(id: id, root: root)
+        try repository.permanentlyDelete(id: id)
+        summaries.removeAll { $0.id == id }
+        for summary in summaries where summary.meta.links.contains(where: { $0.to == id }) {
+            updateMeta(id: summary.id) { $0.links.removeAll { $0.to == id } }
+        }
+        boardLayout.placements[id.rawValue] = nil
+        boardLayout.bentoSpans[id.rawValue] = nil
+        normalizeManualOrder()
+        try repository.saveBoardLayout(boardLayout)
+        reloadTrash()
     }
 
     private func updateSummary(meta: MemoMeta, preview: String) {

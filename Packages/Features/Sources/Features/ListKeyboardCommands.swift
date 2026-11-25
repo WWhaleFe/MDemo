@@ -8,6 +8,8 @@ struct ListKeyboardCommands: NSViewRepresentable {
     let open: () -> Void
     var paste: (() -> Void)?
     var fit: (() -> Void)?
+    var undo: (() -> Void)?
+    var redo: (() -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSView {
@@ -30,6 +32,9 @@ struct ListKeyboardCommands: NSViewRepresentable {
                       !(window.firstResponder is NSTextView), !(window.firstResponder is NSTextField) else { return event }
                 if event.modifierFlags.contains(.command) {
                     switch event.charactersIgnoringModifiers?.lowercased() {
+                    case "z":
+                        if event.modifierFlags.contains(.shift), let redo = commands.redo { redo(); return nil }
+                        if let undo = commands.undo { undo(); return nil }
                     case "a": commands.selectAll(); return nil
                     case "v": if let paste = commands.paste { paste(); return nil }
                     case "0": if let fit = commands.fit { fit(); return nil }

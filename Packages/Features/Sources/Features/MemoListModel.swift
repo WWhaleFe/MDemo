@@ -415,6 +415,8 @@ public final class MemoListModel {
         public var flowByMemo: [MemoID: (flow: MemoFlow, index: Int)] = [:]
         public var linkCount: [MemoID: Int] = [:]
         public var summaries: [MemoID: MemoSummary] = [:]
+        public var countsByKind: [MemoID: [MemoLinkKind: Int]] = [:]
+        public func kindCounts(of id: MemoID) -> [MemoLinkKind: Int] { countsByKind[id] ?? [:] }
         public func title(of flow: MemoFlow) -> String { summaries[flow.id]?.title ?? "흐름" }
     }
 
@@ -432,6 +434,8 @@ public final class MemoListModel {
             for edge in index.edges {
                 index.linkCount[edge.from, default: 0] += 1
                 index.linkCount[edge.to, default: 0] += 1
+                index.countsByKind[edge.from, default: [:]][edge.kind, default: 0] += 1
+                index.countsByKind[edge.to, default: [:]][edge.kind, default: 0] += 1
             }
             for flow in index.flows {
                 for (offset, id) in flow.memoIDs.enumerated() { index.flowByMemo[id] = (flow, offset) }
@@ -481,6 +485,7 @@ public final class MemoListModel {
 
     /// 수정 시각과 미리보기가 같으면 이전에 계산한 값을 돌려준다. 바뀐 메모만 다시 계산한다.
     public func cardInfo(for memo: MemoSummary) -> CardInfo {
+        if memo.meta.isLocked { return CardInfo(preview: "🔒 잠긴 메모", singleLinePreview: "🔒 잠긴 메모", tasks: []) }
         let key = CardKey(modified: memo.meta.modified, previewHash: memo.preview.hashValue)
         if let cached = cardCache[memo.id], cached.key == key { return cached.info }
         cardInfoComputations += 1
@@ -601,26 +606,150 @@ public final class MemoListModel {
         return pipeCache?.endpoints ?? [:]
     }
 
+    /// 보드 재정렬: 파이프(흐름 · 관련)로 이어진 메모끼리 한 무리로 모은다.
+    ///
+    /// - 무리 안에서 흐름은 한 줄씩 왼쪽에서 오른쪽으로(파이프 방향 그대로), 흐름에 들지 않고 관련으로만 이어진 메모는
+    ///   그 아래 줄에 이어진 차례대로 놓는다.
+    /// - 무리들은 큰 것부터 왼쪽 위에서 오른쪽으로 채우고, 폭이 넘치면 아래 줄로 내려간다(무리 사이 80pt).
+    /// - 어디에도 이어지지 않은 메모는 맨 아래에 다섯 개씩 격자로 모은다.
     public func autoArrangedPlacements(for memos: [MemoSummary]) -> [MemoID: BoardLayout.Placement] {
-        let included = Set(memos.map(\.id))
-        var result: [MemoID: BoardLayout.Placement] = [:]
-        var row = 0
-        for flow in linkIndex.flows {
-            let ids = flow.memoIDs.filter { included.contains($0) }
-            guard !ids.isEmpty else { continue }
-            for (column, id) in ids.enumerated() {
-                result[id] = .init(x: 40 + Double(column) * 280, y: 100 + Double(row) * 180)
-            }
-            row += 1
+        let columnStep = 280.0, rowStep = 180.0, cardWidth = 200.0, cardHeight = 120.0
+        let groupGap = 80.0, maxRowWidth = 1400.0, origin = (x: 40.0, y: 100.0)
+        let order = memos.map(\.id)
+        let included = Set(order)
+        let edges = linkIndex.edges.filter { included.contains($0.from) && included.contains($0.to) && $0.from != $0.to }
+
+        // 이어진 무리 찾기 (합집합-찾기).
+        var parent = Dictionary(uniqueKeysWithValues: order.map { ($0, $0) })
+        func find(_ id: MemoID) -> MemoID {
+            var root = id
+            while let next = parent[root], next != root { root = next }
+            var current = id
+            while let next = parent[current], next != root { parent[current] = root; current = next }
+            return root
         }
-        for (offset, memo) in memos.filter({ result[$0.id] == nil }).enumerated() {
-            result[memo.id] = .init(x: 40 + Double(offset % 4) * 260, y: 100 + Double(row + offset / 4) * 180)
+        for edge in edges {
+            let a = find(edge.from), b = find(edge.to)
+            if a != b { parent[b] = a }
+        }
+        var groups: [MemoID: [MemoID]] = [:]
+        var groupOrder: [MemoID] = []
+        for id in order {
+            let root = find(id)
+            if groups[root] == nil { groupOrder.append(root) }
+            groups[root, default: []].append(id)
+        }
+
+        // 무리 하나를 자기 좌표(0,0 기준)로 배치한다.
+        struct Block { var places: [MemoID: (Double, Double)]; var width: Double; var height: Double }
+        func layout(_ members: [MemoID]) -> Block {
+            let memberSet = Set(members)
+            var places: [MemoID: (Double, Double)] = [:]
+            var row = 0
+            var widest = 1
+            for flow in linkIndex.flows {
+                let ids = flow.memoIDs.filter { memberSet.contains($0) && places[$0] == nil }
+                guard !ids.isEmpty else { continue }
+                for (column, id) in ids.enumerated() { places[id] = (Double(column) * columnStep, Double(row) * rowStep) }
+                widest = max(widest, ids.count)
+                row += 1
+            }
+            // 흐름에 들지 않은 메모: 관련으로 이어진 차례(너비 우선)로 아래 줄에 놓는다.
+            var rest: [MemoID] = []
+            var seen = Set(places.keys)
+            for start in members where !seen.contains(start) {
+                var queue = [start]
+                seen.insert(start)
+                while !queue.isEmpty {
+                    let id = queue.removeFirst()
+                    rest.append(id)
+                    for edge in edges where edge.from == id || edge.to == id {
+                        let other = edge.from == id ? edge.to : edge.from
+                        if memberSet.contains(other), !seen.contains(other) { seen.insert(other); queue.append(other) }
+                    }
+                }
+            }
+            let perRow = max(widest, min(4, rest.count))
+            for (offset, id) in rest.enumerated() {
+                places[id] = (Double(offset % perRow) * columnStep, Double(row + offset / perRow) * rowStep)
+            }
+            let rows = row + (rest.isEmpty ? 0 : (rest.count + perRow - 1) / perRow)
+            let columns = max(widest, rest.isEmpty ? 1 : min(perRow, rest.count))
+            return Block(places: places,
+                         width: Double(columns - 1) * columnStep + cardWidth,
+                         height: Double(max(rows, 1) - 1) * rowStep + cardHeight)
+        }
+
+        let linked = groupOrder.compactMap { groups[$0] }.filter { $0.count > 1 }
+            .sorted { $0.count == $1.count ? false : $0.count > $1.count }
+        let singles = groupOrder.compactMap { groups[$0] }.filter { $0.count == 1 }.map { $0[0] }
+
+        var result: [MemoID: BoardLayout.Placement] = [:]
+        var x = origin.x, y = origin.y, shelfHeight = 0.0
+        for members in linked {
+            let block = layout(members)
+            if x > origin.x, x + block.width > origin.x + maxRowWidth {
+                x = origin.x
+                y += shelfHeight + groupGap
+                shelfHeight = 0
+            }
+            for (id, place) in block.places { result[id] = .init(x: x + place.0, y: y + place.1) }
+            x += block.width + groupGap
+            shelfHeight = max(shelfHeight, block.height)
+        }
+        let singlesTop = linked.isEmpty ? origin.y : y + shelfHeight + groupGap
+        for (offset, id) in singles.enumerated() {
+            result[id] = .init(x: origin.x + Double(offset % 5) * columnStep, y: singlesTop + Double(offset / 5) * rowStep)
         }
         return result
     }
 
-    public func link(from: MemoID, to: MemoID, kind: MemoLinkKind) { store.link(from: from, to: to, kind: kind) }
-    public func unlink(_ a: MemoID, _ b: MemoID) { store.unlink(a, b) }
+    public func link(from: MemoID, to: MemoID, kind: MemoLinkKind, undoManager: UndoManager? = nil) {
+        let previous = linkSnapshot(from, to)
+        store.link(from: from, to: to, kind: kind)
+        registerLinks(previous, name: "선 잇기", manager: undoManager)
+    }
+    public func unlink(_ a: MemoID, _ b: MemoID, undoManager: UndoManager? = nil) {
+        let previous = linkSnapshot(a, b)
+        store.unlink(a, b)
+        registerLinks(previous, name: "선 끊기", manager: undoManager)
+    }
+    public func changeLink(_ edge: MemoEdge, kind: MemoLinkKind, undoManager: UndoManager? = nil) {
+        guard edge.kind != kind else { return }
+        let previous = linkSnapshot(edge.from, edge.to)
+        store.link(from: edge.from, to: edge.to, kind: kind)
+        registerLinks(previous, name: "선 모양 바꾸기", manager: undoManager)
+    }
+    public func renameLink(_ edge: MemoEdge, label: String, undoManager: UndoManager? = nil) {
+        let value = MemoLink.normalizedLabel(label)
+        guard value != edge.label else { return }
+        let previous = linkSnapshot(edge.from, edge.to)
+        store.updateMeta(id: edge.from) { meta in
+            if let offset = meta.links.firstIndex(where: { $0.to == edge.to }) { meta.links[offset].label = value }
+        }
+        registerLinks(previous, name: "선 이름 바꾸기", manager: undoManager)
+    }
+    private func linkSnapshot(_ a: MemoID, _ b: MemoID) -> [MemoID: [MemoLink]] {
+        Dictionary(uniqueKeysWithValues: store.summaries.filter { $0.id == a || $0.id == b }.map { ($0.id, $0.meta.links) })
+    }
+    private func registerLinks(_ links: [MemoID: [MemoLink]], name: String, manager: UndoManager?) {
+        guard let manager else { return }
+        manager.registerUndo(withTarget: self) { [weak manager] model in
+            let inverse = Dictionary(uniqueKeysWithValues: model.store.summaries.filter { links[$0.id] != nil }.map { ($0.id, $0.meta.links) })
+            for (id, values) in links { model.store.updateMeta(id: id) { $0.links = values } }
+            model.registerLinks(inverse, name: name, manager: manager)
+        }
+        manager.setActionName(name)
+    }
+    private func registerPlacementUndo(_ positions: [String: BoardLayout.Placement], name: String, manager: UndoManager?) {
+        guard let manager else { return }
+        manager.registerUndo(withTarget: self) { [weak manager] model in
+            let inverse = model.store.boardLayout.placements
+            model.store.replaceBoardPlacements(positions)
+            model.registerPlacementUndo(inverse, name: name, manager: manager)
+        }
+        manager.setActionName(name)
+    }
     public func openFlow(_ flow: MemoFlow) { open(flow.memoIDs) }
     public func arrangeFlow(_ flow: MemoFlow) {
         windowActions.arrangeInOrder(flow.memoIDs)
@@ -628,19 +757,36 @@ public final class MemoListModel {
     }
     public func setBentoSpan(_ span: BoardLayout.BentoSpan?, for id: MemoID) { store.setBentoSpan(span, for: id) }
     public func moveCard(_ id: MemoID, to placement: BoardLayout.Placement) { moveCards([id: placement]) }
-    public func moveCards(_ placements: [MemoID: BoardLayout.Placement]) {
+    public func moveCards(_ placements: [MemoID: BoardLayout.Placement], undoManager: UndoManager? = nil) {
+        guard !placements.isEmpty else { return }
+        let previous = store.boardLayout.placements
         store.setBoardPlacements(placements.mapValues {
             .init(x: ($0.x / 20).rounded() * 20, y: ($0.y / 20).rounded() * 20)
         })
+        registerPlacementUndo(previous, name: "카드 옮기기", manager: undoManager)
     }
-    public func autoArrange(_ memos: [MemoSummary]) { store.setBoardPlacements(autoArrangedPlacements(for: memos)) }
-    public func pasteMemo(_ body: String, at placement: BoardLayout.Placement) {
+    public func autoArrange(_ memos: [MemoSummary], undoManager: UndoManager? = nil) {
+        let previous = store.boardLayout.placements
+        store.setBoardPlacements(autoArrangedPlacements(for: memos))
+        registerPlacementUndo(previous, name: "재정렬", manager: undoManager)
+    }
+    public func pasteMemo(_ body: String, at placement: BoardLayout.Placement, undoManager: UndoManager? = nil) {
         let group: String?
         if case .group(let name) = scope { group = name } else { group = nil }
         let meta = store.createMemo(group: group)
         store.saveBody(id: meta.id, body: body)
         moveCard(meta.id, to: placement)
         selection = [meta.id]
+        registerPasteUndo(meta.id, trash: true, manager: undoManager)
+    }
+    private func registerPasteUndo(_ id: MemoID, trash: Bool, manager: UndoManager?) {
+        guard let manager else { return }
+        manager.registerUndo(withTarget: self) { [weak manager] model in
+            if trash { model.store.moveToTrash(id: id); model.selection.remove(id) }
+            else { model.store.restoreFromTrash(id: id); model.selection = [id] }
+            model.registerPasteUndo(id, trash: !trash, manager: manager)
+        }
+        manager.setActionName("메모 붙여넣기")
     }
 
     public static func checklist(_ memo: MemoSummary) -> [(text: String, checked: Bool)] {

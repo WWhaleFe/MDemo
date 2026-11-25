@@ -120,8 +120,42 @@ final class SyncCoordinator {
         }
     }
 
+    private var privacyPending = false
+    func enforcePrivacy() {
+        guard !isRunning else { privacyPending = true; return }
+        isRunning = true
+        let service = service
+        let lockedCount = store.summaries.filter { $0.meta.isLocked }.count
+        let localRoot = AppContainer.dataDirectoryOverride ?? FileMemoRepository.defaultRootDirectory()
+        let readableOutput = AppContainer.dataDirectoryOverride == nil ? ReadableCopy.defaultOutputRoot() : nil
+        Task.detached(priority: .utility) { [weak self] in
+            let result: Result<SyncReport, Error>
+            do {
+                var removedLocal = 0
+                for raw in try MemoPrivacyLedger.read("destroyed", root: localRoot) {
+                    let id = MemoID(rawValue: raw)
+                    let exists = ["memos", "trash"].contains { FileManager.default.fileExists(atPath: localRoot.appendingPathComponent($0).appendingPathComponent(raw).path) }
+                    try DeviceMemoKeychain().delete(id: id)
+                    try SecureMemoDeletion.removeCopies(id: id, root: localRoot)
+                    if exists { removedLocal += 1 }
+                }
+                var report = try service?.enforcePrivacy() ?? SyncReport()
+                report.deletions += removedLocal
+                if service == nil { report.lockedLocal = lockedCount }
+                if let output = readableOutput {
+                    _ = try ReadableCopy(localRoot: localRoot, outputRoot: output).update()
+                }
+                result = .success(report)
+            } catch { result = .failure(error) }
+            await MainActor.run { self?.finish(result) }
+        }
+    }
+
     private func finish(_ result: Result<SyncReport, Error>) {
         isRunning = false
+        defer {
+            if privacyPending { privacyPending = false; enforcePrivacy() }
+        }
 
         switch result {
         case .success(let report):
@@ -131,6 +165,7 @@ final class SyncCoordinator {
             // 파일이 바뀌었으니 목록을 다시 읽고, 열린 창도 맞춘다.
             store.reloadSummaries()
             store.reloadGroups()
+            store.reloadTrash()
             windowRegistry.reconcileOpenWindows(with: store)
 
         case .failure(let error):

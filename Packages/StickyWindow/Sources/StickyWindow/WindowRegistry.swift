@@ -18,6 +18,7 @@ public final class WindowRegistry {
     private let preferences: AppPreferences
 
     /// 창이 뜨거나 지거나 숨겨졌을 때. 리스트 창의 "보이는/숨겨진" 개수를 맞추는 데 쓴다.
+    public var onPrivacyChange: (() -> Void)?
     public var onWindowStateChange: (() -> Void)?
 
     public init(store: MemoStore, deviceState: DeviceStateStore, preferences: AppPreferences) {
@@ -46,6 +47,12 @@ public final class WindowRegistry {
             for id in flow.memoIDs { flows[id] = flow }
         }
         for (id, controller) in controllers {
+            if summaries[id] == nil {
+                if controller.isShowingDestruction { continue }
+                controller.closeWithoutMarkingClosed()
+                controllers.removeValue(forKey: id)
+                continue
+            }
             controller.updateFlowStrip(flow: flows[id], summaries: summaries) { [weak self] target in
                 self?.openMemo(id: target)
             }
@@ -112,8 +119,58 @@ public final class WindowRegistry {
             return
         }
         guard let document = store.loadDocument(id: id) else { return }
-        present(meta: document.meta, body: document.body, frame: restoredFrame(for: id))
+        present(meta: document.meta, body: document.meta.isLocked ? "" : document.body, frame: restoredFrame(for: id))
         store.setOpen(id: id, isOpen: true)
+    }
+
+    public func createLockedMemo(moving source: MemoID? = nil) {
+        guard let password = MemoLockDialogs.password(title: source == nil ? "새 암호 메모" : "암호 메모로 옮기기"),
+              MemoLockDialogs.confirm(source == nil ? .create : .moveToLocked) else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                if let source, let controller = self.controllers[source], !(await controller.finishPendingEdits()) {
+                    MemoLockDialogs.showError(NSError(domain: "MemoSave", code: 1, userInfo: [NSLocalizedDescriptionKey: "저장하지 못해 옮기지 않았습니다"]))
+                    return
+                }
+                let id = try await self.store.createLockedMemo(password: password, moving: source)
+                if let source {
+                    self.controllers[source]?.closeWithoutMarkingClosed()
+                    self.controllers.removeValue(forKey: source)
+                }
+                self.openMemo(id: id)
+                self.onPrivacyChange?()
+                self.onWindowStateChange?()
+            } catch { MemoLockDialogs.showError(error) }
+        }
+    }
+
+    public func changeMemoPassword(id: MemoID) {
+        guard store.lockSession(for: id) != nil, let password = MemoLockDialogs.password(title: "암호 바꾸기") else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do { try await self.store.changePassword(id: id, password: password) }
+            catch { MemoLockDialogs.showError(error) }
+        }
+    }
+
+    public func moveToPlainMemo(id: MemoID) {
+        guard store.lockSession(for: id) != nil, MemoLockDialogs.confirm(.moveToPlain) else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let controller = self.controllers[id], !(await controller.finishPendingEdits()) {
+                MemoLockDialogs.showError(NSError(domain: "MemoSave", code: 1, userInfo: [NSLocalizedDescriptionKey: "저장하지 못해 옮기지 않았습니다"]))
+                return
+            }
+            do {
+                let newID = try self.store.moveToPlainMemo(id: id)
+                self.controllers[id]?.closeWithoutMarkingClosed()
+                self.controllers.removeValue(forKey: id)
+                self.openMemo(id: newID)
+                self.onPrivacyChange?()
+                self.onWindowStateChange?()
+            } catch { MemoLockDialogs.showError(error) }
+        }
     }
 
     /// 앱 시작 시, 지난번에 열려 있던 메모를 그대로 되살린다 (WIN-06).
@@ -157,7 +214,10 @@ public final class WindowRegistry {
             store: store,
             deviceState: deviceState
         )
+        controller.onMoveToLocked = { [weak self] id in self?.createLockedMemo(moving: id) }
+        controller.onMoveToPlain = { [weak self] id in self?.moveToPlainMemo(id: id) }
         controller.onClose = { [weak self] id in
+            if self?.store.summaries.contains(where: { $0.id == id }) == false { self?.onPrivacyChange?() }
             self?.release(id)
         }
         // 서식 막대의 글자 크기 버튼은 전역 설정을 바꾼다. 열려 있는 창 전부에 함께 반영한다.

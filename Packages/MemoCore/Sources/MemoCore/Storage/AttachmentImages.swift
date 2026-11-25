@@ -34,7 +34,7 @@ public enum AttachmentImages {
     ///
     /// - 원본이 PNG면 PNG로, 그 밖(JPEG·HEIC 등)은 JPEG(품질 0.85)로 저장한다.
     /// - 긴 변이 `maxLongSide` 이하인 PNG·JPEG는 다시 인코딩하지 않고 원본 바이트를 그대로 둔다.
-    public static func save(imageData: Data, into directory: URL, maxLongSide: Int = maxLongSide) throws -> SavedAttachment {
+    public static func save(imageData: Data, into directory: URL, maxLongSide: Int = maxLongSide, encryptedWith session: MemoLockSession? = nil) throws -> SavedAttachment {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               CGImageSourceGetCount(source) > 0,
               let size = displaySize(of: source)
@@ -47,11 +47,12 @@ public enum AttachmentImages {
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fileName = uniqueFileName(in: directory, fileExtension: fileExtension)
-        let destinationURL = directory.appendingPathComponent(fileName)
+        let destinationURL = directory.appendingPathComponent(fileName + (session == nil ? "" : ".enc"))
 
         let longSide = max(size.width, size.height)
         if longSide <= maxLongSide, isPNG || isJPEG {
-            try imageData.write(to: destinationURL, options: .atomic)
+            let output = try session.map { try $0.seal(imageData, name: fileName) } ?? imageData
+            try output.write(to: destinationURL, options: .atomic)
             return SavedAttachment(fileName: fileName, pixelWidth: size.width, pixelHeight: size.height)
         }
 
@@ -65,12 +66,16 @@ public enum AttachmentImages {
             throw SaveError.unreadableImage
         }
         let outputType: UTType = isPNG ? .png : .jpeg
-        guard let destination = CGImageDestinationCreateWithURL(
-            destinationURL as CFURL, outputType.identifier as CFString, 1, nil
+        let buffer = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            buffer, outputType.identifier as CFString, 1, nil
         ) else { throw SaveError.writeFailed }
         let properties: [CFString: Any] = isPNG ? [:] : [kCGImageDestinationLossyCompressionQuality: jpegQuality]
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw SaveError.writeFailed }
+        defer { buffer.resetBytes(in: NSRange(location: 0, length: buffer.length)) }
+        let output = try session.map { try $0.seal(buffer as Data, name: fileName) } ?? (buffer as Data)
+        try output.write(to: destinationURL, options: .atomic)
         return SavedAttachment(fileName: fileName, pixelWidth: image.width, pixelHeight: image.height)
     }
 

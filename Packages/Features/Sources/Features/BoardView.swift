@@ -11,8 +11,14 @@ struct BoardView: View {
     let onOpen: (MemoID) -> Void
     let onCreate: () -> Void
     let menu: (MemoID) -> AnyView
+    @Environment(\.undoManager) private var undoManager
+    @State private var showsExport = false
+    @AppStorage("board.showPipeLabels") private var showLabels = true
+    @State private var hoveredEdge: MemoEdge?
+    @State private var editingEdge: MemoEdge?
     @State private var zoom: CGFloat = 1
     @State private var pan = CGSize.zero
+    @State private var minimapDrag: MinimapDrag?
     @State private var panOrigin: CGSize?
     @State private var zoomOrigin: CGFloat?
     @State private var moving: [MemoID: BoardLayout.Placement] = [:]
@@ -25,7 +31,8 @@ struct BoardView: View {
     @FocusState private var focused: Bool
 
     /// 이 비율보다 작게 보면 카드를 SwiftUI 뷰로 만들지 않고 캔버스에 직접 그린다.
-    static let flatZoom: CGFloat = 0.55
+    /// 이보다 작게 축소하면 카드를 간단한 그림으로 그린다. 너무 높으면 조금만 축소해도 카드 모양이 바뀌어 배치가 달라진 것처럼 보인다.
+    static let flatZoom: CGFloat = 0.35
     private var flat: Bool { zoom < Self.flatZoom }
 
     private func screen(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x * zoom + pan.width, y: point.y * zoom + pan.height) }
@@ -65,7 +72,17 @@ struct BoardView: View {
                     })
                     .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
                         if flat, let id = hitCard(at: world(value.location), positions: positions, excluding: nil) { onOpen(id) }
+                        else if !flat, let edge = pipes.reversed().first(where: { $0.distance(to: world(value.location)) * zoom <= 8 })?.edge {
+                            selectedEdge = edge; editingEdge = edge
+                        }
                     })
+                if !flat {
+                    ForEach(Array(pipes.enumerated()), id: \.offset) { _, pipe in
+                        if showLabels || hoveredEdge == pipe.edge || selectedEdge == pipe.edge || editingEdge == pipe.edge {
+                            pipeLabel(pipe, positions: positions)
+                        }
+                    }
+                }
                 if memos.isEmpty {
                     VStack(spacing: 12) {
                         Text(model.appliedQuery.isEmpty ? "메모가 없습니다" : "찾는 메모가 없습니다").foregroundStyle(ListTheme.muted)
@@ -87,20 +104,21 @@ struct BoardView: View {
                             .position(screen(CGPoint(x: placement.x + 100, y: placement.y + 60))).allowsHitTesting(false)
                     }
                 }
-                if let selectedEdge, let pipe = pipes.first(where: { $0.edge == selectedEdge }) {
-                    Button("연결 끊기") { model.unlink(selectedEdge.from, selectedEdge.to); self.selectedEdge = nil }
-                        .buttonStyle(.plain).font(.system(size: 12)).padding(8).background(ListTheme.card, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ListTheme.hairline))
-                        .position(screen(pipe.midpoint))
+                if flat, let edge = selectedEdge, let pipe = pipes.first(where: { $0.edge == edge }) {
+                    Button("연결 끊기") { model.unlink(edge.from, edge.to, undoManager: undoManager); selectedEdge = nil }
+                        .buttonStyle(.plain).font(.system(size: 12)).padding(8)
+                        .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 6)).position(screen(pipe.midpoint))
                 }
                 VStack {
                     flowStrip
                     Spacer()
-                    HStack(alignment: .bottom) {
-                        Spacer(minLength: 0)
-                        boardToolbar(size: geo.size, positions: positions)
-                        Spacer(minLength: 0)
-                    }.padding(.bottom, 16)
+                    ScrollView(.horizontal) {
+                        HStack {
+                            Spacer(minLength: 0)
+                            boardToolbar(size: geo.size, positions: positions)
+                            Spacer(minLength: 0)
+                        }.frame(minWidth: max(0, geo.size.width - 32))
+                    }.scrollIndicators(.hidden).frame(height: 52).padding(.bottom, 16)
                 }.padding(16).allowsHitTesting(true)
                 VStack {
                     Spacer()
@@ -109,7 +127,14 @@ struct BoardView: View {
             }
             .background(ListKeyboardCommands(selectAll: { model.selectAllVisible() }, delete: deleteSelection,
                                              open: { for id in model.orderedSelection { onOpen(id) } },
-                                             paste: { paste(at: geo.size) }, fit: { fit(size: geo.size, positions: positions) }))
+                                             paste: { paste(at: geo.size) }, fit: { fit(size: geo.size, positions: positions) },
+                                             undo: { undoManager?.undo() }, redo: { undoManager?.redo() }))
+            .onContinuousHover { phase in
+                if case .active(let location) = phase {
+                    hoveredEdge = hitCard(at: world(location), positions: positions, excluding: nil) == nil
+                        ? pipes.reversed().first { $0.distance(to: world(location)) * zoom <= 8 }?.edge : nil
+                } else { hoveredEdge = nil }
+            }
             .clipped().coordinateSpace(name: "메모보드")
             .focusable().focused($focused).focusEffectDisabled()
             .simultaneousGesture(MagnifyGesture().onChanged { value in
@@ -131,7 +156,18 @@ struct BoardView: View {
             .onKeyPress("v", phases: .down) { press in
                 guard press.modifiers.contains(.command), let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return .ignored }
                 let center = world(CGPoint(x: geo.size.width / 2, y: geo.size.height / 2))
-                model.pasteMemo(text, at: .init(x: center.x - 100, y: center.y - 60)); return .handled
+                model.pasteMemo(text, at: .init(x: center.x - 100, y: center.y - 60), undoManager: undoManager); return .handled
+            }
+            .sheet(isPresented: $showsExport) {
+                BoardExportSheet(model: model, memos: memos, index: index)
+            }
+            .onChange(of: index.edges) { _, edges in
+                if let selectedEdge {
+                    self.selectedEdge = edges.first {
+                        ($0.from == selectedEdge.from && $0.to == selectedEdge.to) ||
+                        ($0.from == selectedEdge.to && $0.to == selectedEdge.from)
+                    }
+                }
             }
             .onChange(of: target) { _, id in if let id { center(on: id, size: geo.size, positions: positions) } }
             .onAppear {
@@ -143,13 +179,13 @@ struct BoardView: View {
     }
 
     private func deleteSelection() {
-        if let selectedEdge { model.unlink(selectedEdge.from, selectedEdge.to); self.selectedEdge = nil }
+        if let selectedEdge { model.unlink(selectedEdge.from, selectedEdge.to, undoManager: undoManager); self.selectedEdge = nil }
         else { model.moveSelectionToTrash() }
     }
     private func paste(at size: CGSize) {
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
         let center = world(CGPoint(x: size.width / 2, y: size.height / 2))
-        model.pasteMemo(text, at: .init(x: center.x - 100, y: center.y - 60))
+        model.pasteMemo(text, at: .init(x: center.x - 100, y: center.y - 60), undoManager: undoManager)
     }
 
     private func background(size: CGSize, pipes: [PipeGeometry], positions: [MemoID: BoardLayout.Placement], viewport: CGRect) -> some View {
@@ -173,10 +209,7 @@ struct BoardView: View {
                 if selectedEdge == pipe.edge {
                     context.stroke(pipe.path, with: .color(ListTheme.lime), style: StrokeStyle(lineWidth: 10, lineCap: .round, lineJoin: .round))
                 }
-                let flow = pipe.edge.kind == .flow
-                context.stroke(pipe.path, with: .color(flow ? ListTheme.ink : ListTheme.related),
-                               style: StrokeStyle(lineWidth: flow ? 4 : 3, lineCap: .round, lineJoin: .round, dash: flow ? [] : [6, 6]))
-                if flow { context.stroke(pipe.arrow, with: .color(ListTheme.ink), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)) }
+                pipe.draw(in: &context)
             }
             if flat {
                 drawFlatCards(context: &context, positions: positions, viewport: viewport)
@@ -236,12 +269,12 @@ struct BoardView: View {
                 }
             },
             onDragEnded: {
-                model.moveCards(moving)
+                model.moveCards(moving, undoManager: undoManager)
                 moving = [:]; dragOrigins = [:]
             },
             onPortChanged: { point, location in linkStart = id; linkPort = point; linkPointer = location; focused = true },
             onPortEnded: { location in
-                if let other = hitCard(at: world(location), positions: positions, excluding: id) { model.link(from: id, to: other, kind: kind) }
+                if let other = hitCard(at: world(location), positions: positions, excluding: id) { model.link(from: id, to: other, kind: kind, undoManager: undoManager) }
                 linkStart = nil; linkPointer = nil
             })
     }
@@ -270,28 +303,72 @@ struct BoardView: View {
     }
     private func boardToolbar(size: CGSize, positions: [MemoID: BoardLayout.Placement]) -> some View {
         HStack(spacing: 12) {
-            ForEach(MemoLinkKind.allCases, id: \.self) { item in
-                Button { kind = item } label: {
-                    HStack(spacing: 4) {
-                        PipeSample(dashed: item == .related).stroke(ListTheme.ink, style: StrokeStyle(lineWidth: 2, dash: item == .related ? [4, 3] : [])).frame(width: 20, height: 8)
-                        Text(item == .flow ? "흐름" : "관련")
-                    }.padding(4).background(kind == item ? ListTheme.chipBg : .clear, in: RoundedRectangle(cornerRadius: 6))
-                        .contentShape(RoundedRectangle(cornerRadius: 6))
+            BoardLineTools(selected: selectedEdge?.kind ?? kind, availableWidth: max(160, size.width - 400)) { item in
+                kind = item
+                if let edge = selectedEdge {
+                    model.changeLink(edge, kind: item, undoManager: undoManager)
+                    selectedEdge = MemoEdge(from: edge.from, to: edge.to, kind: item, label: edge.label)
                 }
             }
             Divider().frame(height: 20)
-            Button("자동 정리") { withAnimation(.easeOut(duration: 0.25)) { model.autoArrange(memos) } }
+            Button("재정렬") { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { model.autoArrange(memos, undoManager: undoManager) } }.help("이어진 메모끼리 모아 다시 놓습니다")
             Button("전체 보기") { fit(size: size, positions: positions) }
-            Button { changeZoom(zoom / 1.2, size: size) } label: { Image(systemName: "minus") }.help("축소")
-            Text("\(Int(zoom * 100))%").monospacedDigit().frame(width: 40)
-            Button { changeZoom(zoom * 1.2, size: size) } label: { Image(systemName: "plus") }.help("확대")
-        }.buttonStyle(.plain).font(.system(size: 12)).padding(.horizontal, 12).frame(height: 44)
+            // 기호만 눌리던 것을 단추 칸 전체가 눌리게 한다. 가운데 비율을 누르면 100%로 돌아간다.
+            Button { changeZoom(zoom / 1.25, size: size) } label: {
+                Image(systemName: "minus").font(.system(size: 12, weight: .semibold)).frame(width: 28, height: 28)
+                    .background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(ListTheme.hairline))
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
+            }.help("축소 (⌘-)").keyboardShortcut("-", modifiers: .command)
+            Button { changeZoom(1, size: size) } label: {
+                Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(width: 44, height: 28).contentShape(Rectangle())
+            }.help("100%로")
+            Button { changeZoom(zoom * 1.25, size: size) } label: {
+                Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).frame(width: 28, height: 28)
+                    .background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(ListTheme.hairline))
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
+            }.help("확대 (⌘+)").keyboardShortcut("=", modifiers: .command)
+            Divider().frame(height: 20)
+            Button { showsExport = true } label: {
+                ExportImageGlyph().frame(width: 28, height: 28).contentShape(Rectangle())
+            }.help("보드를 이미지로 내보내기")
+        }.buttonStyle(.plain).font(.system(size: 12)).padding(.horizontal, 12).frame(height: 52)
             .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 12)).shadow(color: .black.opacity(0.1), radius: 12, y: 4)
     }
+    @ViewBuilder private func pipeLabel(_ pipe: PipeGeometry, positions: [MemoID: BoardLayout.Placement]) -> some View {
+        let point = screen(pipe.labelPoint(avoiding: positions.values.map { rect($0) }, scale: zoom, extraWidth: selectedEdge == pipe.edge ? 85 : 0))
+        Group {
+            if editingEdge == pipe.edge {
+                PipeLabelEditor(edge: pipe.edge, confirm: { value in
+                    guard editingEdge != nil else { return }
+                    editingEdge = nil
+                    model.renameLink(pipe.edge, label: value, undoManager: undoManager)
+                }, cancel: { editingEdge = nil })
+            } else {
+                HStack(spacing: 6) {
+                    Text(pipe.edge.displayLabel).font(.system(size: pipe.edge.label.isEmpty ? 12 : 11))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(ListTheme.hairline))
+                        .onTapGesture(count: 2) { selectedEdge = pipe.edge; editingEdge = pipe.edge }
+                        .onTapGesture { selectedEdge = pipe.edge }
+                    if selectedEdge == pipe.edge {
+                        Button("연결 끊기") { model.unlink(pipe.edge.from, pipe.edge.to, undoManager: undoManager); selectedEdge = nil }
+                            .buttonStyle(.plain).font(.system(size: 12)).padding(6).background(ListTheme.card, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+        }.fixedSize().position(point)
+    }
+    static let minZoom: CGFloat = 0.05
+    static let maxZoom: CGFloat = 2
     private func changeZoom(_ value: CGFloat, size: CGSize) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let before = world(center)
-        zoom = min(2, max(0.4, value))
+        // "전체 보기"가 내려갈 수 있는 비율과 같은 범위를 쓴다. 범위가 다르면 작게 축소된 보드에서
+        // 축소 단추가 오히려 확대(아래 한계로 튐)되는 일이 생긴다.
+        zoom = min(Self.maxZoom, max(Self.minZoom, value))
         pan = CGSize(width: center.x - before.x * zoom, height: center.y - before.y * zoom)
     }
     private func initialFit(size: CGSize, positions: [MemoID: BoardLayout.Placement]) {
@@ -304,7 +381,7 @@ struct BoardView: View {
     }
     private func fit(size: CGSize, positions: [MemoID: BoardLayout.Placement]) {
         guard let bounds = allBounds(positions) else { return }
-        zoom = min(1, max(0.01, min((size.width - 80) / bounds.width, (size.height - 160) / bounds.height)))
+        zoom = min(1, max(Self.minZoom, min((size.width - 80) / bounds.width, (size.height - 160) / bounds.height)))
         pan = CGSize(width: size.width / 2 - bounds.midX * zoom, height: size.height / 2 - bounds.midY * zoom)
     }
     private func center(on id: MemoID, size: CGSize, positions: [MemoID: BoardLayout.Placement]) {
@@ -314,23 +391,54 @@ struct BoardView: View {
     private func allBounds(_ positions: [MemoID: BoardLayout.Placement]) -> CGRect? {
         positions.values.map { rect($0) }.reduce(nil) { result, rect in result.map { $0.union(rect) } ?? rect }
     }
+    /// 미니맵을 끄는 동안의 고정 값. 보이는 범위가 움직이면 미니맵 축척도 바뀌어 손잡이가 출렁이므로, 끌기 시작할 때 값을 굳혀 둔다.
+    private struct MinimapDrag {
+        var bounds: CGRect
+        var scale: CGFloat
+        /// 사각형 안을 잡았을 때, 잡은 점과 사각형 가운데의 거리(보드 좌표). 바깥을 누르면 0이라 그 점으로 바로 옮긴다.
+        var grab: CGSize
+    }
+
     private func minimap(viewport: CGRect, positions: [MemoID: BoardLayout.Placement], size: CGSize) -> some View {
-        let bounds = (allBounds(positions) ?? viewport).union(viewport).insetBy(dx: -40, dy: -40)
-        let scale = min(132 / bounds.width, 80 / bounds.height)
+        let live = (allBounds(positions) ?? viewport).union(viewport).insetBy(dx: -40, dy: -40)
+        let bounds = minimapDrag?.bounds ?? live
+        let scale = minimapDrag?.scale ?? min(132 / live.width, 80 / live.height)
+        func world(_ location: CGPoint, _ b: CGRect, _ k: CGFloat) -> CGPoint {
+            CGPoint(x: b.minX + (location.x - 4) / k, y: b.minY + (location.y - 4) / k)
+        }
         return Canvas { context, _ in
             context.translateBy(x: 4, y: 4)
             context.scaleBy(x: scale, y: scale)
             context.translateBy(x: -bounds.minX, y: -bounds.minY)
+            for pipe in PipeGeometry.make(edges: index.edges, positions: positions) { pipe.draw(in: &context) }
             for (id, placement) in positions {
                 context.fill(Path(roundedRect: rect(placement), cornerRadius: 12), with: .color(model.selection.contains(id) ? ListTheme.ink : ListTheme.muted.opacity(0.4)))
             }
+            // 보이는 범위: 끌 수 있다는 것이 보이도록 옅게 채우고 테두리를 둔다.
+            context.fill(Path(viewport), with: .color(ListTheme.ink.opacity(minimapDrag == nil ? 0.06 : 0.12)))
             context.stroke(Path(viewport), with: .color(ListTheme.ink), lineWidth: 1.5 / scale)
         }.frame(width: 140, height: 88).background(ListTheme.card, in: RoundedRectangle(cornerRadius: 10))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .gesture(SpatialTapGesture().onEnded { value in
-                let point = CGPoint(x: bounds.minX + (value.location.x - 4) / scale, y: bounds.minY + (value.location.y - 4) / scale)
-                pan = CGSize(width: size.width / 2 - point.x * zoom, height: size.height / 2 - point.y * zoom)
+            .contentShape(Rectangle())
+            // 사각형을 잡고 끌면 보는 위치가 따라 움직이고, 빈 곳을 누르거나 끌면 그 점이 가운데로 온다.
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                let drag = minimapDrag ?? {
+                    let k = min(132 / live.width, 80 / live.height)
+                    let start = world(value.startLocation, live, k)
+                    let grab = viewport.contains(start)
+                        ? CGSize(width: start.x - viewport.midX, height: start.y - viewport.midY) : .zero
+                    return MinimapDrag(bounds: live, scale: k, grab: grab)
+                }()
+                if minimapDrag == nil { minimapDrag = drag; NSCursor.closedHand.push() }
+                let point = world(value.location, drag.bounds, drag.scale)
+                let center = CGPoint(x: point.x - drag.grab.width, y: point.y - drag.grab.height)
+                pan = CGSize(width: size.width / 2 - center.x * zoom, height: size.height / 2 - center.y * zoom)
+            }.onEnded { _ in
+                if minimapDrag != nil { NSCursor.pop() }
+                minimapDrag = nil
             })
+            .help("사각형을 끌어 보는 위치를 옮깁니다. 빈 곳을 누르면 그 자리로 갑니다")
+            .accessibilityLabel("보드 미니맵")
     }
 }
 
@@ -398,13 +506,6 @@ private struct BoardCardView: View {
     }
 }
 
-private struct PipeSample: Shape {
-    var dashed: Bool
-    func path(in rect: CGRect) -> Path {
-        var path = Path(); path.move(to: CGPoint(x: rect.minX, y: rect.midY)); path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY)); return path
-    }
-}
-
 /// 직각 파이프의 도형과 클릭 판정을 같은 점열에서 만든다
 struct PipeGeometry {
     let edge: MemoEdge
@@ -415,6 +516,10 @@ struct PipeGeometry {
             guard let a = positions[edge.from], let b = positions[edge.to] else { return nil }
             return PipeGeometry(edge: edge, a: rect(a), b: rect(b))
         }
+    }
+    init(edge: MemoEdge, points: [CGPoint]) {
+        self.edge = edge
+        self.points = points
     }
     init(edge: MemoEdge, a: CGRect, b: CGRect) {
         self.edge = edge
@@ -437,7 +542,33 @@ struct PipeGeometry {
         }
         return result
     }
-    var midpoint: CGPoint { CGPoint(x: (points[1].x + points[2].x) / 2, y: (points[1].y + points[2].y) / 2) }
+    var midpoint: CGPoint {
+        guard points.count > 2 else { return CGPoint(x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2) }
+        return CGPoint(x: (points[1].x + points[2].x) / 2, y: (points[1].y + points[2].y) / 2)
+    }
+    func labelPoint(avoiding cards: [CGRect], scale: CGFloat = 1, extraWidth: CGFloat = 0) -> CGPoint {
+        let width = (CGFloat(edge.displayLabel.count) * 12 + 24 + extraWidth) / scale
+        let height: CGFloat = 30 / scale
+        var point = midpoint
+        // 카드와 닿으면 위로 옮기며 카드 바깥의 빈 자리를 찾는다.
+        for _ in 0..<1000 {
+            let bounds = CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height)
+            let overlaps = cards.filter { $0.insetBy(dx: -4 / scale, dy: -4 / scale).intersects(bounds) }
+            guard let top = overlaps.map(\.minY).min() else { break }
+            point.y = top - height / 2 - 8 / scale
+        }
+        return point
+    }
+    func drawLabel(in context: inout GraphicsContext, avoiding cards: [CGRect]) {
+        let text = context.resolve(Text(edge.displayLabel).font(.system(size: 11)).foregroundColor(ListTheme.ink))
+        let size = text.measure(in: CGSize(width: 500, height: 30))
+        let point = labelPoint(avoiding: cards)
+        let bounds = CGRect(x: point.x - size.width / 2 - 8, y: point.y - size.height / 2 - 4, width: size.width + 16, height: size.height + 8)
+        let shape = Path(roundedRect: bounds, cornerRadius: 6)
+        context.fill(shape, with: .color(ListTheme.card))
+        context.stroke(shape, with: .color(ListTheme.hairline), lineWidth: 1)
+        context.draw(text, at: point)
+    }
     var path: Path {
         var path = Path(); path.move(to: points[0])
         for i in 1..<(points.count - 1) {
@@ -453,16 +584,96 @@ struct PipeGeometry {
         }
         path.addLine(to: points.last!); return path
     }
+    /// 삼각형 꼭짓점을 카드 가장자리에 맞추고 안쪽으로 길이 10, 폭 9를 채운다.
     var arrow: Path {
-        let end = points.last!
-        let previous = points.dropLast().last(where: { $0 != end }) ?? points[0]
-        let angle = atan2(end.y - previous.y, end.x - previous.x)
         var path = Path()
-        path.move(to: CGPoint(x: end.x - 12 * cos(angle) + 5 * sin(angle), y: end.y - 12 * sin(angle) - 5 * cos(angle)))
-        path.addLine(to: end)
-        path.addLine(to: CGPoint(x: end.x - 12 * cos(angle) - 5 * sin(angle), y: end.y - 12 * sin(angle) + 5 * cos(angle)))
+        func triangle(_ end: CGPoint, _ previous: CGPoint) {
+            let length = hypot(end.x - previous.x, end.y - previous.y)
+            guard length > 0 else { return }
+            let dx = (end.x - previous.x) / length, dy = (end.y - previous.y) / length
+            path.move(to: end)
+            path.addLine(to: CGPoint(x: end.x - 10 * dx + 4.5 * dy, y: end.y - 10 * dy - 4.5 * dx))
+            path.addLine(to: CGPoint(x: end.x - 10 * dx - 4.5 * dy, y: end.y - 10 * dy + 4.5 * dx))
+            path.closeSubpath()
+        }
+        if edge.kind.arrows != .none, let end = points.last {
+            triangle(end, points.dropLast().last(where: { $0 != end }) ?? points[0])
+        }
+        if edge.kind.arrows == .both, let start = points.first {
+            triangle(start, points.dropFirst().first(where: { $0 != start }) ?? points.last!)
+        }
         return path
     }
+    func draw(in context: inout GraphicsContext, sample: Bool = false) {
+        let dashed = edge.kind.lineStyle == .dashed
+        let color = sample || !dashed ? ListTheme.ink : ListTheme.related
+        let width: CGFloat = sample ? 2 : (dashed ? 3 : 4)
+        let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dashed ? (sample ? [4, 3] : [6, 6]) : [])
+        if edge.kind == .same {
+            // 코너에서도 같은 간격을 유지하도록 각 직선 구간의 법선으로 옮긴다.
+            for side: CGFloat in [-3, 3] {
+                var shifted = Path()
+                for i in points.indices {
+                    let point = points[i]
+                    let previous = points[..<i].last(where: { $0 != point })
+                    let next = points.dropFirst(i + 1).first(where: { $0 != point })
+                    func normal(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
+                        let length = max(1, hypot(b.x - a.x, b.y - a.y))
+                        return CGPoint(x: -(b.y - a.y) / length, y: (b.x - a.x) / length)
+                    }
+                    let incoming = previous.map { normal($0, point) }
+                    let outgoing = next.map { normal(point, $0) }
+                    let n = incoming ?? outgoing ?? .zero
+                    let m = outgoing ?? incoming ?? .zero
+                    let divisor = max(0.01, 1 + n.x * m.x + n.y * m.y)
+                    let p = CGPoint(x: point.x + (n.x + m.x) * side / divisor, y: point.y + (n.y + m.y) * side / divisor)
+                    if i == 0 { shifted.move(to: p) } else { shifted.addLine(to: p) }
+                }
+                context.stroke(shifted, with: .color(color), style: style)
+            }
+        } else if edge.kind == .oppose {
+            var wave = Path(); var traveled: CGFloat = 0
+            for (a, b) in zip(points, points.dropFirst()) {
+                let length = hypot(b.x - a.x, b.y - a.y)
+                guard length > 0 else { continue }
+                let steps = max(1, Int(ceil(length / 2)))
+                for step in 0...steps {
+                    let d = length * CGFloat(step) / CGFloat(steps)
+                    let offset = 4 * sin((traveled + d) * .pi / 8)
+                    let p = CGPoint(x: a.x + (b.x - a.x) * d / length - (b.y - a.y) / length * offset,
+                                    y: a.y + (b.y - a.y) * d / length + (b.x - a.x) / length * offset)
+                    if traveled == 0 && step == 0 { wave.move(to: p) } else { wave.addLine(to: p) }
+                }
+                traveled += length
+            }
+            context.stroke(wave, with: .color(color), style: style)
+            let circle = Path(ellipseIn: CGRect(x: midpoint.x - 7, y: midpoint.y - 7, width: 14, height: 14))
+            context.fill(circle, with: .color(.white)); context.stroke(circle, with: .color(color), lineWidth: 1.5)
+            var cross = Path()
+            for sign: CGFloat in [-1, 1] { cross.move(to: CGPoint(x: midpoint.x - 3, y: midpoint.y - 3 * sign)); cross.addLine(to: CGPoint(x: midpoint.x + 3, y: midpoint.y + 3 * sign)) }
+            context.stroke(cross, with: .color(color), lineWidth: 1.5)
+        } else { context.stroke(path, with: .color(color), style: style) }
+        context.fill(arrow, with: .color(color))
+        if edge.kind == .contain || edge.kind == .block, let end = points.last,
+           let previous = points.dropLast().last(where: { $0 != end }) {
+            let length = hypot(end.x - previous.x, end.y - previous.y)
+            let dx = (end.x - previous.x) / length, dy = (end.y - previous.y) / length
+            var mark = Path()
+            if edge.kind == .contain {
+                let start = points[0]
+                context.fill(Path(ellipseIn: CGRect(x: start.x - 6, y: start.y - 6, width: 12, height: 12)), with: .color(color))
+                for spread: CGFloat in [-10, 0, 10] {
+                    mark.move(to: CGPoint(x: end.x - 16 * dx, y: end.y - 16 * dy))
+                    mark.addLine(to: CGPoint(x: end.x - dy * spread, y: end.y + dx * spread))
+                }
+            } else {
+                mark.move(to: CGPoint(x: end.x - dy * 7, y: end.y + dx * 7))
+                mark.addLine(to: CGPoint(x: end.x + dy * 7, y: end.y - dx * 7))
+            }
+            context.stroke(mark, with: .color(color), style: StrokeStyle(lineWidth: edge.kind == .block ? 2.5 : width, lineCap: .round))
+        }
+    }
+
     func distance(to point: CGPoint) -> CGFloat {
         zip(points, points.dropFirst()).map { a, b in
             let dx = b.x - a.x, dy = b.y - a.y

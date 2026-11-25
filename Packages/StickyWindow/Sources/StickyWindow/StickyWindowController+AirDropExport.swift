@@ -17,8 +17,10 @@ extension StickyWindowController {
 
     func buildAirDropAndExportButtons(buttonSize: CGFloat) {
         let side: CGFloat = 26
-        let airDropImage = MemoGlyphs.airDrop(pointSize: buttonSize * 0.8)
-        let exportImage = MemoGlyphs.exportImage(pointSize: buttonSize * 0.8)
+        // 직접 그린 기호는 24 상자를 꽉 채워 그려서, 같은 크기로 넣으면 여백이 있는 SF Symbols보다 커 보인다.
+        // 핀 · 접기 · 색 아이콘과 눈으로 같은 크기가 되도록 조금 작게 넣는다.
+        let airDropImage = MemoGlyphs.airDrop(pointSize: buttonSize * 0.84)
+        let exportImage = MemoGlyphs.exportImage(pointSize: buttonSize * 0.84)
         for (button, image, help, action) in [
             (airDropButton, airDropImage, "AirDrop으로 이미지 받기 (메모 안 커서 자리에 넣습니다)", #selector(airDropButtonTapped)),
             (exportButton, exportImage, "이미지로 내보내기 (저장 · AirDrop · 복사)", #selector(exportButtonTapped)),
@@ -28,7 +30,7 @@ extension StickyWindowController {
             button.title = ""
             button.translatesAutoresizingMaskIntoConstraints = false
             button.isBordered = false
-            button.imageScaling = .scaleProportionallyUpOrDown
+            button.imageScaling = .scaleNone
             button.image = image
             button.toolTip = help
             button.setAccessibilityLabel(help.components(separatedBy: " (").first ?? help)
@@ -51,8 +53,9 @@ extension StickyWindowController {
         NSLayoutConstraint.activate([
             airDropDot.widthAnchor.constraint(equalToConstant: 9),
             airDropDot.heightAnchor.constraint(equalToConstant: 9),
-            airDropDot.trailingAnchor.constraint(equalTo: airDropButton.trailingAnchor, constant: 2),
-            airDropDot.topAnchor.constraint(equalTo: airDropButton.topAnchor, constant: -2),
+            // 단추 모서리를 둥글게 자르므로 점이 단추 밖으로 나가면 잘린다. 단추 안쪽 오른쪽 위에 둔다.
+            airDropDot.trailingAnchor.constraint(equalTo: airDropButton.trailingAnchor, constant: -1),
+            airDropDot.topAnchor.constraint(equalTo: airDropButton.topAnchor, constant: 1),
         ])
 
         iconDividerSetup()
@@ -100,6 +103,7 @@ extension StickyWindowController {
 
     /// 이 메모의 커서 자리에 AirDrop으로 받은 사진을 넣기 시작한다 (2분). 이미 받는 중이면 아무 일도 없다.
     public func startAirDropReceiving() {
+        guard !meta.isLocked else { return }
         guard !isReceivingAirDrop else { return }
         let receiver = AirDropReceiver()
         receiver.onReceive = { [weak self] url in
@@ -146,6 +150,7 @@ extension StickyWindowController {
     private final class Flag { var isClosed = false }
 
     func presentImageText(_ request: ImageTextRequest) {
+        guard !meta.isLocked else { return }
         let model = ImageTextSheetModel(thumbnail: request.thumbnail, replacesImage: request.replacesImage)
         let host = NSHostingView(rootView: ImageTextSheetView(model: model))
         let window = AuxiliaryWindow(
@@ -204,6 +209,7 @@ extension StickyWindowController {
 
     /// 내보내기 시트를 연다. 이미 열려 있으면 앞으로 가져온다.
     public func presentExportSheet() {
+        guard !meta.isLocked else { return }
         if let existing = auxiliaryWindows.first(where: { $0.window.title == "이미지로 내보내기" }) {
             existing.show()
             return

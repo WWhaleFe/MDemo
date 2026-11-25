@@ -7,11 +7,14 @@ public struct MemoDocument: Equatable, Sendable {
     /// 이 버전이 모르는 프론트매터 줄. 그대로 보존해 다시 기록한다.
     /// 구버전 앱이 신버전 파일을 열었다가 저장해도 데이터가 사라지지 않게 하는 장치다.
     public var unknownFrontmatterLines: [String]
+    /// 이 버전이 해석하지 못하는 연결 토큰도 저장할 때 되돌려 놓는다.
+    public var unknownLinkTokens: [String]
 
-    public init(meta: MemoMeta, body: String, unknownFrontmatterLines: [String] = []) {
+    public init(meta: MemoMeta, body: String, unknownFrontmatterLines: [String] = [], unknownLinkTokens: [String] = []) {
         self.meta = meta
         self.body = body
         self.unknownFrontmatterLines = unknownFrontmatterLines
+        self.unknownLinkTokens = unknownLinkTokens
     }
 }
 
@@ -69,7 +72,10 @@ public enum FrontmatterCodec {
         }
 
         let meta = try makeMeta(from: fields)
-        return MemoDocument(meta: meta, body: body, unknownFrontmatterLines: unknownLines)
+        let unknownTokens = fields[Key.links.rawValue].map(unquote)?.components(separatedBy: ",").filter {
+            !$0.trimmingCharacters(in: .whitespaces).isEmpty && parseLinks($0).isEmpty
+        } ?? []
+        return MemoDocument(meta: meta, body: body, unknownFrontmatterLines: unknownLines, unknownLinkTokens: unknownTokens)
     }
 
     private static func makeMeta(from fields: [String: String]) throws -> MemoMeta {
@@ -96,7 +102,7 @@ public enum FrontmatterCodec {
         let created = fields[Key.created.rawValue].map(unquote).flatMap(parseDate) ?? Date()
         let modified = fields[Key.modified.rawValue].map(unquote).flatMap(parseDate) ?? created
 
-        return MemoMeta(
+        var meta = MemoMeta(
             schemaVersion: schemaVersion,
             id: id,
             title: title,
@@ -112,6 +118,11 @@ public enum FrontmatterCodec {
             links: parseLinks(fields[Key.links.rawValue]),
             isLocked: parseBool(fields[Key.locked.rawValue]) ?? false
         )
+        meta.lockSalt = fields[Key.lockSalt.rawValue].map(unquote)
+        meta.lockIterations = fields[Key.lockIterations.rawValue].flatMap { Int(unquote($0)) }
+        meta.lockVersion = fields[Key.lockVersion.rawValue].flatMap { Int(unquote($0)) }
+        meta.lockFailures = fields[Key.lockFailures.rawValue].flatMap { Int(unquote($0)) }
+        return meta
     }
 
     // MARK: - 쓰기
@@ -134,14 +145,21 @@ public enum FrontmatterCodec {
         lines.append("\(Key.open.rawValue): \(meta.isOpen)")
         lines.append("\(Key.pinned.rawValue): \(meta.isPinned)")
         if meta.isLocked { lines.append("\(Key.locked.rawValue): true") }
+        if let salt = meta.lockSalt { lines.append("lockSalt: \(salt)") }
+        if let iterations = meta.lockIterations { lines.append("lockIterations: \(iterations)") }
+        if let version = meta.lockVersion { lines.append("lockVersion: \(version)") }
+        if let failures = meta.lockFailures { lines.append("lockFailures: \(failures)") }
         lines.append("\(Key.created.rawValue): \(formatDate(meta.created))")
         lines.append("\(Key.modified.rawValue): \(formatDate(meta.modified))")
         if let conflictOf = meta.conflictOf {
             lines.append("\(Key.conflictOf.rawValue): \(conflictOf.rawValue)")
         }
 
-        if !meta.links.isEmpty {
-            lines.append("\(Key.links.rawValue): " + meta.links.map { "\($0.kind.rawValue):\($0.to.rawValue)" }.joined(separator: ","))
+        if !meta.links.isEmpty || !document.unknownLinkTokens.isEmpty {
+            lines.append("\(Key.links.rawValue): " + (meta.links.map { link in
+                let encoded = link.label.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")) ?? ""
+                return "\(link.kind.rawValue):\(link.to.rawValue)" + (link.label.isEmpty && link.unknownSuffix.isEmpty ? "" : "~" + encoded) + link.unknownSuffix
+            } + document.unknownLinkTokens).joined(separator: ","))
         }
 
         // 모르는 필드를 마지막에 되돌려 놓는다 (상위 버전 호환).
@@ -168,7 +186,7 @@ public enum FrontmatterCodec {
         case modified
         case conflictOf
         case links
-        case locked
+        case locked, lockSalt, lockIterations, lockVersion, lockFailures
     }
 
     /// 잘못된 항목만 건너뛰고 첫 등장 순서대로 중복을 합친다 (DOC-02).
@@ -176,11 +194,16 @@ public enum FrontmatterCodec {
         guard let value else { return [] }
         var seen = Set<MemoLink>()
         return unquote(value).components(separatedBy: ",").compactMap { item in
-            let parts = item.components(separatedBy: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+            let tokenParts = item.trimmingCharacters(in: .whitespaces).components(separatedBy: "~")
+            let parts = tokenParts[0].components(separatedBy: ":").map { $0.trimmingCharacters(in: .whitespaces) }
             guard parts.count == 2, let kind = MemoLinkKind(rawValue: parts[0]) else { return nil }
-            let id = MemoID(rawValue: parts[1])
+            let tails = [parts[1]] + tokenParts.dropFirst()
+            let id = MemoID(rawValue: tails[0])
             guard id.isValid else { return nil }
-            let link = MemoLink(to: id, kind: kind)
+            let decoded = tails.count > 1 ? tails[1].removingPercentEncoding : nil
+            let suffix = tails.count > 2 ? "~" + tails.dropFirst(2).joined(separator: "~") : ""
+            let link = MemoLink(to: id, kind: kind, label: decoded ?? "",
+                                unknownSuffix: decoded == nil && tails.count > 1 ? "~" + tails.dropFirst().joined(separator: "~") : suffix)
             return seen.insert(link).inserted ? link : nil
         }
     }

@@ -11,6 +11,7 @@ import MarkdownEngine
 public final class MemoImageStore: @unchecked Sendable {
     /// 이 메모의 첨부 폴더 (`<메모 폴더>/attachments`).
     public let directory: URL
+    public let lockSession: MemoLockSession?
 
     private let thumbnails = NSCache<NSString, NSImage>()
     /// 파일 이름 → 화면상 픽셀 크기. 헤더만 읽은 값이라 작다.
@@ -21,14 +22,15 @@ public final class MemoImageStore: @unchecked Sendable {
     /// 썸네일 폭을 이 단위로 올려 잡는다. 크기를 끌어 바꾸는 동안 매번 새로 디코딩하지 않기 위해서다.
     private static let widthBucket = 128
 
-    public init(directory: URL) {
+    public init(directory: URL, lockSession: MemoLockSession? = nil) {
         self.directory = directory
+        self.lockSession = lockSession
         thumbnails.totalCostLimit = Self.cacheByteLimit
         thumbnails.countLimit = 24
     }
 
     public func fileURL(for fileName: String) -> URL? {
-        guard MarkdownImage.isValidFileName(fileName) else { return nil }
+        guard lockSession == nil, MarkdownImage.isValidFileName(fileName) else { return nil }
         let parent = directory.standardizedFileURL.resolvingSymlinksInPath()
         let candidate = parent.appendingPathComponent(fileName).standardizedFileURL.resolvingSymlinksInPath()
         guard candidate.deletingLastPathComponent() == parent,
@@ -37,6 +39,7 @@ public final class MemoImageStore: @unchecked Sendable {
     }
 
     public func fileExists(_ fileName: String) -> Bool {
+        if lockSession != nil { return (try? read(fileName)) != nil }
         guard let url = fileURL(for: fileName) else { return false }
         return (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
     }
@@ -44,8 +47,12 @@ public final class MemoImageStore: @unchecked Sendable {
     /// 원본의 화면상 픽셀 크기. 파일이 없거나 이미지가 아니면 nil.
     public func naturalSize(of fileName: String) -> NSSize? {
         if let cached = sizes[fileName] { return cached }
-        guard let url = fileURL(for: fileName), let size = AttachmentImages.pixelSize(of: url) else { return nil }
-        let value = NSSize(width: size.width, height: size.height)
+        guard let source = imageSource(fileName),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else { return nil }
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        let value = (5...8).contains(orientation) ? NSSize(width: height.doubleValue, height: width.doubleValue) : NSSize(width: width.doubleValue, height: height.doubleValue)
         sizes[fileName] = value
         return value
     }
@@ -64,7 +71,7 @@ public final class MemoImageStore: @unchecked Sendable {
         let key = "\(fileName)@\(maxPixel)" as NSString
         if let cached = thumbnails.object(forKey: key) { return cached }
 
-        guard let url = fileURL(for: fileName), let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        guard let source = imageSource(fileName) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -75,6 +82,28 @@ public final class MemoImageStore: @unchecked Sendable {
         let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         thumbnails.setObject(image, forKey: key, cost: cgImage.width * cgImage.height * 4)
         return image
+    }
+
+    public func read(_ name: String) throws -> Data {
+        guard MarkdownImage.isValidFileName(name) else { throw MemoLockError.damaged }
+        if let session = lockSession {
+            let file = directory.appendingPathComponent(name + ".enc")
+            guard (try file.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink != true else { throw MemoLockError.damaged }
+            return try session.open(Data(contentsOf: file), name: name)
+        }
+        guard let url = fileURL(for: name) else { throw MemoLockError.damaged }
+        return try Data(contentsOf: url)
+    }
+
+    public func save(_ data: Data) throws -> SavedAttachment {
+        try AttachmentImages.save(imageData: data, into: directory, encryptedWith: lockSession)
+    }
+
+    private func imageSource(_ name: String) -> CGImageSource? {
+        if lockSession == nil, let url = fileURL(for: name) { return CGImageSourceCreateWithURL(url as CFURL, nil) }
+        guard var data = try? read(name) else { return nil }
+        defer { data.resetBytes(in: 0..<data.count) }
+        return CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
     }
 
     /// 캐시를 비운다. 메모리 경고나 창 숨김에서 쓸 수 있다.

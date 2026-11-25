@@ -8,9 +8,11 @@ import MemoCore
 /// 백업도 그 원칙을 따른다 — 압축을 풀면 그냥 마크다운 파일이 나온다.
 public struct BackupService: Sendable {
     public let dataRoot: URL
+    private let keychain: any MemoKeychain
 
-    public init(dataRoot: URL) {
+    public init(dataRoot: URL, keychain: any MemoKeychain = DeviceMemoKeychain()) {
         self.dataRoot = dataRoot
+        self.keychain = keychain
     }
 
     // MARK: - 백업 (DAT-04, DAT-05)
@@ -19,15 +21,39 @@ public struct BackupService: Sendable {
     ///
     /// 압축은 시스템의 `ditto`에 맡긴다. 직접 구현하면 의존성이 늘고,
     /// macOS가 기본으로 갖고 있는 도구가 첨부 파일까지 그대로 담아 준다.
-    public func exportBackup(to destination: URL) throws {
-        try runDitto(arguments: ["-c", "-k", "--sequesterRsrc", "--keepParent", dataRoot.path, destination.path])
+    @discardableResult
+    public func exportBackup(to destination: URL) throws -> Int {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("MDemoBackup-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let filtered = staging.appendingPathComponent(dataRoot.lastPathComponent)
+        try FileManager.default.createDirectory(at: filtered, withIntermediateDirectories: true)
+        let privateIDs = try MemoPrivacyLedger.read("destroyed", root: dataRoot).union(MemoPrivacyLedger.read("local-only", root: dataRoot))
+        var excluded = 0
+        for folder in ["memos", "trash"] {
+            let target = filtered.appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            for entry in (try? FileManager.default.contentsOfDirectory(at: dataRoot.appendingPathComponent(folder), includingPropertiesForKeys: nil)) ?? [] {
+                if privateIDs.contains(entry.lastPathComponent) { excluded += 1; continue }
+                guard let text = try? String(contentsOf: entry.appendingPathComponent("memo.md"), encoding: .utf8),
+                      let document = try? FrontmatterCodec.decode(fileContents: text) else { excluded += 1; continue }
+                if document.meta.isLocked { excluded += 1; continue }
+                try FileManager.default.copyItem(at: entry, to: target.appendingPathComponent(entry.lastPathComponent))
+            }
+        }
+        for name in ["groups.json", "board.json", "destroyed.json", "local-only.json"] {
+            let file = dataRoot.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.copyItem(at: file, to: filtered.appendingPathComponent(name)) }
+        }
+        try runDitto(arguments: ["-c", "-k", "--sequesterRsrc", "--keepParent", filtered.path, destination.path])
+        return excluded
     }
 
     /// 백업에서 되돌린다.
     ///
     /// - `replaceExisting`이 true면 지금 데이터를 통째로 갈아 끼운다.
     /// - false면 기존 메모를 남기고 백업에 있는 것만 더한다 (DAT-05).
-    public func importBackup(from archive: URL, replaceExisting: Bool) throws {
+    @discardableResult
+    public func importBackup(from archive: URL, replaceExisting: Bool) throws -> Int {
         let staging = FileManager.default.temporaryDirectory
             .appendingPathComponent("MDemoRestore-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: staging) }
@@ -39,6 +65,41 @@ public struct BackupService: Sendable {
             throw BackupError.archiveHasNoMemos
         }
 
+        let destroyed = try MemoPrivacyLedger.read("destroyed", root: dataRoot).union(MemoPrivacyLedger.read("destroyed", root: unpacked))
+        var skippedIDs = Set<String>()
+        // 가져오기 실패나 교체에서도 영구 파기 목록은 줄어들지 않는다.
+        try MemoPrivacyLedger.write(destroyed, name: "destroyed", root: dataRoot)
+        for raw in destroyed {
+            let id = MemoID(rawValue: raw)
+            try keychain.delete(id: id)
+            try SecureMemoDeletion.removeCopies(id: id, root: dataRoot)
+        }
+        for folder in ["memos", "trash"] {
+            for raw in destroyed {
+                let file = unpacked.appendingPathComponent(folder).appendingPathComponent(raw)
+                if FileManager.default.fileExists(atPath: file.path) { try SecureMemoDeletion.remove(file); skippedIDs.insert(raw) }
+            }
+        }
+        try MemoPrivacyLedger.write(destroyed, name: "destroyed", root: unpacked)
+        // 이 맥의 암호 메모를 교체에서 보존한다. 임시 사본에도 암호문만 들어간다.
+        if replaceExisting {
+            let repository = try FileMemoRepository(rootDirectory: dataRoot)
+            for folderName in ["memos", "trash"] {
+                let existing = try folderName == "memos" ? repository.loadSummaries() : repository.loadTrashSummaries()
+                for memo in existing where memo.meta.isLocked {
+                    let folder = dataRoot.appendingPathComponent(folderName).appendingPathComponent(memo.id.rawValue)
+                    let parent = unpacked.appendingPathComponent(folderName)
+                    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                    let destination = parent.appendingPathComponent(memo.id.rawValue)
+                    try? FileManager.default.removeItem(at: destination)
+                    try FileManager.default.copyItem(at: folder, to: destination)
+                    var values = URLResourceValues()
+                    values.isExcludedFromBackup = true
+                    var preserved = destination
+                    try preserved.setResourceValues(values)
+                }
+            }
+        }
         if replaceExisting {
             // 지금 것을 지우기 전에 옆으로 치워 둔다. 복원이 실패해도 원래 상태로 돌아올 수 있어야 한다.
             let backup = staging.appendingPathComponent("previous", isDirectory: true)
@@ -54,7 +115,9 @@ public struct BackupService: Sendable {
             }
         } else {
             try mergeFolders(from: unpacked, into: dataRoot)
+            try MemoPrivacyLedger.write(destroyed, name: "destroyed", root: dataRoot)
         }
+        return skippedIDs.count
     }
 
     /// 압축을 푼 폴더에서 memos가 들어 있는 자리를 찾는다.
@@ -111,6 +174,7 @@ public struct BackupService: Sendable {
 
     /// 메모 하나를 파일로 내보낸다.
     public func export(_ document: MemoDocument, as format: ExportFormat, to destination: URL) throws {
+        guard !document.meta.isLocked else { throw MemoLockError.locked }
         let text: String
         switch format {
         case .markdown:
@@ -132,6 +196,7 @@ public struct BackupService: Sendable {
 
         // 다른 도구가 붙인 프론트매터가 있으면 그대로 읽어 본다.
         if let existing = try? FrontmatterCodec.decode(fileContents: raw) {
+            guard !existing.meta.isLocked else { throw MemoLockError.locked }
             var document = existing
             document.meta.id = .generate()
             document.meta.isOpen = false

@@ -10,7 +10,10 @@ import Foundation
 /// ```
 /// 메모 하나가 폴더 하나라서 휴지통 이동·복원·첨부 동반 삭제가 폴더 이동 한 번으로 끝난다.
 public struct FileMemoRepository: MemoRepository {
+    private let keychain: any MemoKeychain
     public let rootDirectory: URL
+    /// 시험용: 실제 원자적 기록 직전의 바이트를 검사하거나 쓰기 실패를 주입한다.
+    public var beforeMemoWrite: (@Sendable (URL, Data) throws -> Void)?
 
     private static let memoFileName = "memo.md"
     private static let memosFolder = "memos"
@@ -19,8 +22,9 @@ public struct FileMemoRepository: MemoRepository {
     private static let previewReadLimit = 8 * 1024
     private static let previewCharacterLimit = 200
 
-    public init(rootDirectory: URL) throws {
+    public init(rootDirectory: URL, keychain: any MemoKeychain = DeviceMemoKeychain()) throws {
         self.rootDirectory = rootDirectory
+        self.keychain = keychain
         try FileManager.default.createDirectory(
             at: rootDirectory.appendingPathComponent(Self.memosFolder),
             withIntermediateDirectories: true
@@ -57,6 +61,7 @@ public struct FileMemoRepository: MemoRepository {
     /// 첨부 폴더가 없는 메모는 본문을 읽지 않고 건너뛴다. 메모 하나씩 읽고 바로 버린다.
     @discardableResult
     public func pruneUnusedAttachments(modifiedBefore date: Date) -> Int {
+        guard let destroyed = try? MemoPrivacyLedger.read("destroyed", root: rootDirectory) else { return 0 }
         let memosURL = rootDirectory.appendingPathComponent(Self.memosFolder, isDirectory: true)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: memosURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
@@ -65,11 +70,12 @@ public struct FileMemoRepository: MemoRepository {
         var removed = 0
         for entry in entries {
             let id = MemoID(rawValue: entry.lastPathComponent)
-            guard id.isValid else { continue }
+            guard id.isValid, !destroyed.contains(id.rawValue) else { continue }
             let attachments = attachmentsDirectory(for: id)
             guard FileManager.default.fileExists(atPath: attachments.path),
                   // 본문을 읽지 못하면 무엇이 쓰이는지 모르므로 건드리지 않는다.
-                  let body = try? load(id: id).body
+                  let document = try? load(id: id), !document.meta.isLocked,
+                  case let body = document.body
             else { continue }
             removed += AttachmentImages.pruneUnused(in: attachments, body: body, olderThan: date)
         }
@@ -79,6 +85,7 @@ public struct FileMemoRepository: MemoRepository {
     // MARK: - 읽기
 
     public func loadSummaries() throws -> [MemoSummary] {
+        let destroyed = try MemoPrivacyLedger.read("destroyed", root: rootDirectory)
         let memosURL = rootDirectory.appendingPathComponent(Self.memosFolder, isDirectory: true)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: memosURL,
@@ -89,7 +96,7 @@ public struct FileMemoRepository: MemoRepository {
         var summaries: [MemoSummary] = []
         for entry in entries {
             let id = MemoID(rawValue: entry.lastPathComponent)
-            guard id.isValid else { continue }
+            guard id.isValid, !destroyed.contains(id.rawValue) else { continue }
             // 파일 하나가 깨져도 나머지 메모는 열려야 한다.
             guard let summary = try? loadSummary(id: id) else { continue }
             summaries.append(summary)
@@ -133,8 +140,11 @@ public struct FileMemoRepository: MemoRepository {
     }
 
     public func load(id: MemoID) throws -> MemoDocument {
+        guard !(try MemoPrivacyLedger.read("destroyed", root: rootDirectory)).contains(id.rawValue) else { throw MemoLockError.destroyed }
         let text = try String(contentsOf: memoFileURL(for: id), encoding: .utf8)
-        return try FrontmatterCodec.decode(fileContents: text)
+        let document = try FrontmatterCodec.decode(fileContents: text)
+        guard document.meta.id == id else { throw MemoLockError.damaged }
+        return document
     }
 
     // MARK: - 쓰기
@@ -145,12 +155,23 @@ public struct FileMemoRepository: MemoRepository {
         let directory = memoDirectory(for: document.meta.id)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
+        if (try MemoPrivacyLedger.read("destroyed", root: rootDirectory)).contains(document.meta.id.rawValue) { throw MemoLockError.destroyed }
+        if document.meta.isLocked {
+            guard let cipher = Data(base64Encoded: document.body), cipher.count >= 28,
+                  document.meta.lockVersion == 1, document.meta.lockSalt != nil else { throw MemoLockError.locked }
+            var excluded = URLResourceValues()
+            excluded.isExcludedFromBackup = true
+            var folderURL = directory
+            try folderURL.setResourceValues(excluded)
+        }
         let text = FrontmatterCodec.encode(document)
         guard let data = text.data(using: .utf8) else { return }
+        try beforeMemoWrite?(memoFileURL(for: document.meta.id), data)
         try data.write(to: memoFileURL(for: document.meta.id), options: .atomic)
     }
 
     public func duplicate(id: MemoID, as document: MemoDocument) throws {
+        guard !(try load(id: id)).meta.isLocked, !document.meta.isLocked else { throw MemoLockError.locked }
         let destination = memoDirectory(for: document.meta.id)
         try FileManager.default.copyItem(at: memoDirectory(for: id), to: destination)
         do {
@@ -188,6 +209,7 @@ public struct FileMemoRepository: MemoRepository {
 
     /// 휴지통 목록. 화면에는 "언제 버렸는지"가 필요한데, 그 시각은 폴더가 옮겨진 시각으로 안다.
     public func loadTrashSummaries() throws -> [MemoSummary] {
+        let destroyed = try MemoPrivacyLedger.read("destroyed", root: rootDirectory)
         let trashURL = rootDirectory.appendingPathComponent(Self.trashFolder, isDirectory: true)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: trashURL,
@@ -198,7 +220,7 @@ public struct FileMemoRepository: MemoRepository {
         var summaries: [MemoSummary] = []
         for entry in entries {
             let id = MemoID(rawValue: entry.lastPathComponent)
-            guard id.isValid else { continue }
+            guard id.isValid, !destroyed.contains(id.rawValue) else { continue }
             let url = entry.appendingPathComponent(Self.memoFileName)
             guard let head = try? readHead(of: url, limit: Self.previewReadLimit),
                   let document = try? FrontmatterCodec.decode(fileContents: head)
@@ -216,6 +238,7 @@ public struct FileMemoRepository: MemoRepository {
     }
 
     public func restoreFromTrash(id: MemoID) throws {
+        guard !(try MemoPrivacyLedger.read("destroyed", root: rootDirectory)).contains(id.rawValue) else { throw MemoLockError.destroyed }
         let source = trashDirectory(for: id)
         guard FileManager.default.fileExists(atPath: source.path) else { return }
 
@@ -230,8 +253,15 @@ public struct FileMemoRepository: MemoRepository {
     /// 폴더째 지우므로 첨부 이미지도 함께 사라진다 (TRS-05).
     public func permanentlyDelete(id: MemoID) throws {
         let target = trashDirectory(for: id)
-        guard FileManager.default.fileExists(atPath: target.path) else { return }
-        try FileManager.default.removeItem(at: target)
+        let text = try? String(contentsOf: target.appendingPathComponent(Self.memoFileName), encoding: .utf8)
+        let document = text.flatMap { try? FrontmatterCodec.decode(fileContents: $0) }
+        let hasKey = try keychain.read(id: id) != nil
+        if hasKey || document == nil || document?.meta.isLocked == true || text?.contains("locked: true") == true {
+            try keychain.delete(id: id)
+            try MemoPrivacyLedger.insert(id, name: "destroyed", root: rootDirectory)
+            try SecureMemoDeletion.removeCopies(id: id, root: rootDirectory)
+        }
+        if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
         // 휴지통 안의 다른 메모도 복원했을 때 끊어진 연결이 남지 않게 한다 (TRS-04).
         for folder in [Self.memosFolder, Self.trashFolder] {
             let entries = try FileManager.default.contentsOfDirectory(
@@ -329,7 +359,8 @@ public struct FileMemoRepository: MemoRepository {
             }
             guard let text else { continue }
             // 프론트매터(color, pinned 등)는 본문이 아니므로 뺀다.
-            let body = (try? FrontmatterCodec.decode(fileContents: text).body) ?? text
+            guard let document = try? FrontmatterCodec.decode(fileContents: text), !document.meta.isLocked else { continue }
+            let body = document.body
             if body.localizedCaseInsensitiveContains(needle) {
                 found.insert(id)
             }

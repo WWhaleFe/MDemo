@@ -86,9 +86,14 @@ struct MemoLinkChip: View {
                 Text("\(context.index + 1)/\(context.flow.memoIDs.count)").monospacedDigit().fixedSize()
             }.font(.system(size: 12)).foregroundStyle(ListTheme.text2)
                 .padding(4).background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 4))
-        } else if let count = index.linkCount[id], count > 0 {
-            Text("관련 \(count)").font(.system(size: 12)).foregroundStyle(ListTheme.text2).padding(4)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(ListTheme.related, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+        } else if !MemoLinkKind.chipText(counts: index.kindCounts(of: id)).isEmpty {
+            HStack(spacing: 4) {
+                ForEach(MemoLinkKind.allCases.filter { $0 != .flow && index.kindCounts(of: id)[$0, default: 0] > 0 }.prefix(2), id: \.self) { kind in
+                    LineSample(kind: kind).frame(width: 24, height: 16)
+                }
+                Text(MemoLinkKind.chipText(counts: index.kindCounts(of: id)))
+            }.font(.system(size: 12)).foregroundStyle(ListTheme.text2).padding(4)
+                .background(ListTheme.chipBg, in: RoundedRectangle(cornerRadius: 4))
         }
     }
 }
