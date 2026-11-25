@@ -126,12 +126,17 @@ public struct KeychainGoogleTokenStore: GoogleTokenStore {
     public static let service = "com.wwhalefe.MDemo.google"
     private static let missingEntitlement: OSStatus = -34018
 
-    public init() {}
+    private let serviceName: String
+
+    /// `serviceName`은 개발용 시험 실행이 실제 로그인과 섞이지 않게 바꿀 때만 쓴다.
+    public init(serviceName: String = Self.service) {
+        self.serviceName = serviceName
+    }
 
     private func baseQuery(dataProtection: Bool) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: serviceName,
             kSecAttrSynchronizable as String: false,
         ]
         if dataProtection { query[kSecUseDataProtectionKeychain as String] = true }

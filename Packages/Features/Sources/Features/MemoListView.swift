@@ -185,8 +185,14 @@ public struct MemoListView: View {
             }.buttonStyle(.plain).fixedSize().help("AirDrop으로 받은 사진으로 새 메모")
                 .accessibilityLabel("AirDrop으로 받은 사진으로 새 메모")
             Button(action: model.windowActions.createLockedMemo) {
-                Image(systemName: "lock.badge.plus")
-            }.buttonStyle(.plain).help("새 암호 메모 (⌘⌥N)").accessibilityLabel("새 암호 메모")
+                // 옆의 핀 · 화면 모드 단추와 같은 크기 · 색. 예전 기호(lock.badge.plus)는 없는 macOS가 있어 단추가 사라졌다.
+                // 만들어질 것은 잠긴 메모라 닫힌 자물쇠 + 라임 점으로 보인다.
+                // 옆 AirDrop 기호와 같은 방식(24 상자 그대로)으로 그려 눈으로 같은 크기가 되게 한다.
+                LockGlyph(locked: true).foregroundStyle(ListTheme.muted)
+                    .frame(width: 18, height: 18)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).fixedSize().help("새 암호 메모 (⌘⌥N)").accessibilityLabel("새 암호 메모")
             Button(action: onCreateMemo) {
                 Label("새 메모", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(ListTheme.card)
                     .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))

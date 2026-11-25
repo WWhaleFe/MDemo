@@ -30,10 +30,10 @@ public actor NotionSession: AccessTokenProvider {
             let tokens = try await tokenRequest(["code": code])
             try store.save(tokens)
             credentials = tokens
-            receiver.respond(success: true, message: "")
+            receiver.respond(success: true, message: "", service: "노션")
             return tokens
         } catch {
-            receiver.respond(success: false, message: error.localizedDescription)
+            receiver.respond(success: false, message: error.localizedDescription, service: "노션")
             throw error
         }
     }

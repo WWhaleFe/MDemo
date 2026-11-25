@@ -52,7 +52,7 @@ final class SyncCoordinator {
 
     @ObservationIgnored private var backend: Backend?
     @ObservationIgnored private let googleConfig: GoogleOAuthConfig?
-    @ObservationIgnored private let tokenStore: any GoogleTokenStore = KeychainGoogleTokenStore()
+    @ObservationIgnored private let tokenStore: any GoogleTokenStore
     @ObservationIgnored private var session: GoogleSession?
     @ObservationIgnored private let store: MemoStore
     @ObservationIgnored private let windowRegistry: WindowRegistry
@@ -61,16 +61,38 @@ final class SyncCoordinator {
     /// 겹쳐 도는 것을 막는다. 파일을 양쪽에서 건드리면 결과가 어긋난다.
     @ObservationIgnored private var isRunning = false
 
+    /// 개발용: `--data-dir=<폴더>`와 `--google-sync-test`를 함께 주면 시험 폴더로 실제 구글 동기화를 시험한다.
+    /// 거울 폴더 · 상태 파일은 `<폴더>-google`에, 토큰은 실제와 다른 키체인 항목에 둔다.
+    /// 실제 데이터 폴더, 실제 로그인, 설정(sync.target)은 건드리지 않는다.
+    static let googleTestRoot: URL? = {
+        guard let dataRoot = AppContainer.dataDirectoryOverride,
+              CommandLine.arguments.contains("--google-sync-test") else { return nil }
+        return dataRoot.deletingLastPathComponent()
+            .appendingPathComponent(dataRoot.lastPathComponent + "-google", isDirectory: true)
+    }()
+    private static let testTokenService = "com.wwhalefe.MDemo.google.devtest"
+
     init(store: MemoStore, windowRegistry: WindowRegistry, preferences: AppPreferences) {
         self.store = store
         self.windowRegistry = windowRegistry
         self.preferences = preferences
 
         let isTestMode = AppContainer.dataDirectoryOverride != nil
-        self.googleConfig = isTestMode ? nil : GoogleOAuthConfig.load()
+        let googleTest = Self.googleTestRoot != nil
+        self.tokenStore = googleTest ? KeychainGoogleTokenStore(serviceName: Self.testTokenService) : KeychainGoogleTokenStore()
+        self.googleConfig = (isTestMode && !googleTest) ? nil : GoogleOAuthConfig.load()
         self.isGoogleConfigured = googleConfig != nil
 
-        if isTestMode {
+        if googleTest {
+            if let config = googleConfig, let credentials = (try? tokenStore.load()) ?? nil {
+                let session = GoogleSession(config: config, store: tokenStore, transport: GoogleHTTP())
+                self.session = session
+                self.googleEmail = credentials.email
+                self.backend = .google(Self.makeGoogleSync(session: session))
+            } else {
+                self.backend = nil
+            }
+        } else if isTestMode {
             self.backend = nil
         } else if preferences.syncTarget == .google, let config = googleConfig,
                   let credentials = (try? tokenStore.load()) ?? nil {
@@ -95,14 +117,24 @@ final class SyncCoordinator {
     }
 
     private static func makeGoogleSync(session: GoogleSession) -> DriveMirrorSync {
-        DriveMirrorSync(
-            localRoot: FileMemoRepository.defaultRootDirectory(),
-            mirrorRoot: DriveMirrorSync.defaultMirrorRoot(),
-            driveStateURL: DriveMirrorSync.defaultDriveStateURL(),
-            engineStateURL: DriveMirrorSync.defaultEngineStateURL(),
+        let paths = googlePaths
+        return DriveMirrorSync(
+            localRoot: AppContainer.dataDirectoryOverride ?? FileMemoRepository.defaultRootDirectory(),
+            mirrorRoot: paths.folder.appendingPathComponent(AppStorageName.folder, isDirectory: true),
+            driveStateURL: paths.folder.appendingPathComponent("drive-state.json"),
+            engineStateURL: paths.engineState,
             api: GoogleDriveClient(tokens: session),
             log: { NSLog("MDemo 드라이브: %@", $0) }
         )
+    }
+
+    /// 거울 폴더와 엔진 상태 파일 자리. 시험 실행이면 시험 폴더 옆으로 뺀다.
+    private static var googlePaths: (folder: URL, engineState: URL) {
+        if let root = googleTestRoot {
+            return (root.appendingPathComponent("GoogleDrive", isDirectory: true),
+                    root.appendingPathComponent("sync-state-google.json"))
+        }
+        return (DriveMirrorSync.defaultGoogleFolder(), DriveMirrorSync.defaultEngineStateURL())
     }
 
     /// 구글 드라이브가 대상인가. iPhone 읽기용 사본은 iCloud 대상일 때만 만든다.
@@ -129,7 +161,7 @@ final class SyncCoordinator {
                 self.session = session
                 self.googleEmail = email
                 self.backend = .google(Self.makeGoogleSync(session: session))
-                self.preferences.syncTarget = .google
+                if Self.googleTestRoot == nil { self.preferences.syncTarget = .google }
                 self.isRunning = false
                 self.run(mode: .both)
             } catch {
@@ -150,12 +182,17 @@ final class SyncCoordinator {
         stopTimer()
         Task { [weak self] in
             try? await session.signOut()
-            DriveMirrorSync.resetLocalState()
+            let paths = Self.googlePaths
+            DriveMirrorSync.resetLocalState(googleFolder: paths.folder, engineStateURL: paths.engineState)
             guard let self else { return }
             self.session = nil
             self.googleEmail = nil
-            self.preferences.syncTarget = .icloud
-            self.backend = Self.makeICloudBackend()
+            if Self.googleTestRoot == nil {
+                self.preferences.syncTarget = .icloud
+                self.backend = Self.makeICloudBackend()
+            } else {
+                self.backend = nil
+            }
             self.status = .idle
             self.isRunning = false
             self.scheduleTimer()
@@ -208,7 +245,12 @@ final class SyncCoordinator {
             status = .failed(SyncError.iCloudUnavailable.localizedDescription)
             return
         }
-        guard !isRunning else { return }
+        // 개인정보 정리 등 다른 일이 도는 중이면 버리지 않고 끝난 뒤 돈다.
+        // 앱을 켤 때 정리와 첫 동기화가 겹쳐 첫 동기화가 빠지던 문제.
+        guard !isRunning else {
+            if let pending = pendingRun, pending != mode { pendingRun = .both } else { pendingRun = mode }
+            return
+        }
 
         isRunning = true
         status = .syncing
@@ -238,6 +280,7 @@ final class SyncCoordinator {
     }
 
     private var privacyPending = false
+    @ObservationIgnored private var pendingRun: SyncMode?
     func enforcePrivacy() {
         guard !isRunning else { privacyPending = true; return }
         isRunning = true
@@ -276,7 +319,13 @@ final class SyncCoordinator {
     private func finish(_ result: Result<SyncReport, Error>) {
         isRunning = false
         defer {
-            if privacyPending { privacyPending = false; enforcePrivacy() }
+            if privacyPending {
+                privacyPending = false
+                enforcePrivacy()
+            } else if let mode = pendingRun {
+                pendingRun = nil
+                run(mode: mode)
+            }
         }
 
         switch result {

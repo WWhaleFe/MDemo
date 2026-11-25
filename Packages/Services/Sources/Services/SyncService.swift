@@ -25,6 +25,8 @@ public struct SyncReport: Sendable, Equatable {
     public var unreadable = 0
     public var lockedLocal = 0
     public var removedLocalOnly = 0
+    /// 이번에 새로 만든 충돌 사본. 같은 회차 안에 반대쪽으로 올리는 데 쓴다.
+    var conflictCopies: [MemoID] = []
 
     public var isEmpty: Bool {
         pushed == 0 && pulled == 0 && conflicts == 0 && deletions == 0 && unreadable == 0 && removedLocalOnly == 0
@@ -143,6 +145,16 @@ public struct SyncService: Sendable {
             } catch is SkipThisRound {
                 // 훑은 뒤 파일이 바뀌었다. 덮어쓰지 않고 이 메모는 다음 동기화에서 맞춘다.
                 continue
+            }
+        }
+
+        // 충돌 사본은 이쪽 기기에만 만들어진다. 다음 회차를 기다리지 않고 바로 반대쪽에도 올린다.
+        // 안 그러면 구글 드라이브처럼 거울을 거치는 곳에서는 이 기기가 한 번 더 맞출 때까지 다른 기기가 사본을 못 본다.
+        if mode != .pull, !report.conflictCopies.isEmpty {
+            let fresh = scan(root: localRoot).entries
+            for id in report.conflictCopies {
+                guard let entry = fresh[id] else { continue }
+                try? reconcile(id: id, local: entry, remote: nil, mode: mode, state: &state, report: &report)
             }
         }
 
@@ -425,6 +437,7 @@ public struct SyncService: Sendable {
             .write(to: staging.appendingPathComponent(Self.memoFileName), options: .atomic)
         try FileManager.default.moveItem(at: staging, to: destination)
         report.conflicts += 1
+        report.conflictCopies.append(newID)
     }
 
     /// 한쪽에서 버린 메모를 다른 쪽에서도 휴지통으로 옮긴다.

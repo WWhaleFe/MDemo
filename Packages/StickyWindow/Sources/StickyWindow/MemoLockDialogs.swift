@@ -1,4 +1,5 @@
 import AppKit
+import EditorKit
 import MemoCore
 
 @MainActor
@@ -153,9 +154,7 @@ final class MemoLockView: NSView {
         // 잠금 화면은 밝은 모양으로 그리고, 글자는 제목과 같은 먹색을 쓴다.
         appearance = NSAppearance(named: .aqua)
         let ink = NSColor.black.withAlphaComponent(0.72)
-        let icon = NSImageView(image: NSImage(systemSymbolName: "lock", accessibilityDescription: "잠긴 메모")!)
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
-        icon.contentTintColor = ink
+        let icon = NSImageView(image: MemoGlyphs.lock(locked: true, pointSize: 30, ink: ink))
         icon.setAccessibilityLabel("잠긴 메모")
         message.textColor = ink
         message.font = .systemFont(ofSize: 13, weight: .medium)

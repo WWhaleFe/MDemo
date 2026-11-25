@@ -957,9 +957,18 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     private func installLockControls() {
-        configure(lockMenuButton, symbol: "lock", description: "암호 메모", help: "암호 메모 메뉴", action: #selector(showLockMenu), size: 20)
-        lockMenuButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
-        lockMenuButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        // 핀 · 접기 · 색 단추와 같은 상자와 그림 크기로 맞춘다.
+        let side = Self.closeButtonSize(for: Self.chromeFontSize)
+        configure(
+            lockMenuButton, symbol: "lock", description: "암호 메모",
+            help: meta.isLocked ? "암호 바꾸기 · 일반 메모로 옮기기" : "암호 메모로 옮기기",
+            action: #selector(showLockMenu), size: side
+        )
+        // 일반 메모는 열린 자물쇠(누르면 잠금), 잠긴 메모는 닫힌 자물쇠 + 라임 점.
+        lockMenuButton.image = MemoGlyphs.lock(locked: meta.isLocked, pointSize: side * 0.8, ink: NSColor.black.withAlphaComponent(0.62))
+        lockMenuButton.imageScaling = .scaleNone
+        lockMenuButton.widthAnchor.constraint(equalToConstant: side).isActive = true
+        lockMenuButton.heightAnchor.constraint(equalToConstant: side).isActive = true
         if meta.isLocked {
             // 열려 있는 동안에도 디스크로 내보내는 경로는 제공하지 않는다.
             exportButton.isEnabled = false
@@ -1079,6 +1088,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     @objc private func showLockMenu() {
+        // 일반 메모는 고를 것이 하나뿐이라 메뉴 없이 바로 암호 창을 띄운다. 그 창에서 취소하면 된다.
+        if !meta.isLocked { onMoveToLocked?(memoID); return }
         let menu = NSMenu()
         menu.autoenablesItems = false
         let titles = meta.isLocked ? ["암호 바꾸기…", "일반 메모로 옮기기…"] : ["암호 메모로 옮기기…"]

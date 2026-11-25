@@ -134,6 +134,12 @@ runner.test("양쪽에서 동시에 고치면 최신본이 남고 진 쪽은 사
         t.expectEqual(copies.count, 1, "사본이 목록에 없다")
         let copyBody = copies.first.flatMap { book.store.loadDocument(id: $0.id)?.body }
         t.expectEqual(copyBody, "맥미니가 고친 내용", "진 쪽 내용이 보존되지 않았다")
+
+        // 충돌 사본은 같은 회차에 반대쪽에도 올라가, 맥미니가 한 번만 맞춰도 받는다.
+        _ = try mini.sync.sync()
+        mini.reload()
+        let miniCopies = mini.store.summaries.filter { $0.meta.conflictOf == meta.id }
+        t.expectEqual(miniCopies.map(\.id), copies.map(\.id), "충돌 사본이 맥미니에 오지 않았다")
     }
 }
 
@@ -1918,6 +1924,22 @@ await runner.testAsync("노션 토큰 저장과 로그아웃 삭제 (메모리 �
     t.expectEqual(targets.target, NotionTarget(type: .database, id: "db", title: "표"))
     targets.target = nil
     t.expectNil(targets.target)
+}
+
+runner.test("로그인 결과 페이지는 밖에서 아무것도 불러오지 않고 오류 문구를 이스케이프한다") { t in
+    let ok = LoopbackReceiver.resultPage(success: true, message: "", service: "구글 드라이브")
+    let bad = LoopbackReceiver.resultPage(success: false, message: "<script>x</script>", service: "노션")
+    t.expect(ok.contains("로그인했습니다") && ok.contains("구글 드라이브 연결이 끝났습니다"))
+    t.expect(bad.contains("&lt;script&gt;") && !bad.contains("<script>"), "오류 문구가 이스케이프되지 않았다")
+    for page in [ok, bad] {
+        t.expect(!page.contains("http://") && !page.contains("https://") && !page.contains("@import"), "외부 자원을 부르면 안 된다")
+    }
+    // 눈으로 확인할 때: MDEMO_DUMP_LOGIN_PAGE=1 make test → 임시 폴더에 두 페이지를 쓴다.
+    if ProcessInfo.processInfo.environment["MDEMO_DUMP_LOGIN_PAGE"] == "1" {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        try? ok.write(to: dir.appendingPathComponent("mdemo-login-ok.html"), atomically: true, encoding: .utf8)
+        try? bad.write(to: dir.appendingPathComponent("mdemo-login-fail.html"), atomically: true, encoding: .utf8)
+    }
 }
 
 runner.finish()

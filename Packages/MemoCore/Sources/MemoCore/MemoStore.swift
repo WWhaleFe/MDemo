@@ -157,8 +157,13 @@ public final class MemoStore {
             defer { plaintext.resetBytes(in: 0..<plaintext.count) }
             guard let session = lockSessions[id], let encrypted = try? session.seal(plaintext) else { return false }
             document.body = encrypted.base64EncodedString()
-        } else { document.body = body }
-        document.meta.modified = Date()
+        } else {
+            // 같은 내용이면 쓰지 않는다. 동기화로 받은 메모를 열린 창이 다시 읽어 그대로 저장하면
+            // 수정 시각만 올라가 다음 동기화가 같은 내용을 되올리게 된다.
+            if document.body == body { return true }
+            document.body = body
+        }
+        document.meta.modified = MemoMeta.now()
         do { try repository.save(document) } catch { return false }
         updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(body.prefix(200)))
         return true
@@ -167,10 +172,13 @@ public final class MemoStore {
     /// 메타데이터만 갱신한다 (색상·투명도·열림 상태 등).
     public func updateMeta(id: MemoID, _ transform: (inout MemoMeta) -> Void) {
         guard var document = try? repository.load(id: id) else { return }
-        let wasLocked = document.meta.isLocked
+        let before = document.meta
         transform(&document.meta)
-        guard document.meta.isLocked == wasLocked else { return }
-        document.meta.modified = Date()
+        guard document.meta.isLocked == before.isLocked else { return }
+        // 바뀐 것이 없으면 쓰지 않는다. 앱을 켤 때 열린 창마다 `open: true`를 다시 쓰며
+        // 수정 시각이 올라가, 동기화가 내용 변화 없는 메모를 매번 올리고 두 기기에서 충돌 사본을 만들었다.
+        guard document.meta != before else { return }
+        document.meta.modified = MemoMeta.now()
         do { try repository.save(document) } catch { return }
         updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(document.body.prefix(200)))
     }

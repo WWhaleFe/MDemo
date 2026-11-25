@@ -59,10 +59,10 @@ public actor GoogleSession: AccessTokenProvider {
             try store.save(GoogleCredentials(email: email, refreshToken: refresh))
             cachedToken = tokens.accessToken
             expiry = now().addingTimeInterval(tokens.expiresIn)
-            receiver.respond(success: true, message: "")
+            receiver.respond(success: true, message: "", service: "구글 드라이브")
             return email
         } catch {
-            receiver.respond(success: false, message: error.localizedDescription)
+            receiver.respond(success: false, message: error.localizedDescription, service: "구글 드라이브")
             throw error
         }
     }

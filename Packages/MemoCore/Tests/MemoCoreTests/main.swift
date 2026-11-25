@@ -424,6 +424,31 @@ runner.test("열림 상태는 파일에 남아 재시작 복원의 근거가 된
     }
 }
 
+runner.test("이미 열린 메모를 다시 열림으로 기록해도 파일과 수정 시각이 그대로다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository, keychain: testKeychain)
+        let meta = store.createMemo()
+        let file = root.appendingPathComponent("memos/\(meta.id.rawValue)/memo.md")
+        let before = try Data(contentsOf: file)
+
+        // 앱을 켤 때 열린 창마다 부르는 경로. 바뀐 것이 없으면 쓰지 않아야 동기화가 헛돌지 않는다.
+        Thread.sleep(forTimeInterval: 0.01)
+        store.setOpen(id: meta.id, isOpen: true)
+
+        t.expectEqual(try Data(contentsOf: file), before, "바뀐 것이 없는데 파일을 다시 썼다")
+
+        // 본문도 같다. 같은 내용을 다시 저장해도 쓰지 않는다.
+        _ = store.saveBody(id: meta.id, body: "같은 내용")
+        let saved = try Data(contentsOf: file)
+        Thread.sleep(forTimeInterval: 0.01)
+        t.expect(store.saveBody(id: meta.id, body: "같은 내용"), "같은 내용 저장은 성공으로 본다")
+        t.expectEqual(try Data(contentsOf: file), saved, "같은 본문인데 파일을 다시 썼다")
+    }
+}
+
 runner.test("휴지통으로 옮기면 목록에서 사라진다 (TRS-01)") { t in
     let (repository, root) = try makeTemporaryRepository()
     defer { try? FileManager.default.removeItem(at: root) }

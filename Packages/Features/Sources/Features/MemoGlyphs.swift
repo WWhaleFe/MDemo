@@ -45,3 +45,31 @@ struct ExportImageGlyph: View {
         .accessibilityHidden(true)
     }
 }
+
+/// 암호 단추 기호. AppKit 쪽 `MemoGlyphs.lock`과 같은 좌표 (24 상자, 시안 B + D).
+struct LockGlyph: View {
+    var locked: Bool
+    var body: some View {
+        ZStack {
+            Path { path in
+                path.addRoundedRect(in: CGRect(x: 5, y: 10.5, width: 14, height: 10), cornerSize: CGSize(width: 2.5, height: 2.5))
+                path.move(to: CGPoint(x: 8, y: 10.5))
+                if locked {
+                    path.addLine(to: CGPoint(x: 8, y: 8))
+                    path.addArc(center: CGPoint(x: 12, y: 8), radius: 4, startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false)
+                    path.addLine(to: CGPoint(x: 16, y: 10.5))
+                } else {
+                    path.addLine(to: CGPoint(x: 8, y: 7.5))
+                    path.addArc(center: CGPoint(x: 12, y: 7.5), radius: 4, startAngle: .degrees(180), endAngle: .degrees(335), clockwise: false)
+                }
+                if !locked { path.addEllipse(in: CGRect(x: 10.4, y: 13.9, width: 3.2, height: 3.2)) }
+            }.stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            if locked {
+                Circle().fill(ListTheme.lime)
+                    .frame(width: 4.8, height: 4.8).position(x: 12, y: 15.5)
+            }
+        }
+        .frame(width: 24, height: 24)
+    }
+}
+
