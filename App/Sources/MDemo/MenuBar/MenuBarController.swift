@@ -29,14 +29,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var rememberLastSizeItem: NSMenuItem?
     private let syncStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var autoSyncItem: NSMenuItem?
-    private var readableCopyItem: NSMenuItem?
-    private var pushItem: NSMenuItem?
-    private var pullItem: NSMenuItem?
     private var googleSignInItem: NSMenuItem?
     private let googleInfoItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var googleSyncNowItem: NSMenuItem?
     private var googleSignOutItem: NSMenuItem?
-    private var iCloudSeparator: NSMenuItem?
     private var launchAtLoginItem: NSMenuItem?
     private let syncCoordinator: SyncCoordinator
     private let notionCoordinator: NotionCoordinator
@@ -422,19 +418,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         alert.runModal()
     }
 
-    // MARK: - 동기화 (iCloud 또는 구글 드라이브, SYNC-02~05, SYNC-09)
+    // MARK: - 동기화 (구글 드라이브, SYNC-02~05, SYNC-09)
+    // iCloud 동기화는 Windows판이 쓸 수 없어 없앴다. 동기화는 구글 드라이브 하나다.
 
     private func buildSyncMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
 
-        // 로그아웃 상태(iCloud): 저장 · 불러오기와 구글 로그인
-        let push = item(title: "지금 iCloud에 저장", action: #selector(pushNow), key: "")
-        pushItem = push
-        menu.addItem(push)
-        let pull = item(title: "iCloud에서 불러오기", action: #selector(pullNow), key: "")
-        pullItem = pull
-        menu.addItem(pull)
+        // 로그아웃 상태: 구글 로그인
         let signIn = item(title: "구글 계정으로 로그인…", action: #selector(signInWithGoogle), key: "")
         signIn.toolTip = "로그인만 하면 구글 드라이브로 동기화합니다. 권한은 앱이 만든 파일에만 한정됩니다"
         googleSignInItem = signIn
@@ -445,22 +436,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let syncNow = item(title: "지금 맞추기", action: #selector(googleSyncNow), key: "")
         googleSyncNowItem = syncNow
         menu.addItem(syncNow)
-        let separator = NSMenuItem.separator()
-        iCloudSeparator = separator
-        menu.addItem(separator)
+        menu.addItem(.separator())
 
         let auto = item(title: "자동으로 맞추기 (5분마다)", action: #selector(toggleAutoSync), key: "")
         auto.toolTip = "앱을 켤 때와 5분마다, 끌 때 자동으로 주고받습니다"
         autoSyncItem = auto
         menu.addItem(auto)
 
-        let readable = item(title: "iPhone 읽기용 사본 만들기", action: #selector(toggleReadableCopy), key: "")
-        readable.toolTip = "iCloud Drive의 \"\(ReadableCopy.folderName)\" 폴더 안, 이 맥 이름의 하위 폴더에 본문만 담은 사본을 동기화할 때마다 갱신합니다. 끄면 이미 만든 폴더는 그대로 둡니다"
-        readableCopyItem = readable
-        menu.addItem(readable)
-
         let signOut = item(title: "로그아웃", action: #selector(signOutGoogle), key: "")
-        signOut.toolTip = "토큰을 폐기하고 이 맥의 드라이브 사본을 지운 뒤 iCloud로 돌아갑니다. 메모는 그대로 남습니다"
+        signOut.toolTip = "토큰을 폐기하고 이 맥의 드라이브 사본을 지웁니다. 이 맥의 메모와 드라이브의 파일은 그대로 남습니다"
         googleSignOutItem = signOut
         menu.addItem(signOut)
         menu.addItem(.separator())
@@ -513,13 +497,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func refreshSyncMenuState() {
         autoSyncItem?.state = preferences.autoSyncEnabled ? .on : .off
-        readableCopyItem?.state = preferences.readableCopyEnabled ? .on : .off
 
         let isGoogle = syncCoordinator.googleEmail != nil && syncCoordinator.isGoogleBackend
-        // iCloud 항목은 로그아웃 상태에서만, 구글 항목은 로그인 상태에서만 보인다.
-        for item in [pushItem, pullItem, readableCopyItem, googleSignInItem] { item?.isHidden = isGoogle }
+        // 로그인 항목은 로그아웃 상태에서만, 나머지 구글 항목은 로그인 상태에서만 보인다.
+        googleSignInItem?.isHidden = isGoogle
         for item in [googleInfoItem, googleSyncNowItem, googleSignOutItem] { item?.isHidden = !isGoogle }
 
+        autoSyncItem?.isEnabled = isGoogle
         if isGoogle {
             setInfoTitle(googleInfoItem, "구글 드라이브 · \(syncCoordinator.googleEmail ?? "")")
             setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
@@ -531,12 +515,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         googleSignInItem?.title = configured ? "구글 계정으로 로그인…" : "구글 로그인 설정이 없습니다"
         googleSignInItem?.action = configured ? #selector(signInWithGoogle) : nil
 
-        if syncCoordinator.isAvailable {
+        if case .signingIn = syncCoordinator.status {
+            setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
+        } else if case .failed = syncCoordinator.status {
             setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
         } else {
-            setInfoTitle(syncStatusItem, "iCloud Drive가 꺼져 있습니다")
-            autoSyncItem?.isEnabled = false
-            readableCopyItem?.isEnabled = false
+            setInfoTitle(syncStatusItem, "구글 계정으로 로그인하면 여러 기기 사이에서 동기화합니다")
         }
     }
 
@@ -550,18 +534,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func signOutGoogle() {
         syncCoordinator.signOutGoogle()
-    }
-
-    @objc private func pushNow() {
-        syncCoordinator.run(mode: .push)
-    }
-
-    @objc private func pullNow() {
-        syncCoordinator.run(mode: .pull)
-    }
-
-    @objc private func toggleReadableCopy() {
-        preferences.readableCopyEnabled.toggle()
     }
 
     @objc private func toggleAutoSync() {

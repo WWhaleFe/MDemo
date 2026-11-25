@@ -37,11 +37,9 @@ final class SyncCoordinator {
         }
     }
 
-    /// 동기화 방법. iCloud는 폴더를 직접 맞추고, 구글은 거울 폴더를 거쳐 드라이브와 맞춘다.
-    private enum Backend: Sendable {
-        case icloud(SyncService)
-        case google(DriveMirrorSync)
-    }
+    /// 동기화는 구글 드라이브 하나뿐이다. Windows판도 같은 드라이브로 맞추기 위해 iCloud 동기화는 없앴다.
+    /// 거울 폴더를 거쳐 드라이브와 맞춘다. 로그인하지 않았으면 nil.
+    private typealias Backend = DriveMirrorSync
 
     private(set) var status: Status = .idle
     var isAvailable: Bool { backend != nil }
@@ -63,7 +61,7 @@ final class SyncCoordinator {
 
     /// 개발용: `--data-dir=<폴더>`와 `--google-sync-test`를 함께 주면 시험 폴더로 실제 구글 동기화를 시험한다.
     /// 거울 폴더 · 상태 파일은 `<폴더>-google`에, 토큰은 실제와 다른 키체인 항목에 둔다.
-    /// 실제 데이터 폴더, 실제 로그인, 설정(sync.target)은 건드리지 않는다.
+    /// 실제 데이터 폴더와 실제 로그인은 건드리지 않는다.
     static let googleTestRoot: URL? = {
         guard let dataRoot = AppContainer.dataDirectoryOverride,
               CommandLine.arguments.contains("--google-sync-test") else { return nil }
@@ -83,37 +81,15 @@ final class SyncCoordinator {
         self.googleConfig = (isTestMode && !googleTest) ? nil : GoogleOAuthConfig.load()
         self.isGoogleConfigured = googleConfig != nil
 
-        if googleTest {
-            if let config = googleConfig, let credentials = (try? tokenStore.load()) ?? nil {
-                let session = GoogleSession(config: config, store: tokenStore, transport: GoogleHTTP())
-                self.session = session
-                self.googleEmail = credentials.email
-                self.backend = .google(Self.makeGoogleSync(session: session))
-            } else {
-                self.backend = nil
-            }
-        } else if isTestMode {
-            self.backend = nil
-        } else if preferences.syncTarget == .google, let config = googleConfig,
-                  let credentials = (try? tokenStore.load()) ?? nil {
+        // 시험 모드(--data-dir)는 --google-sync-test를 함께 줄 때만 구글을 쓴다.
+        if let config = googleConfig, let credentials = (try? tokenStore.load()) ?? nil {
             let session = GoogleSession(config: config, store: tokenStore, transport: GoogleHTTP())
             self.session = session
             self.googleEmail = credentials.email
-            self.backend = .google(Self.makeGoogleSync(session: session))
+            self.backend = Self.makeGoogleSync(session: session)
         } else {
-            // 구글로 설정돼 있어도 토큰을 잃었으면(키체인 삭제 등) iCloud로 돌아간다.
-            if preferences.syncTarget == .google { preferences.syncTarget = .icloud }
-            self.backend = Self.makeICloudBackend()
+            self.backend = nil
         }
-    }
-
-    private static func makeICloudBackend() -> Backend? {
-        guard let remoteRoot = SyncService.defaultRemoteRoot() else { return nil }
-        return .icloud(SyncService(
-            localRoot: FileMemoRepository.defaultRootDirectory(),
-            remoteRoot: remoteRoot,
-            stateURL: SyncService.defaultStateURL()
-        ))
     }
 
     private static func makeGoogleSync(session: GoogleSession) -> DriveMirrorSync {
@@ -137,11 +113,8 @@ final class SyncCoordinator {
         return (DriveMirrorSync.defaultGoogleFolder(), DriveMirrorSync.defaultEngineStateURL())
     }
 
-    /// 구글 드라이브가 대상인가. iPhone 읽기용 사본은 iCloud 대상일 때만 만든다.
-    var isGoogleBackend: Bool {
-        if case .google = backend { return true }
-        return false
-    }
+    /// 구글에 로그인해 동기화할 수 있는가.
+    var isGoogleBackend: Bool { backend != nil }
 
     // MARK: - 구글 로그인 · 로그아웃
 
@@ -160,10 +133,10 @@ final class SyncCoordinator {
                 guard let self else { return }
                 self.session = session
                 self.googleEmail = email
-                self.backend = .google(Self.makeGoogleSync(session: session))
-                if Self.googleTestRoot == nil { self.preferences.syncTarget = .google }
+                self.backend = Self.makeGoogleSync(session: session)
                 self.isRunning = false
                 self.run(mode: .both)
+                self.scheduleTimer()
             } catch {
                 self?.isRunning = false
                 self?.status = .failed(error.localizedDescription)
@@ -171,10 +144,10 @@ final class SyncCoordinator {
         }
     }
 
-    /// 토큰 폐기를 시도하고 키체인 · 거울 폴더 · 상태 파일을 지운 뒤 iCloud로 돌아간다.
+    /// 토큰 폐기를 시도하고 키체인 · 거울 폴더 · 상태 파일을 지운다. 로그아웃하면 동기화하지 않는다.
     /// 데이터 폴더의 메모는 그대로다.
     func signOutGoogle() {
-        guard case .google = backend, let session, !isRunning else {
+        guard backend != nil, let session, !isRunning else {
             if isRunning { status = .failed("동기화 중입니다. 끝난 뒤 다시 눌러 주세요") }
             return
         }
@@ -187,12 +160,7 @@ final class SyncCoordinator {
             guard let self else { return }
             self.session = nil
             self.googleEmail = nil
-            if Self.googleTestRoot == nil {
-                self.preferences.syncTarget = .icloud
-                self.backend = Self.makeICloudBackend()
-            } else {
-                self.backend = nil
-            }
+            self.backend = nil
             self.status = .idle
             self.isRunning = false
             self.scheduleTimer()
@@ -226,23 +194,18 @@ final class SyncCoordinator {
     /// 앱을 끄기 직전에는 기다리지 않고 바로 올린다.
     func syncBeforeTermination() {
         guard let backend, preferences.autoSyncEnabled else { return }
-        switch backend {
-        case .icloud(let service):
-            _ = try? service.sync(mode: .push)
-        case .google(let drive):
-            // 끄기 직전이라 잠깐만 기다린다. 못 끝낸 것은 다음 실행에서 이어 한다.
-            let done = DispatchSemaphore(value: 0)
-            Task.detached {
-                _ = try? await drive.sync(mode: .push)
-                done.signal()
-            }
-            _ = done.wait(timeout: .now() + 10)
+        // 끄기 직전이라 잠깐만 기다린다. 못 끝낸 것은 다음 실행에서 이어 한다.
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            _ = try? await backend.sync(mode: .push)
+            done.signal()
         }
+        _ = done.wait(timeout: .now() + 10)
     }
 
     func run(mode: SyncMode) {
         guard let backend else {
-            status = .failed(SyncError.iCloudUnavailable.localizedDescription)
+            status = .failed("구글 계정으로 로그인하면 동기화합니다")
             return
         }
         // 개인정보 정리 등 다른 일이 도는 중이면 버리지 않고 끝난 뒤 돈다.
@@ -254,21 +217,11 @@ final class SyncCoordinator {
 
         isRunning = true
         status = .syncing
-        let makesReadableCopy = preferences.readableCopyEnabled
 
         Task.detached(priority: .utility) {
             let result: Result<SyncReport, Error>
             do {
-                switch backend {
-                case .icloud(let service):
-                    result = .success(try service.sync(mode: mode))
-                    // 읽기용 사본은 덤이다. 실패해도 동기화 결과에는 영향을 주지 않는다.
-                    if makesReadableCopy, let output = ReadableCopy.defaultOutputRoot() {
-                        _ = try? ReadableCopy(localRoot: service.localRoot, outputRoot: output).update()
-                    }
-                case .google(let drive):
-                    result = .success(try await drive.sync(mode: mode))
-                }
+                result = .success(try await backend.sync(mode: mode))
             } catch {
                 result = .failure(error)
             }
@@ -287,7 +240,6 @@ final class SyncCoordinator {
         let backend = backend
         let lockedCount = store.summaries.filter { $0.meta.isLocked }.count
         let localRoot = AppContainer.dataDirectoryOverride ?? FileMemoRepository.defaultRootDirectory()
-        let readableOutput = (AppContainer.dataDirectoryOverride == nil && !isGoogleBackend) ? ReadableCopy.defaultOutputRoot() : nil
         Task.detached(priority: .utility) { [weak self] in
             let result: Result<SyncReport, Error>
             do {
@@ -300,16 +252,9 @@ final class SyncCoordinator {
                     if exists { removedLocal += 1 }
                 }
                 var report: SyncReport
-                switch backend {
-                case .icloud(let service): report = try service.enforcePrivacy()
-                case .google(let drive): report = try await drive.enforcePrivacy()
-                case nil: report = SyncReport()
-                }
+                if let backend { report = try await backend.enforcePrivacy() } else { report = SyncReport() }
                 report.deletions += removedLocal
                 if backend == nil { report.lockedLocal = lockedCount }
-                if let output = readableOutput {
-                    _ = try ReadableCopy(localRoot: localRoot, outputRoot: output).update()
-                }
                 result = .success(report)
             } catch { result = .failure(error) }
             await MainActor.run { self?.finish(result) }
