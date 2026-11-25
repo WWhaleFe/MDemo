@@ -184,14 +184,40 @@ public struct MemoListView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).fixedSize().help("AirDrop으로 받은 사진으로 새 메모")
                 .accessibilityLabel("AirDrop으로 받은 사진으로 새 메모")
+            notionButton
             Button(action: model.windowActions.createLockedMemo) {
-                Image(systemName: "lock.badge.plus")
-            }.buttonStyle(.plain).help("새 암호 메모 (⌘⌥N)").accessibilityLabel("새 암호 메모")
+                // 옆의 핀 · 화면 모드 단추와 같은 크기 · 색. 예전 기호(lock.badge.plus)는 없는 macOS가 있어 단추가 사라졌다.
+                // 만들어질 것은 잠긴 메모라 닫힌 자물쇠 + 라임 점으로 보인다.
+                // 옆 AirDrop 기호와 같은 방식(24 상자 그대로)으로 그려 눈으로 같은 크기가 되게 한다.
+                LockGlyph(locked: true).foregroundStyle(ListTheme.muted)
+                    .frame(width: 18, height: 18)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).fixedSize().help("새 암호 메모 (⌘⌥N)").accessibilityLabel("새 암호 메모")
             Button(action: onCreateMemo) {
                 Label("새 메모", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(ListTheme.card)
                     .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).fixedSize().help("새 메모 (어디서든 ⌘⇧N)")
         }.padding(.horizontal, 12).frame(height: 52)
+    }
+
+    /// 고른 메모를 노션에 보낸다. 고른 것이 없거나 모두 보낼 수 없는 메모(암호 등)면 흐리게.
+    private var notionButton: some View {
+        let ids = Array(model.selection)
+        let sendable = ids.filter { model.windowActions.canUploadToNotion($0) }
+        return Button { model.windowActions.uploadToNotion(sendable) } label: {
+            NotionGlyph().foregroundStyle(ListTheme.muted)
+                .frame(width: 18, height: 18)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).fixedSize()
+        .disabled(sendable.isEmpty || model.isShowingTrash)
+        .opacity(sendable.isEmpty || model.isShowingTrash ? 0.45 : 1)
+        .help(ids.isEmpty ? "메모를 고르면 노션에 보낼 수 있습니다"
+              : sendable.isEmpty ? "암호 메모는 노션에 보낼 수 없습니다"
+              : "고른 메모 \(sendable.count)개를 노션에 보내기")
+        .accessibilityLabel("고른 메모 노션에 보내기")
     }
 
     /// 화면 모드 단추. 누를 때마다 시스템 → 라이트 → 다크 → 시스템 순으로 바뀌고, 우클릭하면 목록에서 바로 고른다.
@@ -364,7 +390,10 @@ public struct MemoListView: View {
                                 Text(memo.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                                 if memo.meta.conflictOf != nil { ConflictChip() }
                             }.frame(maxWidth: 240, alignment: .leading)
-                            Text(model.cardInfo(for: memo).singleLinePreview).foregroundStyle(ListTheme.text2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                            HStack(spacing: 4) {
+                                if memo.meta.isLocked { LockedMark() }
+                                Text(model.cardInfo(for: memo).singleLinePreview).lineLimit(1)
+                            }.foregroundStyle(ListTheme.text2).frame(maxWidth: .infinity, alignment: .leading)
                             MemoLinkChip(id: memo.id, index: index).frame(width: 136, alignment: .leading)
                             Group { if !model.isShowingTrash && model.windowActions.isVisible(memo.id) { LimeDot() } else { Color.clear } }.frame(width: 8, height: 8)
                             VStack(alignment: .trailing, spacing: 0) {
@@ -659,6 +688,10 @@ public struct MemoListView: View {
                     .disabled(!model.canDuplicate(ids))
                     .help(ids.contains { index.summaries[$0]?.meta.isLocked == true }
                           ? "암호가 걸린 메모는 복제할 수 없습니다" : "선택한 메모를 첨부와 함께 복제합니다")
+                Button(ids.count == 1 ? "노션에 올리기" : "\(ids.count)개 노션에 올리기") { model.windowActions.uploadToNotion(ids) }
+                    .disabled(!ids.contains { model.windowActions.canUploadToNotion($0) })
+                    .help(ids.allSatisfy { !model.windowActions.canUploadToNotion($0) }
+                          ? "암호 메모는 노션에 올릴 수 없습니다" : "선택한 메모를 노션에 올립니다. 암호 메모는 빠집니다")
                 if ids.count == 1, let id = ids.first {
                     if index.summaries[id]?.meta.isLocked == true {
                         Button("암호 바꾸기…") { model.windowActions.changePassword(id) }.disabled(!model.windowActions.isUnlocked(id))

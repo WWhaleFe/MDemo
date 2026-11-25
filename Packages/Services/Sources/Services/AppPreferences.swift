@@ -100,14 +100,9 @@ public final class AppPreferences {
         )
     }
 
-    /// iCloud 자동 동기화를 켤지 (SYNC-04, SYNC-05).
+    /// 구글 드라이브 자동 동기화를 켤지 (SYNC-04, SYNC-05).
     public var autoSyncEnabled: Bool {
         didSet { store.set(autoSyncEnabled, forKey: Key.autoSyncEnabled) }
-    }
-
-    /// 동기화가 끝날 때마다 iCloud Drive에 iPhone 읽기용 사본을 갱신할지.
-    public var readableCopyEnabled: Bool {
-        didSet { store.set(readableCopyEnabled, forKey: Key.readableCopyEnabled) }
     }
 
     /// 자동 동기화 주기(분). 너무 짧으면 파일을 계속 뒤지게 된다.
@@ -174,7 +169,8 @@ public final class AppPreferences {
         static let hoverOpaque = "memo.hoverOpaque"
         static let autoSyncEnabled = "sync.autoEnabled"
         static let autoSyncMinutes = "sync.autoMinutes"
-        static let readableCopyEnabled = "sync.readableCopy"
+        /// 예전 판(iCloud 동기화)의 값. 읽지 않고 지운다.
+        static let retired = ["sync.target", "sync.readableCopy"]
         static let formatToolbarPosition = "memo.formatToolbarPosition"
         static let autoEmptyTrash = "trash.autoEmpty"
         static let autoCheckUpdate = "update.autoCheck"
@@ -191,8 +187,7 @@ public final class AppPreferences {
 
         // 동기화는 사용자가 켜야 시작한다. 모르는 사이에 파일이 오가면 곤란하다.
         self.autoSyncEnabled = store.object(forKey: Key.autoSyncEnabled) as? Bool ?? false
-        // 저장된 값이 없으면 켜 둔다. 동기화를 켠 사람만 이 사본을 만들게 된다.
-        self.readableCopyEnabled = store.object(forKey: Key.readableCopyEnabled) as? Bool ?? true
+        for key in Key.retired { store.removeObject(forKey: key) }
         let savedMinutes = store.double(forKey: Key.autoSyncMinutes)
         self.autoSyncMinutes = savedMinutes > 0 ? savedMinutes : 5
 

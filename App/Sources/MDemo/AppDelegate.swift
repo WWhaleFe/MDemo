@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             preferences: container.preferences,
             listWindow: container.listWindow,
             syncCoordinator: container.syncCoordinator,
+            notionCoordinator: container.notionCoordinator,
             updateChecker: container.updateChecker
         )
 

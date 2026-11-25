@@ -32,23 +32,32 @@ struct BoardLineTools: View {
         return values.isEmpty ? MemoLinkKind.basic : values
     }
     private var shown: [MemoLinkKind] {
-        Array(visible.prefix(max(0, Int((availableWidth - 160) / (style == "A" ? 60 : 48)))))
+        {
+        // 실제 칸 크기로 계산한다: 선 단추 56(견본만 44) + 간격 2, 묶음 구분선 8, 오른쪽 더 보기 · 뜻 · 이름표 세 칸과 여백.
+        let cell: CGFloat = style == "A" ? 52 : 42
+        let tools: CGFloat = (style == "A" ? 44 : 32) * 3 + 40
+        let groups = Set(visible.map(\.group)).count
+        let room = availableWidth - tools - CGFloat(max(0, groups - 1)) * 8
+        return Array(visible.prefix(max(0, Int(room / cell))))
+    }()
     }
     var body: some View {
         HStack(spacing: 2) {
             ForEach(Array(shown.enumerated()), id: \.element) { offset, kind in
-                if offset > 0 && shown[offset - 1].group != kind.group { Divider().frame(height: 30).padding(.horizontal, 2) }
+                if offset > 0 && shown[offset - 1].group != kind.group { Divider().frame(height: 22).padding(.horizontal, 2) }
                 Button { choose(kind) } label: {
-                    VStack(spacing: 0) {
-                        LineSample(kind: kind).frame(width: 40, height: 24)
-                        if style == "A" { Text(kind.displayName).font(.system(size: 11, weight: selected == kind ? .semibold : .regular)) }
-                    }.frame(width: style == "A" ? 56 : 44, height: 44)
+                    VStack(spacing: 1) {
+                        // 화살표 · 원 크기가 고정이라 작은 칸에 바로 그리면 뭉개진다. 원래 크기(44×24)로 그린 뒤 통째로 줄인다.
+                        LineSample(kind: kind).frame(width: 44, height: 24).scaleEffect(style == "A" ? 0.74 : 0.7)
+                            .frame(width: style == "A" ? 34 : 30, height: style == "A" ? 14 : 16)
+                        if style == "A" { Text(kind.displayName).font(.system(size: 10, weight: selected == kind ? .semibold : .regular)) }
+                    }.frame(width: style == "A" ? 50 : 40, height: style == "A" ? 34 : 28)
                         .background(selected == kind ? ListTheme.chipBg : .clear, in: RoundedRectangle(cornerRadius: 7))
                         .overlay(RoundedRectangle(cornerRadius: 7).stroke(selected == kind ? ListTheme.ink : .clear, lineWidth: 1.5))
                         .contentShape(Rectangle())
                 }.help(kind.help).accessibilityLabel(kind.help)
             }
-            if !shown.isEmpty { Divider().frame(height: 30) }
+            if !shown.isEmpty { Divider().frame(height: 22) }
             Menu {
                 ForEach(MemoLinkKind.allCases.filter { !shown.contains($0) }, id: \.self) { kind in
                     Button { choose(kind) } label: { Label { Text(kind.displayName) } icon: { LineSample.menuIcon(kind) } }
@@ -57,11 +66,11 @@ struct BoardLineTools: View {
                 Divider()
                 Button("도구 막대에 보일 선…") { visibility = true }
                 Menu("단추 모양") {
-                    Picker("단추 모양", selection: $style) { Text("이름 함께(A, 기본)").tag("A"); Text("견본만(C)").tag("C") }
+                    Picker("단추 모양", selection: $style) { Text("이름 함께 (기본, 높이 40)").tag("A"); Text("견본만 (높이 34)").tag("C") }
                 }
             } label: {
-                VStack(spacing: 0) { Text("⋯").font(.system(size: 20)); if style == "A" { Text("더 보기").font(.system(size: 11)) } }.frame(width: 48, height: 44)
-            }.menuStyle(.borderlessButton).fixedSize().help("더 보기")
+                toolCell(Image(systemName: "ellipsis"), title: "더 보기", active: false)
+            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().help("더 보기")
                 .popover(isPresented: $visibility) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("도구 막대에 보일 선").font(.headline)
@@ -76,7 +85,7 @@ struct BoardLineTools: View {
                         HStack { Button("모두 보이기") { save(MemoLinkKind.allCases) }; Button("기본 6개로") { save(MemoLinkKind.basic) } }
                     }.padding(16)
                 }
-            Button { legend = true } label: { Image(systemName: "info.circle").frame(width: 24, height: 30) }.help("선 이름과 뜻")
+            Button { legend = true } label: { toolCell(Image(systemName: "info.circle"), title: "뜻", active: legend) }.help("선 이름과 뜻")
                 .popover(isPresented: $legend) {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(MemoLinkKind.allCases, id: \.self) { kind in
@@ -89,10 +98,22 @@ struct BoardLineTools: View {
                     }.padding(16).frame(width: 430)
                 }
             Button { labels.toggle() } label: {
-                Label("이름표", systemImage: "tag").padding(6).background(labels ? ListTheme.chipBg : .clear, in: RoundedRectangle(cornerRadius: 6))
+                toolCell(Image(systemName: "tag"), title: "이름표", active: labels)
             }.help("보드 선 이름표 보이기").accessibilityValue(labels ? "켬" : "끔")
         }.buttonStyle(.plain)
     }
+    /// 선 단추와 같은 칸: 위에 그림, 아래에 이름(A 모양일 때). 선 단추와 같은 높이(A 34, 견본만 28)로 맞춰 막대 안에서 가운데 정렬된다.
+    private func toolCell(_ image: Image, title: String, active: Bool) -> some View {
+        VStack(spacing: 0) {
+            image.font(.system(size: style == "A" ? 12 : 14, weight: .regular)).frame(width: 30, height: style == "A" ? 14 : 16)
+            if style == "A" { Text(title).font(.system(size: 10, weight: active ? .semibold : .regular)) }
+        }
+        .frame(width: style == "A" ? 44 : 32, height: style == "A" ? 34 : 28)
+        .background(active ? ListTheme.ink.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
+        .foregroundStyle(ListTheme.ink)
+        .contentShape(Rectangle())
+    }
+
     private func save(_ values: [MemoLinkKind]) {
         guard !values.isEmpty else { return }
         visibleNames = MemoLinkKind.allCases.filter { values.contains($0) }.map(\.rawValue)

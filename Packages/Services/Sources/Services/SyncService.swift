@@ -2,20 +2,18 @@ import CryptoKit
 import Foundation
 import MemoCore
 
-/// iCloud Drive 폴더를 사이에 두고 기기끼리 메모를 주고받는다 (SYNC-01~06).
+/// 데이터 폴더와 "원격" 폴더 사이에서 메모를 비교하고 복사하는 동기화 엔진 (SYNC-01~06).
 ///
-/// **왜 iCloud Drive의 일반 폴더인가**: 유비쿼티 컨테이너나 CloudKit은 유료 개발자 계정이
-/// 있어야 쓸 수 있다. iCloud Drive 폴더는 일반 파일 경로라 그런 제약이 없고,
-/// 파일을 기기 사이로 나르는 일은 macOS가 알아서 한다.
-/// 이 서비스가 하는 일은 "내 폴더 ↔ iCloud 폴더" 사이의 비교와 복사뿐이다.
+/// 원격 폴더는 구글 드라이브의 거울 폴더다(`DriveMirrorSync`가 드라이브와 거울을 맞춘다).
+/// 예전에는 iCloud Drive 폴더를 원격으로 썼지만, Windows판이 쓸 수 없어 구글 드라이브만 남겼다.
 ///
-/// **작업 데이터는 늘 로컬에 둔다**: iCloud 폴더를 직접 작업 폴더로 쓰면
+/// **작업 데이터는 늘 로컬에 둔다**: 원격 폴더를 직접 작업 폴더로 쓰면
 /// 아직 내려받지 않은 파일이나 동기화 지연이 편집 경로에 끼어든다.
 public struct SyncReport: Sendable, Equatable {
     public init() {}
-    /// 내 것을 iCloud로 올린 메모 수.
+    /// 내 것을 원격으로 올린 메모 수.
     public var pushed = 0
-    /// iCloud 것을 내려받은 메모 수.
+    /// 원격 것을 내려받은 메모 수.
     public var pulled = 0
     /// 양쪽이 모두 바뀌어 사본을 남긴 메모 수 (SYNC-06).
     public var conflicts = 0
@@ -25,6 +23,8 @@ public struct SyncReport: Sendable, Equatable {
     public var unreadable = 0
     public var lockedLocal = 0
     public var removedLocalOnly = 0
+    /// 이번에 새로 만든 충돌 사본. 같은 회차 안에 반대쪽으로 올리는 데 쓴다.
+    var conflictCopies: [MemoID] = []
 
     public var isEmpty: Bool {
         pushed == 0 && pulled == 0 && conflicts == 0 && deletions == 0 && unreadable == 0 && removedLocalOnly == 0
@@ -47,21 +47,10 @@ public struct SyncReport: Sendable, Equatable {
 public enum SyncMode: Sendable {
     /// 양방향. 자동 동기화가 쓴다.
     case both
-    /// 내 변경만 올린다 ("지금 iCloud에 저장", SYNC-02).
+    /// 내 변경만 올린다 (앱을 끄기 직전, SYNC-02).
     case push
-    /// iCloud 변경만 내려받는다 ("iCloud에서 불러오기", SYNC-03).
+    /// 원격 변경만 내려받는다 (SYNC-03).
     case pull
-}
-
-public enum SyncError: Error, LocalizedError {
-    case iCloudUnavailable
-
-    public var errorDescription: String? {
-        switch self {
-        case .iCloudUnavailable:
-            return "iCloud Drive를 찾을 수 없습니다. 시스템 설정에서 iCloud Drive를 켜 주세요."
-        }
-    }
 }
 
 /// 훑은 뒤 파일이 바뀌어 이번 동기화에서는 그 메모를 건드리지 않기로 했다는 표시.
@@ -90,24 +79,13 @@ public struct SyncService: Sendable {
     }
 
     /// iCloud Drive 최상위 폴더. 꺼져 있으면 nil.
+    /// 동기화에는 더 쓰지 않는다. 예전 판 데이터를 옮겨 올 때(LegacyMigration)만 본다.
     public static func iCloudDriveRoot() -> URL? {
         let iCloudDrive = FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
         return FileManager.default.fileExists(atPath: iCloudDrive.path) ? iCloudDrive : nil
     }
-
-    /// iCloud Drive 안의 앱 폴더. iCloud Drive가 꺼져 있으면 nil.
-    public static func defaultRemoteRoot() -> URL? {
-        iCloudDriveRoot()?.appendingPathComponent(AppStorageName.folder, isDirectory: true)
-    }
-
-    public static func defaultStateURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("\(AppStorageName.folder)/sync-state.json")
-    }
-
-    public static var isICloudAvailable: Bool { defaultRemoteRoot() != nil }
 
     // MARK: - 동기화
 
@@ -143,6 +121,16 @@ public struct SyncService: Sendable {
             } catch is SkipThisRound {
                 // 훑은 뒤 파일이 바뀌었다. 덮어쓰지 않고 이 메모는 다음 동기화에서 맞춘다.
                 continue
+            }
+        }
+
+        // 충돌 사본은 이쪽 기기에만 만들어진다. 다음 회차를 기다리지 않고 바로 반대쪽에도 올린다.
+        // 안 그러면 구글 드라이브처럼 거울을 거치는 곳에서는 이 기기가 한 번 더 맞출 때까지 다른 기기가 사본을 못 본다.
+        if mode != .pull, !report.conflictCopies.isEmpty {
+            let fresh = scan(root: localRoot).entries
+            for id in report.conflictCopies {
+                guard let entry = fresh[id] else { continue }
+                try? reconcile(id: id, local: entry, remote: nil, mode: mode, state: &state, report: &report)
             }
         }
 
@@ -425,6 +413,7 @@ public struct SyncService: Sendable {
             .write(to: staging.appendingPathComponent(Self.memoFileName), options: .atomic)
         try FileManager.default.moveItem(at: staging, to: destination)
         report.conflicts += 1
+        report.conflictCopies.append(newID)
     }
 
     /// 한쪽에서 버린 메모를 다른 쪽에서도 휴지통으로 옮긴다.

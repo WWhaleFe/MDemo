@@ -346,10 +346,26 @@ extension MemoTextView {
     public override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         commitComposition()
-        guard let index = imageIndex(at: point) else { return super.menu(for: event) }
+        guard let index = imageIndex(at: point) else { return addingNotionItem(to: super.menu(for: event)) }
         window?.makeFirstResponder(self)
         setSelectedRange(NSRange(location: index, length: 1))
         return makeImageMenu()
+    }
+
+    /// 기본 우클릭 메뉴 끝에 "노션에 올리기"를 붙인다. 허용되지 않으면 흐리게 두고 이유를 도움말로 적는다.
+    private func addingNotionItem(to menu: NSMenu?) -> NSMenu? {
+        guard let menu, onRequestNotionUpload != nil else { return menu }
+        let allowed = canRequestNotionUpload?() ?? false
+        let item = NSMenuItem(title: "노션에 올리기", action: allowed ? #selector(uploadToNotionFromMenu) : nil, keyEquivalent: "")
+        item.target = self
+        if !allowed { item.toolTip = "암호 메모는 노션에 올릴 수 없습니다" }
+        menu.addItem(.separator())
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func uploadToNotionFromMenu() {
+        onRequestNotionUpload?()
     }
 
     private func makeImageMenu() -> NSMenu {

@@ -121,7 +121,7 @@ public enum MarkdownParser {
     // MARK: - 인라인
 
     /// 바깥쪽 기호부터 벗겨 낸다. 직렬화가 감싼 순서(굵게 → 기울임 → 취소선 → 형광 → 코드)의 역순이다.
-    private static func parseInline(_ text: String) -> [StyledSpan] {
+    public static func parseInline(_ text: String) -> [StyledSpan] {
         guard !text.isEmpty else { return [] }
         var spans: [StyledSpan] = []
         appendSpans(from: Array(text), format: StyledSpan(text: ""), into: &spans)

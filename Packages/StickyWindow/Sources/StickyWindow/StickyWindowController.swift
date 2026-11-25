@@ -50,6 +50,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     let airDropButton = TopBarButton()
     /// 메모를 이미지로 내보내기.
     let exportButton = TopBarButton()
+    /// 노션에 보내기. 암호 메모에서는 흐리게 둔다.
+    let notionButton = TopBarButton()
+    var notionUpload: (() -> Void)?
     let airDropDot = NSView()
     let iconDivider = NSView()
     private let iconStack = NSStackView()
@@ -100,7 +103,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         description: String,
         help: String,
         action: Selector,
-        size: CGFloat
+        size: CGFloat,
+        pointSize: CGFloat? = nil,
+        weight: NSFont.Weight = .regular
     ) {
         button.target = self
         button.action = action
@@ -110,7 +115,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         button.isBordered = false
         button.imageScaling = .scaleProportionallyUpOrDown
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: size * 0.8, weight: .regular))
+            .withSymbolConfiguration(.init(pointSize: pointSize ?? size * 0.8, weight: weight))
         button.contentTintColor = NSColor.black.withAlphaComponent(0.62)
         button.toolTip = help
     }
@@ -263,7 +268,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             description: "겉모습",
             help: "배경색과 투명도",
             action: #selector(appearanceButtonTapped),
-            size: buttonSize
+            size: buttonSize,
+            pointSize: TopBarIcon.palette,
+            weight: TopBarIcon.weight
         )
         header.addSubview(appearanceButton)
 
@@ -275,7 +282,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             description: "항상 위",
             help: "항상 위에 두기 (WIN-03)",
             action: #selector(pinButtonTapped),
-            size: buttonSize
+            size: buttonSize,
+            pointSize: TopBarIcon.pin,
+            weight: TopBarIcon.weight
         )
         header.addSubview(pinButton)
 
@@ -357,12 +366,19 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         iconStack.orientation = .horizontal
         iconStack.alignment = .centerY
         iconStack.spacing = 6
-        for view in [opacitySlider, airDropButton, exportButton, lockMenuButton, iconDivider, pinButton, foldButton, appearanceButton] {
+        for view in [opacitySlider, airDropButton, exportButton, notionButton, lockMenuButton, iconDivider, pinButton, foldButton, appearanceButton] {
             iconStack.addArrangedSubview(view)
         }
         iconStack.setCustomSpacing(8, after: opacitySlider)
         iconStack.setCustomSpacing(8, after: exportButton)
         iconStack.setCustomSpacing(8, after: iconDivider)
+        // 창이 좁으면 덜 쓰는 단추부터 묶음에서 뺀다: 노션 → 내보내기 → AirDrop.
+        // 단추가 늘어도 메모 창을 예전만큼 좁게 줄일 수 있어야 한다.
+        iconStack.detachesHiddenViews = true
+        iconStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        iconStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: 700), for: notionButton)
+        iconStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: 800), for: exportButton)
+        iconStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: 850), for: airDropButton)
         header.addSubview(iconStack)
 
         NSLayoutConstraint.activate([
@@ -542,22 +558,22 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 창을 접는다는 뜻이 분명한 그림을 쓰고,
     /// 시스템에 없는 이름이면 화살표로 물러선다, 빈 버튼이 남는 것보다 낫다.
     private func updateFoldButtonImage() {
-        let size = Self.closeButtonSize(for: Self.chromeFontSize)
         foldButton.image = Self.symbolImage(
             names: isCollapsed
                 ? ["rectangle.expand.vertical", "chevron.down"]
                 : ["rectangle.compress.vertical", "chevron.up"],
-            pointSize: size * 0.8,
-            description: isCollapsed ? "펼치기" : "접기"
+            pointSize: TopBarIcon.fold,
+            description: isCollapsed ? "펼치기" : "접기",
+            weight: TopBarIcon.foldWeight
         )
         foldButton.toolTip = isCollapsed ? "펼치기" : "접기 (제목 줄만 남기기)"
     }
 
     /// 여러 후보 중 이 시스템에 있는 첫 기호를 쓴다.
-    static func symbolImage(names: [String], pointSize: CGFloat, description: String) -> NSImage? {
+    static func symbolImage(names: [String], pointSize: CGFloat, description: String, weight: NSFont.Weight = .regular) -> NSImage? {
         for name in names {
             if let image = NSImage(systemSymbolName: name, accessibilityDescription: description) {
-                return image.withSymbolConfiguration(.init(pointSize: pointSize, weight: .regular))
+                return image.withSymbolConfiguration(.init(pointSize: pointSize, weight: weight))
             }
         }
         return nil
@@ -957,9 +973,18 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     private func installLockControls() {
-        configure(lockMenuButton, symbol: "lock", description: "암호 메모", help: "암호 메모 메뉴", action: #selector(showLockMenu), size: 20)
-        lockMenuButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
-        lockMenuButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        // 핀 · 접기 · 색 단추와 같은 상자와 그림 크기로 맞춘다.
+        let side = Self.closeButtonSize(for: Self.chromeFontSize)
+        configure(
+            lockMenuButton, symbol: "lock", description: "암호 메모",
+            help: meta.isLocked ? "암호 바꾸기 · 일반 메모로 옮기기" : "암호 메모로 옮기기",
+            action: #selector(showLockMenu), size: side
+        )
+        // 일반 메모는 열린 자물쇠(누르면 잠금), 잠긴 메모는 닫힌 자물쇠 + 라임 점.
+        lockMenuButton.image = MemoGlyphs.lock(locked: meta.isLocked, pointSize: TopBarIcon.lock, ink: NSColor.black.withAlphaComponent(0.62))
+        lockMenuButton.imageScaling = .scaleNone
+        lockMenuButton.widthAnchor.constraint(equalToConstant: side).isActive = true
+        lockMenuButton.heightAnchor.constraint(equalToConstant: side).isActive = true
         if meta.isLocked {
             // 열려 있는 동안에도 디스크로 내보내는 경로는 제공하지 않는다.
             exportButton.isEnabled = false
@@ -1079,6 +1104,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     @objc private func showLockMenu() {
+        // 일반 메모는 고를 것이 하나뿐이라 메뉴 없이 바로 암호 창을 띄운다. 그 창에서 취소하면 된다.
+        if !meta.isLocked { onMoveToLocked?(memoID); return }
         let menu = NSMenu()
         menu.autoenablesItems = false
         let titles = meta.isLocked ? ["암호 바꾸기…", "일반 메모로 옮기기…"] : ["암호 메모로 옮기기…"]
@@ -1285,7 +1312,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         pinButton.image = NSImage(
             systemSymbolName: meta.isPinned ? "pin.fill" : "pin.slash",
             accessibilityDescription: "항상 위"
-        )?.withSymbolConfiguration(.init(pointSize: Self.closeButtonSize(for: Self.chromeFontSize) * 0.8, weight: .regular))
+        )?.withSymbolConfiguration(.init(pointSize: TopBarIcon.pin, weight: TopBarIcon.weight))
     }
 
     // MARK: - 접기 (WIN-08)
@@ -1446,3 +1473,26 @@ private extension NSScreen {
         return number.stringValue
     }
 }
+
+/// 메모 창 맨 위 줄 기호 크기 (단추 상자 23pt).
+///
+/// 같은 상자에 같은 비율로 넣으면 눈으로는 크기가 달라 보인다.
+/// - 모양마다 눈에 같은 크기가 되는 넓이가 다르다(원 · 정사각 · 세로로 긴 모양). 상자 안 잉크 영역을
+///   원형 약 18, 정사각 약 17, 세로형 약 14×18로 맞춘다(Material 아이콘 키라인과 같은 생각).
+/// - 선 굵기가 다르면 굵은 쪽이 크고 무거워 보인다. 직접 그린 기호는 화면에서 1.5pt(`MemoGlyphs.strokeWidth`),
+///   SF Symbols는 작게 줄인 만큼 한 단계 굵게(medium, 접기는 semibold) 그려 1.4~1.6pt로 맞춘다.
+/// - 채운 핀(pin.fill)은 같은 크기면 더 커 보여 세로 길이만 맞추고 폭은 줄여 둔다.
+/// 측정: 8배로 그려 잉크 상자 · 면적 · 선 굵기를 잰 값(AirDrop 17.5×16.4, 내보내기 16.9×16.6,
+/// 자물쇠 14.2×17, 핀 11.9~15.8×18, 접기 16.9×17.9, 색 19×16 / 선 1.38~1.62).
+enum TopBarIcon {
+    static let airDrop: CGFloat = 20
+    static let export: CGFloat = 19.5
+    static let lock: CGFloat = 22
+    static let notion: CGFloat = 22
+    static let pin: CGFloat = 14.5
+    static let fold: CGFloat = 15.5
+    static let palette: CGFloat = 14
+    static let weight: NSFont.Weight = .medium
+    static let foldWeight: NSFont.Weight = .semibold
+}
+

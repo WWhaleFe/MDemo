@@ -19,8 +19,8 @@ extension StickyWindowController {
         let side: CGFloat = 26
         // 직접 그린 기호는 24 상자를 꽉 채워 그려서, 같은 크기로 넣으면 여백이 있는 SF Symbols보다 커 보인다.
         // 핀 · 접기 · 색 아이콘과 눈으로 같은 크기가 되도록 조금 작게 넣는다.
-        let airDropImage = MemoGlyphs.airDrop(pointSize: buttonSize * 0.84)
-        let exportImage = MemoGlyphs.exportImage(pointSize: buttonSize * 0.84)
+        let airDropImage = MemoGlyphs.airDrop(pointSize: TopBarIcon.airDrop)
+        let exportImage = MemoGlyphs.exportImage(pointSize: TopBarIcon.export)
         for (button, image, help, action) in [
             (airDropButton, airDropImage, "AirDrop으로 이미지 받기 (메모 안 커서 자리에 넣습니다)", #selector(airDropButtonTapped)),
             (exportButton, exportImage, "이미지로 내보내기 (저장 · AirDrop · 복사)", #selector(exportButtonTapped)),
@@ -91,6 +91,43 @@ extension StickyWindowController {
 
     @objc func airDropButtonTapped() {
         if isReceivingAirDrop { stopAirDropReceiving() } else { startAirDropReceiving() }
+    }
+
+    /// 우클릭 메뉴의 "노션에 올리기"를 연결한다. 올리기 전에 편집 중인 내용을 먼저 저장한다.
+    func configureNotionMenu(upload: @escaping (MemoID) -> Void, canUpload: @escaping (MemoID) -> Bool) {
+        // 맨 위 줄 단추. 우클릭 "노션에 올리기"와 같은 일을 한다.
+        let side = Self.closeButtonSize(for: Self.chromeFontSize)
+        notionButton.target = self
+        notionButton.action = #selector(notionButtonTapped)
+        notionButton.title = ""
+        notionButton.translatesAutoresizingMaskIntoConstraints = false
+        notionButton.isBordered = false
+        notionButton.imageScaling = .scaleNone
+        notionButton.image = MemoGlyphs.notion(pointSize: TopBarIcon.notion)
+        notionButton.contentTintColor = NSColor.black.withAlphaComponent(0.62)
+        notionButton.toolTip = meta.isLocked ? "암호 메모는 노션에 보낼 수 없습니다" : "노션에 보내기 (메뉴바 노션에서 고른 페이지 · 데이터베이스로)"
+        notionButton.setAccessibilityLabel("노션에 보내기")
+        notionButton.isEnabled = !meta.isLocked && canUpload(memoID)
+        notionButton.widthAnchor.constraint(equalToConstant: side).isActive = true
+        notionButton.heightAnchor.constraint(equalToConstant: side).isActive = true
+        notionUpload = { [weak self] in
+            guard let self, !self.meta.isLocked, canUpload(self.memoID) else { return }
+            _ = self.saveBodyNow()
+            upload(self.memoID)
+        }
+        textView.canRequestNotionUpload = { [weak self] in
+            guard let self else { return false }
+            return !self.meta.isLocked && canUpload(self.memoID)
+        }
+        textView.onRequestNotionUpload = { [weak self] in
+            guard let self, !self.meta.isLocked else { return }
+            _ = self.saveBodyNow()
+            upload(self.memoID)
+        }
+    }
+
+    @objc func notionButtonTapped() {
+        notionUpload?()
     }
 
     @objc func exportButtonTapped() {

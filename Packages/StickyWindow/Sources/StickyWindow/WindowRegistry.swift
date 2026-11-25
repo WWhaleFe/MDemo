@@ -20,6 +20,9 @@ public final class WindowRegistry {
     /// 창이 뜨거나 지거나 숨겨졌을 때. 리스트 창의 "보이는/숨겨진" 개수를 맞추는 데 쓴다.
     public var onPrivacyChange: (() -> Void)?
     public var onWindowStateChange: (() -> Void)?
+    /// 메모 창 우클릭 "노션에 올리기". 올릴 수 있는 메모인지 판단과 올리기는 앱이 맡는다.
+    public var onUploadToNotion: (([MemoID]) -> Void)?
+    public var canUploadToNotion: ((MemoID) -> Bool)?
 
     public init(store: MemoStore, deviceState: DeviceStateStore, preferences: AppPreferences) {
         self.store = store
@@ -104,6 +107,11 @@ public final class WindowRegistry {
         controller?.saveBodyNow()
         edit()
         controller?.reloadBodyFromStore()
+    }
+
+    /// 떠 있는 창의 편집 중인 내용을 저장소에 먼저 반영한다 (노션에 올리기 전).
+    public func flushBody(id: MemoID) {
+        controllers[id]?.saveBodyNow()
     }
 
     public func isReceivingAirDrop(id: MemoID) -> Bool {
@@ -213,6 +221,10 @@ public final class WindowRegistry {
             wrapsLines: preferences.wrapsLines,
             store: store,
             deviceState: deviceState
+        )
+        controller.configureNotionMenu(
+            upload: { [weak self] id in self?.onUploadToNotion?([id]) },
+            canUpload: { [weak self] id in self?.canUploadToNotion?(id) ?? false }
         )
         controller.onMoveToLocked = { [weak self] id in self?.createLockedMemo(moving: id) }
         controller.onMoveToPlain = { [weak self] id in self?.moveToPlainMemo(id: id) }

@@ -30,6 +30,10 @@ public struct MemoWindowActions {
     public var changePassword: (MemoID) -> Void
     public var isUnlocked: (MemoID) -> Bool
     public var createMemoReceivingAirDrop: () -> Void
+    /// 선택한 메모를 노션에 올린다. 올릴 수 없는 메모(암호 메모 등)는 받는 쪽이 빼고 안내한다.
+    public var uploadToNotion: ([MemoID]) -> Void
+    /// 그 메모가 노션에 올라가도 되는가. 암호 메모 · 이 기기 전용 · 파기 메모는 false (기본값도 false).
+    public var canUploadToNotion: (MemoID) -> Bool
 
     public init(
         isVisible: @escaping (MemoID) -> Bool = { _ in false },
@@ -44,8 +48,12 @@ public struct MemoWindowActions {
         moveToPlain: @escaping (MemoID) -> Void = { _ in },
         changePassword: @escaping (MemoID) -> Void = { _ in },
         isUnlocked: @escaping (MemoID) -> Bool = { _ in false },
-        createMemoReceivingAirDrop: @escaping () -> Void = {}
+        createMemoReceivingAirDrop: @escaping () -> Void = {},
+        uploadToNotion: @escaping ([MemoID]) -> Void = { _ in },
+        canUploadToNotion: @escaping (MemoID) -> Bool = { _ in false }
     ) {
+        self.uploadToNotion = uploadToNotion
+        self.canUploadToNotion = canUploadToNotion
         self.createLockedMemo = createLockedMemo
         self.moveToLocked = moveToLocked
         self.moveToPlain = moveToPlain

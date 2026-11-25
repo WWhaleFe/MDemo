@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 이 파일을 GoogleOAuth.plist로 복사해 값을 채운다 (GoogleOAuth.plist는 git에 올리지 않는다). -->
+    <key>CLIENT_ID</key>
+    <string></string>
+    <key>CLIENT_SECRET</key>
+    <string></string>
+</dict>
+</plist>

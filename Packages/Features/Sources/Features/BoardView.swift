@@ -4,6 +4,7 @@ import SwiftUI
 
 /// 모든 파이프를 한 캔버스에 그리며 카드만 화면 근처에서 만든다
 struct BoardView: View {
+    @AppStorage("board.lineButtonStyle") private var lineButtonStyle = "A"
     @Bindable var model: MemoListModel
     let memos: [MemoSummary]
     let index: MemoListModel.LinkIndex
@@ -109,7 +110,9 @@ struct BoardView: View {
                         .buttonStyle(.plain).font(.system(size: 12)).padding(8)
                         .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 6)).position(screen(pipe.midpoint))
                 }
-                VStack {
+                VStack(spacing: 10) {
+                    // 선 도구는 보드 위쪽 막대로 따로 둔다. 아래 막대는 배치 · 확대 · 내보내기만.
+                    HStack { Spacer(minLength: 0); lineToolbar(size: geo.size); Spacer(minLength: 0) }
                     flowStrip
                     Spacer()
                     ScrollView(.horizontal) {
@@ -301,16 +304,20 @@ struct BoardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+    /// 위쪽 막대: 선 종류 단추 · 더 보기 · 뜻 · 이름표.
+    private func lineToolbar(size: CGSize) -> some View {
+        BoardLineTools(selected: selectedEdge?.kind ?? kind, availableWidth: max(200, size.width - 52)) { item in
+            kind = item
+            if let edge = selectedEdge {
+                model.changeLink(edge, kind: item, undoManager: undoManager)
+                selectedEdge = MemoEdge(from: edge.from, to: edge.to, kind: item, label: edge.label)
+            }
+        }
+        .font(.system(size: 12)).padding(.horizontal, 8).frame(height: lineButtonStyle == "A" ? 40 : 34)
+        .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 10)).shadow(color: .black.opacity(0.1), radius: 12, y: 4)
+    }
     private func boardToolbar(size: CGSize, positions: [MemoID: BoardLayout.Placement]) -> some View {
         HStack(spacing: 12) {
-            BoardLineTools(selected: selectedEdge?.kind ?? kind, availableWidth: max(160, size.width - 400)) { item in
-                kind = item
-                if let edge = selectedEdge {
-                    model.changeLink(edge, kind: item, undoManager: undoManager)
-                    selectedEdge = MemoEdge(from: edge.from, to: edge.to, kind: item, label: edge.label)
-                }
-            }
-            Divider().frame(height: 20)
             Button("재정렬") { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { model.autoArrange(memos, undoManager: undoManager) } }.help("이어진 메모끼리 모아 다시 놓습니다")
             Button("전체 보기") { fit(size: size, positions: positions) }
             // 기호만 눌리던 것을 단추 칸 전체가 눌리게 한다. 가운데 비율을 누르면 100%로 돌아간다.
