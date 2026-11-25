@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MemoCore
 
@@ -19,9 +20,11 @@ public struct SyncReport: Sendable, Equatable {
     public var conflicts = 0
     /// 삭제가 전파된 메모 수.
     public var deletions = 0
+    /// 프론트매터가 깨져 받지 않고 건너뛴 파일 수.
+    public var unreadable = 0
 
     public var isEmpty: Bool {
-        pushed == 0 && pulled == 0 && conflicts == 0 && deletions == 0
+        pushed == 0 && pulled == 0 && conflicts == 0 && deletions == 0 && unreadable == 0
     }
 
     public var summary: String {
@@ -31,6 +34,7 @@ public struct SyncReport: Sendable, Equatable {
         if pulled > 0 { parts.append("내려받음 \(pulled)") }
         if deletions > 0 { parts.append("삭제 반영 \(deletions)") }
         if conflicts > 0 { parts.append("충돌 사본 \(conflicts)") }
+        if unreadable > 0 { parts.append("읽지 못한 파일 \(unreadable)") }
         return parts.joined(separator: " · ")
     }
 }
@@ -55,11 +59,16 @@ public enum SyncError: Error, LocalizedError {
     }
 }
 
+/// 훑은 뒤 파일이 바뀌어 이번 동기화에서는 그 메모를 건드리지 않기로 했다는 표시.
+private struct SkipThisRound: Error {}
+
 public struct SyncService: Sendable {
     public let localRoot: URL
     public let remoteRoot: URL
     /// 마지막으로 맞춰 둔 시각을 메모별로 적어 둔다. 기기마다 따로 갖는다.
     private let stateURL: URL
+    /// 시험용: 폴더를 훑은 직후, 반영하기 직전에 불린다. 그 사이 다른 쪽이 바뀌는 경쟁 상황을 흉내 낸다.
+    public var afterScan: (@Sendable () -> Void)?
 
     private static let memosFolder = "memos"
     private static let trashFolder = "trash"
@@ -101,23 +110,29 @@ public struct SyncService: Sendable {
         var state = loadState()
         var report = SyncReport()
 
-        let local = scan(root: localRoot)
-        let remote = scan(root: remoteRoot)
+        let localScan = scan(root: localRoot)
+        let remoteScan = scan(root: remoteRoot)
+        let local = localScan.entries
+        let remote = remoteScan.entries
+        // 읽지 못한 파일은 건드리지 않는다. 없는 것으로 보고 반대편 것으로 덮으면 안 된다.
+        let skipped = localScan.unreadable.union(remoteScan.unreadable)
+        report.unreadable = skipped.count
+        afterScan?()
 
-        for id in Set(local.keys).union(remote.keys) {
-            let localEntry = local[id]
-            let remoteEntry = remote[id]
-            let lastSynced = state[id.rawValue]
-
-            try reconcile(
-                id: id,
-                local: localEntry,
-                remote: remoteEntry,
-                lastSynced: lastSynced,
-                mode: mode,
-                state: &state,
-                report: &report
-            )
+        for id in Set(local.keys).union(remote.keys) where !skipped.contains(id) {
+            do {
+                try reconcile(
+                    id: id,
+                    local: local[id],
+                    remote: remote[id],
+                    mode: mode,
+                    state: &state,
+                    report: &report
+                )
+            } catch is SkipThisRound {
+                // 훑은 뒤 파일이 바뀌었다. 덮어쓰지 않고 이 메모는 다음 동기화에서 맞춘다.
+                continue
+            }
         }
 
         try mergeGroups(mode: mode)
@@ -129,43 +144,36 @@ public struct SyncService: Sendable {
     /// 한 메모에 대해 무엇을 할지 정하고 실행한다.
     ///
     /// 판단 기준은 "지난번 맞췄을 때와 달라졌는가"다.
-    /// 양쪽 다 달라졌으면 최신본을 남기고 진 쪽은 사본으로 보존한다 — 어느 쪽도 버리지 않는다.
+    /// 지문(내용 SHA-256)이 기록돼 있으면 지문으로, 없으면(이전 형식 상태 파일) 프론트매터 `modified`로 본다.
+    /// 양쪽 다 달라졌으면 최신본을 남기고 진 쪽은 사본으로 보존한다 - 어느 쪽도 버리지 않는다.
     private func reconcile(
         id: MemoID,
         local: Entry?,
         remote: Entry?,
-        lastSynced: Date?,
         mode: SyncMode,
-        state: inout [String: Date],
+        state: inout SyncState,
         report: inout SyncReport
     ) throws {
+        let lastSynced = state.dates[id.rawValue]
+        let lastHashes = state.hashes[id.rawValue]
+
         switch (local, remote) {
         case (nil, nil):
-            state.removeValue(forKey: id.rawValue)
+            state.forget(id.rawValue)
 
         case (let localEntry?, nil):
-            if lastSynced == nil {
-                // 이 기기에서 새로 만든 메모
-                guard mode != .pull else { return }
-                try copyMemo(id: id, from: localRoot, to: remoteRoot, inTrash: localEntry.isInTrash)
-                state[id.rawValue] = localEntry.modified
-                report.pushed += 1
-            } else {
-                // 저쪽에서 아예 사라졌다. 우리는 지우지 않고 다시 올린다 —
-                // 파일이 사라지는 경우는 원인이 다양해서, 되살리는 쪽이 안전하다.
-                guard mode != .pull else { return }
-                try copyMemo(id: id, from: localRoot, to: remoteRoot, inTrash: localEntry.isInTrash)
-                state[id.rawValue] = localEntry.modified
-                report.pushed += 1
-            }
+            // 이 기기에서 새로 만들었거나, 저쪽에서 아예 사라진 경우다.
+            // 사라진 쪽은 지우지 않고 다시 올린다 - 파일이 사라지는 경우는 원인이 다양해서, 되살리는 쪽이 안전하다.
+            guard mode != .pull else { return }
+            try transfer(id: id, from: localRoot, to: remoteRoot, entry: localEntry, replacing: nil, state: &state)
+            report.pushed += 1
 
         case (nil, let remoteEntry?):
             guard mode != .push else { return }
-            try copyMemo(id: id, from: remoteRoot, to: localRoot, inTrash: remoteEntry.isInTrash)
-            state[id.rawValue] = remoteEntry.modified
+            try transfer(id: id, from: remoteRoot, to: localRoot, entry: remoteEntry, replacing: nil, state: &state)
             report.pulled += 1
 
-        case (let localEntry?, let remoteEntry?):
+        case (var localEntry?, var remoteEntry?):
             // 한쪽이 휴지통에 있으면 삭제로 본다. 삭제는 어느 쪽이든 따라간다 (TRS-01).
             if localEntry.isInTrash != remoteEntry.isInTrash {
                 try propagateTrashState(
@@ -173,14 +181,47 @@ public struct SyncService: Sendable {
                     local: localEntry,
                     remote: remoteEntry,
                     mode: mode,
+                    lastSynced: lastSynced,
+                    lastHashes: lastHashes,
                     state: &state,
                     report: &report
                 )
                 return
             }
 
-            let localChanged = !isSameMoment(localEntry.modified, lastSynced)
-            let remoteChanged = !isSameMoment(remoteEntry.modified, lastSynced)
+            let localChanged = hasChanged(localEntry, lastSynced: lastSynced, lastHashes: lastHashes)
+            let remoteChanged = hasChanged(remoteEntry, lastSynced: lastSynced, lastHashes: lastHashes)
+
+            // 다른 앱에서 고친 파일은 `modified`가 그대로다. 파일 수정 시각으로 대신 판단한다.
+            // 파일에 고쳐 쓰는 것은 실제로 보내기 직전(`transfer`)에 한다. 충돌 사본을 뜨기 전에는 아무것도 덮어쓰지 않는다.
+            localEntry.isExternal = localChanged && isExternalEdit(localEntry, lastSynced: lastSynced, lastHashes: lastHashes)
+            remoteEntry.isExternal = remoteChanged && isExternalEdit(remoteEntry, lastSynced: lastSynced, lastHashes: lastHashes)
+            if localEntry.isExternal {
+                localEntry.modified = localEntry.fileModified ?? Date()
+            }
+            if remoteEntry.isExternal {
+                remoteEntry.modified = remoteEntry.fileModified ?? Date()
+            }
+
+            // 지문이 같으면 내용이 같은 것이다.
+            if localChanged || remoteChanged, localEntry.hash == remoteEntry.hash {
+                state.record(id.rawValue, date: localEntry.modified, hashes: [localEntry.hash, remoteEntry.hash])
+                return
+            }
+
+            // 이전 형식 상태 파일은 지문이 없다. 바뀌지 않았다면 지금 지문을 기록해 다음부터 지문으로 판단한다.
+            // 단, 시각은 같은데 내용이 다르면(바깥 편집) 같은 상태로 확정하지 않고 충돌로 둘 다 남긴다.
+            if lastHashes == nil, !localChanged, !remoteChanged {
+                if localEntry.hash == remoteEntry.hash {
+                    state.record(id.rawValue, date: lastSynced ?? localEntry.modified, hashes: [localEntry.hash, remoteEntry.hash])
+                } else {
+                    try resolveConflict(
+                        id: id, local: localEntry, remote: remoteEntry,
+                        mode: mode, state: &state, report: &report
+                    )
+                }
+                return
+            }
 
             switch (localChanged, remoteChanged) {
             case (false, false):
@@ -188,21 +229,16 @@ public struct SyncService: Sendable {
 
             case (true, false):
                 guard mode != .pull else { return }
-                try copyMemo(id: id, from: localRoot, to: remoteRoot, inTrash: localEntry.isInTrash)
-                state[id.rawValue] = localEntry.modified
+                try transfer(id: id, from: localRoot, to: remoteRoot, entry: localEntry, replacing: remoteEntry, state: &state)
                 report.pushed += 1
 
             case (false, true):
                 guard mode != .push else { return }
-                try copyMemo(id: id, from: remoteRoot, to: localRoot, inTrash: remoteEntry.isInTrash)
-                state[id.rawValue] = remoteEntry.modified
+                try transfer(id: id, from: remoteRoot, to: localRoot, entry: remoteEntry, replacing: localEntry, state: &state)
                 report.pulled += 1
 
             case (true, true):
-                guard !isSameMoment(localEntry.modified, remoteEntry.modified) else {
-                    state[id.rawValue] = localEntry.modified
-                    return
-                }
+                // 지문이 같은 경우는 위에서 이미 걸렀다. 여기까지 왔으면 내용이 다르다.
                 try resolveConflict(
                     id: id,
                     local: localEntry,
@@ -215,62 +251,170 @@ public struct SyncService: Sendable {
         }
     }
 
+    /// 지난번 맞춘 뒤로 바뀌었는가.
+    private func hasChanged(_ entry: Entry, lastSynced: Date?, lastHashes: [String]?) -> Bool {
+        if let lastHashes { return !lastHashes.contains(entry.hash) }
+        return !isSameMoment(entry.modified, lastSynced)
+    }
+
+    /// 내용은 바뀌었는데 `modified`는 지난번 맞춘 시각에서 나아가지 않았다면 다른 앱에서 고친 것이다.
+    private func isExternalEdit(_ entry: Entry, lastSynced: Date?, lastHashes: [String]?) -> Bool {
+        guard lastHashes != nil, let lastSynced else { return false }
+        return entry.modified.timeIntervalSince1970 <= lastSynced.timeIntervalSince1970 + 0.0005
+    }
+
+    /// 바깥에서 고쳐진 파일의 프론트매터 `modified`를 `entry.modified`(파일 수정 시각)로 고쳐 쓴다.
+    /// 훑은 뒤 파일이 바뀌었으면 쓰지 않고 이번 회차를 건너뛴다.
+    private func stampModified(id: MemoID, root: URL, entry: Entry) throws -> Entry {
+        try expect(id: id, root: root, inTrash: entry.isInTrash, hash: entry.hash)
+        var document = try readDocument(id: id, root: root, inTrash: entry.isInTrash)
+        document.meta.modified = entry.modified
+        try writeDocument(document, root: root, inTrash: entry.isInTrash)
+        var result = entry
+        result.hash = Self.fingerprint(of: memoFileURL(id: id, root: root, inTrash: entry.isInTrash)) ?? entry.hash
+        result.isExternal = false
+        return result
+    }
+
+    /// 지금 디스크의 memo.md 지문이 훑었을 때와 같은지 본다. `hash`가 nil이면 파일이 없어야 한다.
+    private func expect(id: MemoID, root: URL, inTrash: Bool, hash: String?) throws {
+        let current = Self.fingerprint(of: memoFileURL(id: id, root: root, inTrash: inTrash))
+        guard current == hash else { throw SkipThisRound() }
+    }
+
+    /// 받는 쪽이 훑었을 때와 같은지 본다. `existing`이 있으면 그 자리의 지문이, 없으면 두 자리 모두 비어 있어야 한다.
+    private func expectDestination(id: MemoID, root: URL, existing: Entry?) throws {
+        for inTrash in [false, true] {
+            let hash = (existing?.isInTrash == inTrash) ? existing?.hash : nil
+            try expect(id: id, root: root, inTrash: inTrash, hash: hash)
+        }
+    }
+
+    /// 한쪽의 메모를 반대편으로 복사하고 맞춘 기록을 남긴다.
+    ///
+    /// 쓰기 직전에 보내는 쪽과 받는 쪽 지문을 다시 확인한다. 훑은 뒤 바뀌었으면 덮어쓰지 않고 건너뛴다.
+    /// 바깥에서 고쳐 들어온 것이면 `modified`를 바로잡아 저장한다. 이 경우 보낸 쪽과 받은 쪽 지문이 달라지므로
+    /// 둘 다 "맞춘 지문"으로 기록해 되돌아 복사되지 않게 한다.
+    private func transfer(
+        id: MemoID, from source: URL, to destination: URL, entry: Entry, replacing existing: Entry?, state: inout SyncState
+    ) throws {
+        var entry = entry
+        try expect(id: id, root: source, inTrash: entry.isInTrash, hash: entry.hash)
+        try expectDestination(id: id, root: destination, existing: existing)
+        // 내 쪽 파일이 보내는 쪽이면 그 자리에서 `modified`를 고쳐 둔다(목록 정렬이 맞도록).
+        if entry.isExternal, source == localRoot {
+            entry = try stampModified(id: id, root: source, entry: entry)
+        }
+
+        try copyMemo(id: id, from: source, to: destination, inTrash: entry.isInTrash)
+        var hashes = [entry.hash]
+        if entry.isExternal {
+            var document = try readDocument(id: id, root: destination, inTrash: entry.isInTrash)
+            document.meta.modified = entry.modified
+            try writeDocument(document, root: destination, inTrash: entry.isInTrash)
+        }
+        if let received = Self.fingerprint(of: memoFileURL(id: id, root: destination, inTrash: entry.isInTrash)) {
+            hashes.append(received)
+        }
+        state.record(id.rawValue, date: entry.modified, hashes: hashes)
+    }
+
     /// 양쪽이 모두 바뀐 경우 (SYNC-06).
     ///
     /// 최신본을 정본으로 삼고, 진 쪽은 새 ID를 붙인 사본으로 남긴다.
+    /// 사본에는 첨부를 포함한 메모 폴더 전체가 담기며, 무엇이든 덮어쓰기 전에 먼저 만든다.
     /// 리스트 창이 `conflictOf` 표시를 보고 사용자에게 알려 준다.
     private func resolveConflict(
         id: MemoID,
         local: Entry,
         remote: Entry,
         mode: SyncMode,
-        state: inout [String: Date],
+        state: inout SyncState,
         report: inout SyncReport
     ) throws {
+        // 시각이 같으면 파일 수정 시각으로 가른다.
         let remoteIsNewer = remote.modified > local.modified
-
-        // 진 쪽을 먼저 사본으로 떠 둔다. 덮어쓰기 전에 해야 잃지 않는다.
-        let loserRoot = remoteIsNewer ? localRoot : remoteRoot
-        if var loser = try? readDocument(id: id, root: loserRoot, inTrash: local.isInTrash) {
-            loser.meta.conflictOf = id
-            loser.meta.id = .generate()
-            try writeDocument(loser, root: localRoot, inTrash: false)
-            report.conflicts += 1
-        }
-
+            || (isSameMoment(remote.modified, local.modified)
+                && (remote.fileModified ?? .distantPast) > (local.fileModified ?? .distantPast))
         if remoteIsNewer {
             guard mode != .push else { return }
-            try copyMemo(id: id, from: remoteRoot, to: localRoot, inTrash: remote.isInTrash)
-            state[id.rawValue] = remote.modified
-            report.pulled += 1
         } else {
             guard mode != .pull else { return }
-            try copyMemo(id: id, from: localRoot, to: remoteRoot, inTrash: local.isInTrash)
-            state[id.rawValue] = local.modified
+        }
+
+        // 훑은 뒤 바뀌었으면 사본도 만들지 않고 건너뛴다.
+        try expect(id: id, root: localRoot, inTrash: local.isInTrash, hash: local.hash)
+        try expect(id: id, root: remoteRoot, inTrash: remote.isInTrash, hash: remote.hash)
+
+        // 진 쪽을 먼저 사본으로 떠 둔다. 덮어쓰기 전에 해야 잃지 않는다.
+        if remoteIsNewer {
+            try makeConflictCopy(of: id, from: localRoot, entry: local, report: &report)
+            try transfer(id: id, from: remoteRoot, to: localRoot, entry: remote, replacing: local, state: &state)
+            report.pulled += 1
+        } else {
+            try makeConflictCopy(of: id, from: remoteRoot, entry: remote, report: &report)
+            try transfer(id: id, from: localRoot, to: remoteRoot, entry: local, replacing: remote, state: &state)
             report.pushed += 1
         }
     }
 
+    /// 한쪽 메모 폴더(첨부 포함)를 새 ID로 이쪽 기기의 활성 메모로 복사한다.
+    private func makeConflictCopy(of id: MemoID, from root: URL, entry: Entry, report: inout SyncReport) throws {
+        let source = memoDirectory(id: id, root: root, inTrash: entry.isInTrash)
+        guard var document = try? readDocument(id: id, root: root, inTrash: entry.isInTrash) else { return }
+
+        let newID = MemoID.generate()
+        document.meta.conflictOf = id
+        document.meta.id = newID
+
+        let destination = memoDirectory(id: newID, root: localRoot, inTrash: false)
+        let parent = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(".\(newID.rawValue).tmp", isDirectory: true)
+        try? FileManager.default.removeItem(at: staging)
+        try FileManager.default.copyItem(at: source, to: staging)
+        try Data(FrontmatterCodec.encode(document).utf8)
+            .write(to: staging.appendingPathComponent(Self.memoFileName), options: .atomic)
+        try FileManager.default.moveItem(at: staging, to: destination)
+        report.conflicts += 1
+    }
+
     /// 한쪽에서 버린 메모를 다른 쪽에서도 휴지통으로 옮긴다.
-    /// 영구 삭제는 하지 않는다 — 되돌릴 수 있어야 한다 (TRS-02).
+    /// 영구 삭제는 하지 않는다 - 되돌릴 수 있어야 한다 (TRS-02).
+    /// 단, 반대쪽이 지난번 맞춘 뒤로 고쳐졌다면 그 편집본을 새 ID의 활성 메모로 남긴 뒤에 옮긴다.
     private func propagateTrashState(
         id: MemoID,
         local: Entry,
         remote: Entry,
         mode: SyncMode,
-        state: inout [String: Date],
+        lastSynced: Date?,
+        lastHashes: [String]?,
+        state: inout SyncState,
         report: inout SyncReport
     ) throws {
-        if local.isInTrash {
+        let trashedSideIsLocal = local.isInTrash
+        if trashedSideIsLocal {
             guard mode != .pull else { return }
-            try copyMemo(id: id, from: localRoot, to: remoteRoot, inTrash: true)
-            try removeMemo(id: id, root: remoteRoot, inTrash: false)
-            state[id.rawValue] = local.modified
         } else {
             guard mode != .push else { return }
-            try copyMemo(id: id, from: remoteRoot, to: localRoot, inTrash: true)
+        }
+
+        let active = trashedSideIsLocal ? remote : local
+        let activeRoot = trashedSideIsLocal ? remoteRoot : localRoot
+        let trashed = trashedSideIsLocal ? local : remote
+        try expect(id: id, root: activeRoot, inTrash: false, hash: active.hash)
+
+        // 휴지통 쪽과 내용이 같으면 고친 것이 아니다.
+        if hasChanged(active, lastSynced: lastSynced, lastHashes: lastHashes), active.hash != trashed.hash {
+            try makeConflictCopy(of: id, from: activeRoot, entry: active, report: &report)
+        }
+
+        if trashedSideIsLocal {
+            try transfer(id: id, from: localRoot, to: remoteRoot, entry: local, replacing: remote, state: &state)
+            try removeMemo(id: id, root: remoteRoot, inTrash: false)
+        } else {
+            try transfer(id: id, from: remoteRoot, to: localRoot, entry: remote, replacing: local, state: &state)
             try removeMemo(id: id, root: localRoot, inTrash: false)
-            state[id.rawValue] = remote.modified
         }
         report.deletions += 1
     }
@@ -291,7 +435,7 @@ public struct SyncService: Sendable {
     }
 
     /// 보드 배치는 파일 수정 시각이 최신인 쪽을 원자적으로 복사한다 (설계서 §4, SYNC-06).
-    private func syncBoard(mode: SyncMode, state: inout [String: Date]) throws {
+    private func syncBoard(mode: SyncMode, state: inout SyncState) throws {
         let local = localRoot.appendingPathComponent(Self.boardFileName)
         let remote = remoteRoot.appendingPathComponent(Self.boardFileName)
         func modified(_ url: URL) -> Date? {
@@ -304,7 +448,7 @@ public struct SyncService: Sendable {
         let date: Date
         switch (localDate, remoteDate) {
         case (let left?, let right?) where left == right:
-            state[Self.boardFileName] = left
+            state.dates[Self.boardFileName] = left
             return
         case (let left?, let right?) where left > right:
             guard mode != .pull else { return }
@@ -321,7 +465,7 @@ public struct SyncService: Sendable {
         try Data(contentsOf: source).write(to: destination, options: .atomic)
         // 복사로 수정 시각이 바뀌면 다음 동기화에서 역방향 복사가 반복된다.
         try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: destination.path)
-        state[Self.boardFileName] = date
+        state.dates[Self.boardFileName] = date
     }
 
     // MARK: - 파일 다루기
@@ -329,11 +473,23 @@ public struct SyncService: Sendable {
     private struct Entry {
         var modified: Date
         var isInTrash: Bool
+        /// memo.md 바이트의 SHA-256 (16진수).
+        var hash: String
+        /// 파일 수정 시각. 바깥에서 고쳐진 파일의 `modified`를 바로잡는 데 쓴다.
+        var fileModified: Date?
+        /// 다른 앱에서 고쳐 `modified`가 따라오지 못한 파일인가.
+        var isExternal = false
     }
 
-    /// 폴더를 훑어 메모별 수정 시각을 모은다. 본문은 읽지 않는다.
-    private func scan(root: URL) -> [MemoID: Entry] {
-        var result: [MemoID: Entry] = [:]
+    private struct ScanResult {
+        var entries: [MemoID: Entry] = [:]
+        /// 파일은 있는데 프론트매터를 읽지 못한 메모.
+        var unreadable: Set<MemoID> = []
+    }
+
+    /// 폴더를 훑어 메모별 수정 시각과 내용 지문을 모은다.
+    private func scan(root: URL) -> ScanResult {
+        var result = ScanResult()
         for inTrash in [false, true] {
             let folder = root.appendingPathComponent(inTrash ? Self.trashFolder : Self.memosFolder, isDirectory: true)
             let entries = (try? FileManager.default.contentsOfDirectory(
@@ -343,28 +499,36 @@ public struct SyncService: Sendable {
             for entry in entries {
                 let id = MemoID(rawValue: entry.lastPathComponent)
                 guard id.isValid else { continue }
-                guard let modified = readModified(at: entry.appendingPathComponent(Self.memoFileName)) else { continue }
-                result[id] = Entry(modified: modified, isInTrash: inTrash)
+                let file = entry.appendingPathComponent(Self.memoFileName)
+                guard FileManager.default.fileExists(atPath: file.path) else { continue }
+                guard let data = try? Data(contentsOf: file),
+                      let text = String(data: data, encoding: .utf8),
+                      let document = try? FrontmatterCodec.decode(fileContents: text)
+                else {
+                    result.unreadable.insert(id)
+                    continue
+                }
+                result.entries[id] = Entry(
+                    modified: document.meta.modified,
+                    isInTrash: inTrash,
+                    hash: Self.hexDigest(of: data),
+                    fileModified: (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                )
             }
         }
         return result
     }
 
-    /// 프론트매터만 읽어 수정 시각을 얻는다.
-    private func readModified(at url: URL) -> Date? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 4096), let text = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        guard let document = try? FrontmatterCodec.decode(fileContents: text + "\n---\n") else {
-            // 앞부분만으로 파싱이 안 되면 통째로 읽어 본다 (프론트매터가 아주 긴 예외적 경우).
-            guard let full = try? String(contentsOf: url, encoding: .utf8),
-                  let document = try? FrontmatterCodec.decode(fileContents: full)
-            else { return nil }
-            return document.meta.modified
-        }
-        return document.meta.modified
+    private static func hexDigest(of data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func fingerprint(of url: URL) -> String? {
+        (try? Data(contentsOf: url)).map(hexDigest(of:))
+    }
+
+    private func memoFileURL(id: MemoID, root: URL, inTrash: Bool) -> URL {
+        memoDirectory(id: id, root: root, inTrash: inTrash).appendingPathComponent(Self.memoFileName)
     }
 
     private func memoDirectory(id: MemoID, root: URL, inTrash: Bool) -> URL {
@@ -453,18 +617,67 @@ public struct SyncService: Sendable {
 
     // MARK: - 동기화 기록
 
-    private func loadState() -> [String: Date] {
-        guard let data = try? Data(contentsOf: stateURL),
-              let state = try? JSONDecoder().decode([String: Date].self, from: data)
-        else { return [:] }
+    /// 동기화 기록.
+    ///
+    /// 시각은 예전부터 써 온 `sync-state.json`(`{"<메모ID>": "<시각>"}` 평면 사전)에 그대로 적는다.
+    /// 내용 지문은 그 옆의 `sync-state.hashes.json`에 따로 적는다. 이렇게 하면 예전 형식 파일이 그대로 읽히고
+    /// (지문 파일이 없으면 `modified`로 판단), 예전 버전 앱이 상태 파일을 읽어도 깨지지 않는다.
+    struct SyncState {
+        /// 메모별로 마지막에 맞춘 `modified` (보드 파일 항목 포함).
+        var dates: [String: Date] = [:]
+        /// 메모별로 마지막에 맞춘 memo.md 지문. 보낸 쪽과 받은 쪽이 다를 수 있어 목록으로 둔다.
+        var hashes: [String: [String]] = [:]
+
+        mutating func record(_ key: String, date: Date, hashes list: [String]) {
+            dates[key] = date
+            var unique: [String] = []
+            for hash in list where !unique.contains(hash) { unique.append(hash) }
+            hashes[key] = unique
+        }
+
+        mutating func forget(_ key: String) {
+            dates.removeValue(forKey: key)
+            hashes.removeValue(forKey: key)
+        }
+    }
+
+    /// 지문 파일의 항목. 어느 시각 기록과 짝인지 함께 적어, 시각만 따로 갱신된 경우를 걸러 낸다.
+    private struct HashRecord: Codable {
+        var date: Date
+        var hashes: [String]
+    }
+
+    private var hashesURL: URL {
+        stateURL.deletingPathExtension().appendingPathExtension("hashes.json")
+    }
+
+    private func loadState() -> SyncState {
+        var state = SyncState()
+        if let data = try? Data(contentsOf: stateURL),
+           let dates = try? JSONDecoder().decode([String: Date].self, from: data) {
+            state.dates = dates
+        }
+        if let data = try? Data(contentsOf: hashesURL),
+           let records = try? JSONDecoder().decode([String: HashRecord].self, from: data) {
+            for (key, record) in records where state.dates[key] == record.date {
+                state.hashes[key] = record.hashes
+            }
+        }
         return state
     }
 
-    private func saveState(_ state: [String: Date]) {
+    private func saveState(_ state: SyncState) {
         try? FileManager.default.createDirectory(
             at: stateURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
+        try? JSONEncoder().encode(state.dates).write(to: stateURL, options: .atomic)
+
+        var records: [String: HashRecord] = [:]
+        for (key, hashes) in state.hashes {
+            guard let date = state.dates[key] else { continue }
+            records[key] = HashRecord(date: date, hashes: hashes)
+        }
+        try? JSONEncoder().encode(records).write(to: hashesURL, options: .atomic)
     }
 }

@@ -25,6 +25,8 @@ public final class FormatToolbarView: NSView {
         /// 형광펜 칠. nil이면 기본 노랑.
         case highlightColor(String?)
         case removeHighlight
+        /// 파일을 골라 이미지를 본문에 넣는다 (IMG-01).
+        case insertImage
     }
 
     /// 누르면 바로 적용하지 않고 색 고르기 메뉴를 여는 버튼.
@@ -119,6 +121,7 @@ public final class FormatToolbarView: NSView {
             command: .block(.codeBlock)
         ),
         Item(symbol: "tablecells", fallback: "▦", help: "표 넣기  (Tab으로 칸 이동)", command: .block(.tableRow)),
+        Item(symbol: "photo", fallback: "▣", help: "이미지 넣기  (붙여넣기 · 끌어 놓기도 가능)", command: .insertImage),
     ]
 
     /// 둘째 묶음 — 고른 글자를 바꾸는 서식과 자리 조정.
@@ -227,7 +230,7 @@ public final class FormatToolbarView: NSView {
     ///
     /// 기본 NSButton은 비활성 창에서 첫 클릭을 창을 깨우는 데만 쓴다.
     /// 스티키 노트는 대부분 비활성 상태로 떠 있어서, 그대로 두면 서식마다 두 번씩 눌러야 한다.
-    private final class ToolbarButton: NSButton {
+    private final class ToolbarButton: TopBarButton {
         var onHover: ((Bool) -> Void)?
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -242,8 +245,14 @@ public final class FormatToolbarView: NSView {
             ))
         }
 
-        override func mouseEntered(with event: NSEvent) { onHover?(true) }
-        override func mouseExited(with event: NSEvent) { onHover?(false) }
+        override func mouseEntered(with event: NSEvent) {
+            super.mouseEntered(with: event)
+            onHover?(true)
+        }
+        override func mouseExited(with event: NSEvent) {
+            super.mouseExited(with: event)
+            onHover?(false)
+        }
     }
 
     private func applyImage(_ item: Item, to button: NSButton) {

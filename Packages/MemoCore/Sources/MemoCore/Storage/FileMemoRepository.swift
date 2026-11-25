@@ -53,6 +53,29 @@ public struct FileMemoRepository: MemoRepository {
         memoDirectory(for: id).appendingPathComponent("attachments", isDirectory: true)
     }
 
+    /// 모든 메모의 첨부 폴더를 훑어 본문에서 쓰지 않는 오래된 파일을 지운다.
+    /// 첨부 폴더가 없는 메모는 본문을 읽지 않고 건너뛴다. 메모 하나씩 읽고 바로 버린다.
+    @discardableResult
+    public func pruneUnusedAttachments(modifiedBefore date: Date) -> Int {
+        let memosURL = rootDirectory.appendingPathComponent(Self.memosFolder, isDirectory: true)
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: memosURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        )) ?? []
+
+        var removed = 0
+        for entry in entries {
+            let id = MemoID(rawValue: entry.lastPathComponent)
+            guard id.isValid else { continue }
+            let attachments = attachmentsDirectory(for: id)
+            guard FileManager.default.fileExists(atPath: attachments.path),
+                  // 본문을 읽지 못하면 무엇이 쓰이는지 모르므로 건드리지 않는다.
+                  let body = try? load(id: id).body
+            else { continue }
+            removed += AttachmentImages.pruneUnused(in: attachments, body: body, olderThan: date)
+        }
+        return removed
+    }
+
     // MARK: - 읽기
 
     public func loadSummaries() throws -> [MemoSummary] {
@@ -125,6 +148,18 @@ public struct FileMemoRepository: MemoRepository {
         let text = FrontmatterCodec.encode(document)
         guard let data = text.data(using: .utf8) else { return }
         try data.write(to: memoFileURL(for: document.meta.id), options: .atomic)
+    }
+
+    public func duplicate(id: MemoID, as document: MemoDocument) throws {
+        let destination = memoDirectory(for: document.meta.id)
+        try FileManager.default.copyItem(at: memoDirectory(for: id), to: destination)
+        do {
+            try save(document)
+        } catch {
+            // 프론트매터를 바꾸지 못한 폴더는 목록에 남기지 않는다.
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
     }
 
     // MARK: - 삭제

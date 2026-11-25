@@ -25,11 +25,25 @@ private enum ListDateFormat {
 private let previewPrefixPattern = try! NSRegularExpression(
     pattern: #"^(?:[-*+]\s+\[[ xX]\]\s*|[-*+]\s+|\d+\.\s+|>\s*|#+\s*)"#)
 
+/// 줄 전체가 이미지 문법으로 시작하는가 (`![설명](경로`).
+func isImagePreviewLine(_ text: String) -> Bool {
+    text.hasPrefix("![") && text.contains("](")
+}
+
 /// 목록과 카드에서 같은 규칙으로 마크다운 기호를 걷어 낸다.
 func cleanedMemoPreview(_ preview: String, singleLine: Bool = false, excludingTitle: Bool = true) -> String {
-    preview.components(separatedBy: "\n").dropFirst(excludingTitle ? 1 : 0).compactMap { line -> String? in
+    var sourceLines = preview.components(separatedBy: "\n")
+    // 제목 줄은 뺀다. 이미지 줄은 제목이 아니므로(MemoSummary.title 참고) 그 앞의 이미지 줄은 남기고 첫 글 줄을 뺀다.
+    if excludingTitle,
+       let titleIndex = sourceLines.firstIndex(where: { !isImagePreviewLine($0.trimmingCharacters(in: .whitespaces)) }) {
+        sourceLines.remove(at: titleIndex)
+    }
+    return sourceLines.compactMap { line -> String? in
         var text = line.trimmingCharacters(in: .whitespaces)
         guard !text.hasPrefix("```") else { return nil }
+        // 이미지 줄(`![설명](attachments/...)`)은 원문 대신 "[이미지]"로 보인다.
+        // 미리보기는 200자에서 잘리므로 닫는 괄호가 없어도 이미지 줄로 본다.
+        if isImagePreviewLine(text) { return "[이미지]" }
         while true {
             let whole = NSRange(location: 0, length: (text as NSString).length)
             guard let match = previewPrefixPattern.firstMatch(in: text, range: whole), match.range.length > 0 else { break }

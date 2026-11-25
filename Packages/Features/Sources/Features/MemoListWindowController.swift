@@ -135,6 +135,8 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
 
     /// 창을 닫으면 화면과 모델을 버린다.
     public func windowWillClose(_ notification: Notification) {
+        // 목록 창이 닫히면 목록에서 받던 AirDrop도 멈춘다.
+        model?.stopAirDrop()
         if let controlClickMonitor {
             NSEvent.removeMonitor(controlClickMonitor)
         }

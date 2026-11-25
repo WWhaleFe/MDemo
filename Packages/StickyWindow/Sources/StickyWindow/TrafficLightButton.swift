@@ -121,6 +121,25 @@ public final class TrafficLightGroup: NSView {
 ///   그대로 두면 첫 클릭은 창을 깨우는 데만 쓰이고 투명도를 잡으려면 두 번 손이 간다.
 /// - 손잡이와 줄을 직접 그린다. 시스템 손잡이는 흰색이라 밝은 톤의 메모 위에서 사라진다.
 public final class OpacitySlider: NSSlider {
+    private var hovered = false
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    public override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    public override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        if hovered {
+            TopBarButton.hoverColor.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        }
+        super.draw(dirtyRect)
+    }
+
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     public static func make() -> OpacitySlider {
@@ -131,11 +150,12 @@ public final class OpacitySlider: NSSlider {
 }
 
 /// 파스텔 배경 위에서도 보이도록 손잡이와 줄을 어둡게 그린다.
+///
+/// 손잡이는 얇은 세로 막대(알약 모양)를 불투명한 회색으로 칠한다. 반투명으로 칠하면 뒤의 줄이 비쳐 겹친 부분이 얼룩져 보인다.
+/// 색은 다른 아이콘의 "검정 62%"를 파스텔 메모 위에서 본 색과 비슷한 불투명 회색이다. 줄은 손잡이가 돋보이게 옅게 둔다.
 final class OpacitySliderCell: NSSliderCell {
-    private static let knobColor = NSColor(white: 0.24, alpha: 1.0)
-    private static let knobBorderColor = NSColor(white: 1.0, alpha: 0.9)
-    private static let trackColor = NSColor.black.withAlphaComponent(0.16)
-    private static let filledColor = NSColor.black.withAlphaComponent(0.38)
+    private static let knobColor = NSColor(srgbRed: 0.369, green: 0.373, blue: 0.380, alpha: 1)
+    private static let trackColor = NSColor.black.withAlphaComponent(0.30)
 
     override func drawBar(inside rect: NSRect, flipped: Bool) {
         let height: CGFloat = 3
@@ -144,29 +164,18 @@ final class OpacitySliderCell: NSSliderCell {
 
         Self.trackColor.setFill()
         NSBezierPath(roundedRect: bar, xRadius: radius, yRadius: radius).fill()
-
-        // 지나온 만큼은 진하게 칠해 지금 값이 어디쯤인지 눈에 들어오게 한다.
-        let ratio = (doubleValue - minValue) / max(0.0001, maxValue - minValue)
-        var filled = bar
-        filled.size.width = bar.width * CGFloat(min(max(ratio, 0), 1))
-        Self.filledColor.setFill()
-        NSBezierPath(roundedRect: filled, xRadius: radius, yRadius: radius).fill()
     }
 
     override func drawKnob(_ knobRect: NSRect) {
-        let diameter = min(knobRect.width, knobRect.height) - 1
-        let circle = NSRect(
-            x: knobRect.midX - diameter / 2,
-            y: knobRect.midY - diameter / 2,
-            width: diameter,
-            height: diameter
+        let height = max(10, min(knobRect.height - 1, 18))
+        let width = max(4, (height / 3).rounded())
+        let pill = NSRect(
+            x: knobRect.midX - width / 2,
+            y: knobRect.midY - height / 2,
+            width: width,
+            height: height
         )
-        let path = NSBezierPath(ovalIn: circle)
         Self.knobColor.setFill()
-        path.fill()
-        // 흰 테두리를 얇게 둘러 어두운 배경색을 골랐을 때도 손잡이가 묻히지 않게 한다.
-        Self.knobBorderColor.setStroke()
-        path.lineWidth = 1
-        path.stroke()
+        NSBezierPath(roundedRect: pill, xRadius: width / 2, yRadius: width / 2).fill()
     }
 }

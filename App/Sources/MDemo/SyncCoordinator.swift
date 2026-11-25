@@ -100,11 +100,16 @@ final class SyncCoordinator {
 
         isRunning = true
         status = .syncing
+        let makesReadableCopy = preferences.readableCopyEnabled
 
         Task.detached(priority: .utility) {
             let result: Result<SyncReport, Error>
             do {
                 result = .success(try service.sync(mode: mode))
+                // 읽기용 사본은 덤이다. 실패해도 동기화 결과에는 영향을 주지 않는다.
+                if makesReadableCopy, let output = ReadableCopy.defaultOutputRoot() {
+                    _ = try? ReadableCopy(localRoot: service.localRoot, outputRoot: output).update()
+                }
             } catch {
                 result = .failure(error)
             }

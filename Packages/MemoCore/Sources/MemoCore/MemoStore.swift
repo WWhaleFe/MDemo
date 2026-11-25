@@ -24,13 +24,14 @@ public final class MemoStore {
 
     public init(repository: any MemoRepository) {
         self.repository = repository
-        reloadSummaries()
+        summaries = (try? repository.loadSummaries()) ?? []
         reloadGroups()
         reloadBoardLayout()
     }
 
     public func reloadSummaries() {
         summaries = (try? repository.loadSummaries()) ?? []
+        reloadBoardLayout()
     }
 
     public func reloadGroups() {
@@ -53,7 +54,66 @@ public final class MemoStore {
         let document = MemoDocument(meta: meta, body: "")
         try? repository.save(document)
         summaries.insert(MemoSummary(meta: meta, preview: ""), at: 0)
+        normalizeManualOrder()
         return meta
+    }
+
+    /// 잠기지 않은 메모를 첨부까지 복제한다. 성공한 새 ID만 입력 순서대로 돌려준다.
+    @discardableResult
+    public func duplicate(_ ids: [MemoID]) -> [MemoID] {
+        var result: [MemoID] = []
+        var seen = Set<MemoID>()
+        var titles = Set(summaries.map(\.title))
+        // 아직 저장하지 않은 보드 자리도 목록의 기본 배치와 같은 규칙으로 계산한다.
+        var positions = boardLayout.placements
+        let startY = positions.values.map { $0.y + 180 }.max() ?? 100
+        var offset = 0
+        for summary in summaries where positions[summary.id.rawValue] == nil {
+            positions[summary.id.rawValue] = .init(
+                x: 40 + Double(offset % 4) * 260, y: startY + Double(offset / 4) * 180)
+            offset += 1
+        }
+        for id in ids where seen.insert(id).inserted {
+            guard let index = summaries.firstIndex(where: { $0.id == id }),
+                  var document = try? repository.load(id: id), !document.meta.isLocked else { continue }
+            let newID = MemoID.generate()
+            let now = Date()
+            document.meta.id = newID
+            document.meta.created = now
+            document.meta.modified = now
+            document.meta.isOpen = false
+            document.meta.links = []
+            document.meta.conflictOf = nil
+            if let title = document.meta.title, !title.trimmingCharacters(in: .whitespaces).isEmpty {
+                let base = "\(title) 사본"
+                var candidate = base
+                var number = 2
+                while titles.contains(candidate) {
+                    candidate = "\(base) \(number)"
+                    number += 1
+                }
+                document.meta.title = candidate
+            }
+            do {
+                try repository.duplicate(id: id, as: document)
+            } catch {
+                continue
+            }
+            let summary = MemoSummary(meta: document.meta, preview: String(document.body.prefix(200)))
+            titles.insert(summary.title)
+            summaries.insert(summary, at: index + 1)
+            if let position = positions[id.rawValue] {
+                // 기본 자리도 함께 저장해 복제 뒤 원본이 다른 칸으로 밀리지 않게 한다.
+                boardLayout.placements[id.rawValue] = position
+                boardLayout.placements[newID.rawValue] = .init(x: position.x + 24, y: position.y + 24)
+            }
+            result.append(newID)
+        }
+        if !result.isEmpty {
+            normalizeManualOrder()
+            try? repository.saveBoardLayout(boardLayout)
+        }
+        return result
     }
 
     /// 밖에서 만든 문서를 그대로 들여온다 (DAT-07).
@@ -68,6 +128,17 @@ public final class MemoStore {
     /// 창을 열 때만 호출한다. 본문 전체를 읽는 유일한 경로다.
     public func loadDocument(id: MemoID) -> MemoDocument? {
         try? repository.load(id: id)
+    }
+
+    /// 메모의 첨부 이미지 폴더 (IMG-07).
+    public func attachmentsDirectory(for id: MemoID) -> URL {
+        repository.attachmentsDirectory(for: id)
+    }
+
+    /// 본문에서 쓰지 않는 첨부 파일 중 하루 넘게 지난 것을 지운다. 앱 시작 때 한 번 부른다.
+    @discardableResult
+    public func pruneUnusedAttachments(olderThanDays days: Int = 1) -> Int {
+        repository.pruneUnusedAttachments(modifiedBefore: Date().addingTimeInterval(-Double(days) * 86_400))
     }
 
     /// 본문을 저장하고 요약을 갱신한다. 호출자가 디바운스한다 (DAT-03).
@@ -102,6 +173,20 @@ public final class MemoStore {
 
     public func reloadBoardLayout() {
         boardLayout = (try? repository.loadBoardLayout()) ?? .empty
+        normalizeManualOrder()
+    }
+
+    public func setManualOrder(_ ids: [MemoID]) {
+        boardLayout.manualOrder = ids
+        boardLayout.manualOrder = boardLayout.normalizedOrder(among: summaries.map(\.id))
+        try? repository.saveBoardLayout(boardLayout)
+    }
+
+    private func normalizeManualOrder() {
+        let order = boardLayout.normalizedOrder(among: summaries.map(\.id))
+        guard order != boardLayout.manualOrder else { return }
+        boardLayout.manualOrder = order
+        try? repository.saveBoardLayout(boardLayout)
     }
 
     public func setBoardPlacement(_ placement: BoardLayout.Placement, for id: MemoID) {
@@ -273,6 +358,7 @@ public final class MemoStore {
         }
         let removed = Set(ids)
         summaries.removeAll { removed.contains($0.id) }
+        normalizeManualOrder()
         reloadTrash()
     }
 

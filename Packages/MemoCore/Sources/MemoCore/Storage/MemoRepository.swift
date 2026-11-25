@@ -26,9 +26,13 @@ public struct MemoSummary: Equatable, Sendable, Identifiable {
         if let given = meta.title, !given.trimmingCharacters(in: .whitespaces).isEmpty {
             return given
         }
+        // 이미지 줄(`![..](..)`)은 제목 후보에서 뺀다.
         let firstLine = preview
             .components(separatedBy: "\n")
-            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+            .first {
+                let line = $0.trimmingCharacters(in: .whitespaces)
+                return !line.isEmpty && !(line.hasPrefix("![") && line.hasSuffix(")"))
+            } ?? ""
         let cleaned = firstLine.trimmingCharacters(in: CharacterSet(charactersIn: "# ").union(.whitespaces))
         return cleaned.isEmpty ? "제목 없는 메모" : cleaned
     }
@@ -47,10 +51,15 @@ public protocol MemoRepository: Sendable {
     func load(id: MemoID) throws -> MemoDocument
     /// 원자적으로 저장한다 (DAT-08).
     func save(_ document: MemoDocument) throws
+    /// 원본 폴더를 첨부까지 복사하고 새 문서의 프론트매터를 기록한다.
+    func duplicate(id: MemoID, as document: MemoDocument) throws
     /// 휴지통으로 옮긴다 (TRS-01). 파일은 남는다.
     func moveToTrash(id: MemoID) throws
     /// 첨부 이미지를 넣을 폴더 (IMG-07).
     func attachmentsDirectory(for id: MemoID) -> URL
+    /// 본문에서 쓰지 않는 첨부 파일 중 `date`보다 오래된 것을 지운다 (IMG-07). 지운 개수를 돌려준다.
+    @discardableResult
+    func pruneUnusedAttachments(modifiedBefore date: Date) -> Int
 
     // MARK: - 휴지통 (TRS-*)
 

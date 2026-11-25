@@ -82,7 +82,10 @@ final class AppContainer {
                 open: { [registry] ids in registry.openMemos(ids: ids) },
                 hide: { [registry] ids in registry.hideMemos(ids: ids) },
                 arrange: { [registry] byGroup in registry.arrangeOpenWindows(byGroup: byGroup) },
-                arrangeInOrder: { [registry] ids in registry.arrangeWindows(inOrder: ids) }
+                arrangeInOrder: { [registry] ids in registry.arrangeWindows(inOrder: ids) },
+                exportAsImage: { [registry] id in registry.presentExportSheet(for: id) },
+                withExternalBodyEdit: { [registry] id, edit in registry.withExternalBodyEdit(id: id, edit) },
+                createMemoReceivingAirDrop: { [registry] in registry.createMemoReceivingAirDrop() }
             ),
             onOpenMemo: { [registry] id in registry.openMemo(id: id) },
             onCreateMemo: { [registry] in registry.createMemo() }

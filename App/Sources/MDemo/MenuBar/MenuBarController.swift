@@ -27,6 +27,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var rememberLastSizeItem: NSMenuItem?
     private let syncStatusItem = NSMenuItem.info(NSAttributedString(string: ""))
     private var autoSyncItem: NSMenuItem?
+    private var readableCopyItem: NSMenuItem?
     private var launchAtLoginItem: NSMenuItem?
     private let syncCoordinator: SyncCoordinator
     private let fontMenu = NSMenu()
@@ -181,6 +182,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(onTopItem)
 
         menu.addItem(item(title: "새 메모  (어디서든 ⌘⇧N)", action: #selector(newMemo), key: "n"))
+        let airDropItem = item(title: "AirDrop으로 새 메모 만들기", action: #selector(newMemoReceivingAirDrop), key: "")
+        airDropItem.toolTip = "새 메모를 만들고 iPhone이 AirDrop으로 보낸 사진을 바로 받아 넣습니다"
+        airDropItem.image = MemoGlyphs.airDrop(pointSize: 18)
+        menu.addItem(airDropItem)
         menu.addItem(.separator())
 
         menu.addItem(item(title: "모든 메모 보이기/숨기기  (어디서든 ⌘⇧H)", action: #selector(toggleAllMemos), key: ""))
@@ -390,6 +395,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         auto.toolTip = "앱을 켤 때와 5분마다, 끌 때 자동으로 주고받습니다"
         autoSyncItem = auto
         menu.addItem(auto)
+
+        let readable = item(title: "iPhone 읽기용 사본 만들기", action: #selector(toggleReadableCopy), key: "")
+        readable.toolTip = "iCloud Drive의 \"\(ReadableCopy.folderName)\" 폴더 안, 이 맥 이름의 하위 폴더에 본문만 담은 사본을 동기화할 때마다 갱신합니다. 끄면 이미 만든 폴더는 그대로 둡니다"
+        readableCopyItem = readable
+        menu.addItem(readable)
         menu.addItem(.separator())
 
         menu.addItem(syncStatusItem)
@@ -398,11 +408,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func refreshSyncMenuState() {
         autoSyncItem?.state = preferences.autoSyncEnabled ? .on : .off
+        readableCopyItem?.state = preferences.readableCopyEnabled ? .on : .off
         if syncCoordinator.isAvailable {
             setInfoTitle(syncStatusItem, syncCoordinator.status.menuText)
         } else {
             setInfoTitle(syncStatusItem, "iCloud Drive가 꺼져 있습니다")
             autoSyncItem?.isEnabled = false
+            readableCopyItem?.isEnabled = false
         }
     }
 
@@ -412,6 +424,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func pullNow() {
         syncCoordinator.run(mode: .pull)
+    }
+
+    @objc private func toggleReadableCopy() {
+        preferences.readableCopyEnabled.toggle()
     }
 
     @objc private func toggleAutoSync() {
@@ -739,6 +755,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func newMemo() {
         windowRegistry.createMemo()
+        listWindow.refreshIfOpen()
+        windowRegistry.refreshFlowStrips()
+    }
+
+    @objc private func newMemoReceivingAirDrop() {
+        windowRegistry.createMemoReceivingAirDrop()
         listWindow.refreshIfOpen()
         windowRegistry.refreshFlowStrips()
     }

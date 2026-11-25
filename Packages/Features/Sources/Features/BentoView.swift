@@ -8,19 +8,21 @@ enum BentoGrid {
     static let pitch: CGFloat = 148
 
     /// 위에서 아래로 빈칸을 찾아 채운 칸 위치와 열 수
-    static func bentoCells(spans: [BoardLayout.BentoSpan], width proposedWidth: CGFloat) -> (cells: [CGRect], columns: Int) {
+    static func bentoCells(spans: [BoardLayout.BentoSpan], width proposedWidth: CGFloat, preservingOrder: Bool = false) -> (cells: [CGRect], columns: Int) {
         let width = proposedWidth.isFinite ? max(0, proposedWidth) : 880
         let columns = Int(max(2, min(4, width / 220)))
         let unit = max(0, (width - CGFloat(columns - 1) * gap) / CGFloat(columns))
         var occupied = Set<Int>()
         var result: [CGRect] = []
+        var nextSlot = 0
         for span in spans {
             let w = min(columns, span.columns)
             let h = span.rows
-            var row = 0
+            var row = preservingOrder ? nextSlot / columns : 0
             var column = 0
             search: while true {
                 for x in 0...(columns - w) {
+                    if preservingOrder && row * columns + x < nextSlot { continue }
                     let slots = (0..<h).flatMap { y in (0..<w).map { (row + y) * columns + x + $0 } }
                     if slots.allSatisfy({ !occupied.contains($0) }) {
                         column = x
@@ -30,6 +32,7 @@ enum BentoGrid {
                 }
                 row += 1
             }
+            nextSlot = row * columns + column + 1
             result.append(CGRect(x: CGFloat(column) * (unit + gap), y: CGFloat(row) * pitch,
                                  width: unit * CGFloat(w) + CGFloat(w - 1) * gap, height: CGFloat(h) * rowHeight + CGFloat(h - 1) * gap))
         }

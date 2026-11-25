@@ -25,6 +25,9 @@ public enum MarkdownSerializer {
         var insideTable = false
 
         for line in lines {
+            // 클립보드로 나가는 글에서 이미지 줄은 뺀다. 로컬 경로는 받는 앱이 읽을 수 없다 (IMG-01).
+            if flavor == .clipboard, case .image = line.block { continue }
+
             let isCode = line.block == .codeBlock
             // 코드 박스는 줄마다 기호를 붙이는 대신, 시작과 끝에 울타리를 한 번씩 친다 (MD-10).
             if isCode != insideCodeBlock {
@@ -53,6 +56,9 @@ public enum MarkdownSerializer {
         if line.block == .codeBlock {
             return line.spans.map(\.text).joined()
         }
+        if case .image(let image) = line.block {
+            return image.markdown
+        }
         let content = line.spans.map { serializeSpan($0, flavor: flavor) }.joined()
         return blockPrefix(for: line.block, flavor: flavor) + content
     }
@@ -78,6 +84,9 @@ public enum MarkdownSerializer {
             return ""
         case .tableRow:
             // 세로줄은 내용에 이미 들어 있다.
+            return ""
+        case .image:
+            // 줄 전체가 이미지 문법이라 serializeLine이 따로 만든다.
             return ""
         }
     }

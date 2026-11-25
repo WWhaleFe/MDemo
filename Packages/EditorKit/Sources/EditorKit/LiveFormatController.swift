@@ -17,6 +17,9 @@ public final class LiveFormatController {
     private(set) var currentTheme: EditorTheme
     private(set) var currentTextAlpha: Double
 
+    /// 이미지 저장 요청을 받은 순서대로 완료하고 본문에 반영한다.
+    var pendingImageInsertion: Task<Void, Never>?
+
     /// 변환을 스스로 적용하는 동안 다시 호출되는 것을 막는다.
     private var isApplyingFormat = false
 
@@ -50,6 +53,16 @@ public final class LiveFormatController {
         // 다른 앱에서 복사한 마크다운은 붙여 넣는 순간 서식으로 바꾼다 (노션 호환).
         textView.onPasteText = { [weak self] text in
             self?.pasteMarkdown(text) ?? false
+        }
+        // 이미지 붙여넣기 · 끌어 놓기 (IMG-01).
+        textView.onInsertImageFiles = { [weak self] urls in self?.insertImages(from: urls) ?? false }
+        textView.onInsertImageData = { [weak self] data in self?.insertImage(data: data) ?? false }
+        textView.onInsertImageContent = { [weak self] data, alt, width in
+            self?.insertImage(data: data, alt: alt, width: width) ?? false
+        }
+        textView.onNeedsTypingReset = { [weak self] in
+            guard let self else { return }
+            self.textView?.resetTypingAttributes(theme: self.currentTheme, textAlpha: self.currentTextAlpha)
         }
         textView.onEditorClick = { [weak self] in
             self?.slashPopup.hide()

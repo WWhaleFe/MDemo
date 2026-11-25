@@ -14,17 +14,17 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     public let memoID: MemoID
     public private(set) var meta: MemoMeta
 
-    private let panel: StickyPanel
-    private let flowStrip = FlowStripView(frame: .zero)
-    private var hasFlow = false
-    private let rootView: StickyRootView
-    private let textView: MemoTextView
+    let panel: StickyPanel
+    let flowStrip = FlowStripView(frame: .zero)
+    private(set) var hasFlow = false
+    let rootView: StickyRootView
+    let textView: MemoTextView
     private let scrollView: NSScrollView
     /// 입력 중 마크다운 기호를 서식으로 바꾼다. 한글 조합 처리를 여기에 가둬 둔다 (NFR-08).
-    private var formatController: LiveFormatController?
+    var formatController: LiveFormatController?
 
     /// 저장을 맡은 쪽. 컨트롤러는 파일 시스템을 직접 다루지 않는다 (설계서 §4-3).
-    private weak var store: MemoStore?
+    weak var store: MemoStore?
     private let deviceState: DeviceStateStore
 
     /// 입력이 멈춘 뒤에 저장한다 (DAT-03). 타이핑마다 디스크를 두드리지 않기 위한 장치다.
@@ -39,10 +39,22 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 닫기는 맥 규칙대로 왼쪽 위에 신호등으로 둔다 (WIN-02).
     private let trafficLights = TrafficLightGroup()
     private let closeButton = TrafficLightButton(help: "닫기 (메모는 삭제되지 않습니다)")
-    private let appearanceButton = NSButton()
-    private let pinButton = NSButton()
+    private let appearanceButton = TopBarButton()
+    private let pinButton = TopBarButton()
+    /// AirDrop으로 이미지 받기 (맨 위 줄, 슬라이더 바로 오른쪽).
+    let airDropButton = TopBarButton()
+    /// 메모를 이미지로 내보내기.
+    let exportButton = TopBarButton()
+    let airDropDot = NSView()
+    let iconDivider = NSView()
+    private let iconStack = NSStackView()
+    /// 받는 중에만 있는 AirDrop 세션과 맨 위 줄 아래 띠.
+    var airDropReceiver: AirDropReceiver?
+    let receiveStrip = ReceiveStripView()
+    /// 떠 있는 보조 창(글자 읽기 · 내보내기). 메모 창이 닫히면 함께 닫는다.
+    var auxiliaryWindows: [AuxiliaryWindow] = []
     /// 머리 영역의 접기 버튼 (WIN-08). 접기·펼치기는 이 버튼 하나로 한다.
-    private let foldButton = NSButton()
+    private let foldButton = TopBarButton()
     /// 메모 제목 (TXT-06). 머리 영역을 누르면 바로 고쳐 쓸 수 있다.
     private let titleField = NSTextField()
     /// 서식 버튼 이름표 (FMT-05). 마우스를 올린 동안에만 뜬다.
@@ -77,7 +89,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 자동 줄바꿈. 끄면 긴 줄이 창 밖으로 이어지고 가로로 스크롤해서 본다.
     private var wrapsLines: Bool
 
-    private func configure(
+    func configure(
         _ button: NSButton,
         symbol: String,
         description: String,
@@ -94,7 +106,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         button.imageScaling = .scaleProportionallyUpOrDown
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
             .withSymbolConfiguration(.init(pointSize: size * 0.8, weight: .regular))
-        button.contentTintColor = NSColor.black.withAlphaComponent(0.35)
+        button.contentTintColor = NSColor.black.withAlphaComponent(0.62)
         button.toolTip = help
     }
 
@@ -137,7 +149,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         max(12, fontSize.rounded())
     }
 
-    private static func closeButtonSize(for fontSize: CGFloat) -> CGFloat {
+    static func closeButtonSize(for fontSize: CGFloat) -> CGFloat {
         max(20, fontSize * 1.15)
     }
 
@@ -175,6 +187,9 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
         buildViewHierarchy()
         applyAppearance()
+
+        // 이미지는 이 메모의 첨부 폴더에서 읽는다. 썸네일 캐시는 이 창과 함께 사라진다 (IMG-01).
+        textView.imageStore = MemoImageStore(directory: store.attachmentsDirectory(for: meta.id))
 
         // 슬래시 명령이 있다는 걸 모르면 쓸 수 없으니, 빈 메모에서 한 줄로 알려 준다.
         textView.placeholderText = "/ 를 입력하면 서식 목록"
@@ -238,7 +253,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         let buttonSize = Self.closeButtonSize(for: Self.chromeFontSize)
         configure(
             appearanceButton,
-            symbol: "paintpalette.fill",
+            symbol: "paintpalette",
             description: "겉모습",
             help: "배경색과 투명도",
             action: #selector(appearanceButtonTapped),
@@ -269,6 +284,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         header.addSubview(foldButton)
         // 시스템에 없는 기호면 화살표로 물러서도록 그림은 한곳에서 정한다.
         updateFoldButtonImage()
+
+        buildAirDropAndExportButtons(buttonSize: buttonSize)
 
         buildTitleField(into: header)
 
@@ -330,6 +347,18 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         let buttonWidth = appearanceButton.widthAnchor.constraint(equalToConstant: buttonSize)
         let buttonHeight = appearanceButton.heightAnchor.constraint(equalToConstant: buttonSize)
 
+        iconStack.translatesAutoresizingMaskIntoConstraints = false
+        iconStack.orientation = .horizontal
+        iconStack.alignment = .centerY
+        iconStack.spacing = 6
+        for view in [opacitySlider, airDropButton, exportButton, iconDivider, pinButton, foldButton, appearanceButton] {
+            iconStack.addArrangedSubview(view)
+        }
+        iconStack.setCustomSpacing(8, after: opacitySlider)
+        iconStack.setCustomSpacing(8, after: exportButton)
+        iconStack.setCustomSpacing(8, after: iconDivider)
+        header.addSubview(iconStack)
+
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: rootView.topAnchor),
             header.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
@@ -343,30 +372,22 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
             trafficLights.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
 
-            // 겉모습·항상 위는 오른쪽으로 밀어 둔다. 왼쪽 위는 신호등 자리다.
-            appearanceButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
+            // 오른쪽 아이콘 묶음: [투명도] [AirDrop] [내보내기] | [핀] [접기] [색].
+            // 좁아지면 숨긴 것은 묶음에서 빠지고 나머지가 붙는다. 왼쪽 위는 신호등 자리다.
+            iconStack.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
             // 오른쪽 가장자리 띠(크기 조절 자리)에 걸치지 않게 띄운다.
-            appearanceButton.trailingAnchor.constraint(
+            iconStack.trailingAnchor.constraint(
                 equalTo: header.trailingAnchor,
                 constant: -(ResizeOverlayView.edgeThickness + 2)
             ),
+            iconStack.leadingAnchor.constraint(greaterThanOrEqualTo: trafficLights.trailingAnchor, constant: 8),
             buttonWidth,
             buttonHeight,
 
-            // 접기는 고정하기 바로 오른쪽. 창을 다루는 버튼끼리 붙여 둔다 (WIN-08).
-            foldButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
-            foldButton.trailingAnchor.constraint(equalTo: appearanceButton.leadingAnchor, constant: -8),
             foldButton.widthAnchor.constraint(equalTo: appearanceButton.widthAnchor),
             foldButton.heightAnchor.constraint(equalTo: appearanceButton.heightAnchor),
-
-            pinButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
-            pinButton.trailingAnchor.constraint(equalTo: foldButton.leadingAnchor, constant: -8),
             pinButton.widthAnchor.constraint(equalTo: appearanceButton.widthAnchor),
             pinButton.heightAnchor.constraint(equalTo: appearanceButton.heightAnchor),
-
-            // 투명도는 고정하기 바로 왼쪽에 둔다. 창을 흐리게 해 두고 고정하는 손이 이어진다.
-            opacitySlider.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
-            opacitySlider.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -8),
 
             // 제목은 버튼 줄 아래 한 줄, 메모 전체 너비의 가운데에 둔다.
             // 양옆 여백을 같게 잡아야 글자가 창 한가운데에 온다.
@@ -527,7 +548,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     }
 
     /// 여러 후보 중 이 시스템에 있는 첫 기호를 쓴다.
-    private static func symbolImage(names: [String], pointSize: CGFloat, description: String) -> NSImage? {
+    static func symbolImage(names: [String], pointSize: CGFloat, description: String) -> NSImage? {
         for name in names {
             if let image = NSImage(systemSymbolName: name, accessibilityDescription: description) {
                 return image.withSymbolConfiguration(.init(pointSize: pointSize, weight: .regular))
@@ -669,7 +690,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 머리 영역·서식 막대·본문의 세로 배치를 다시 잡는다.
     ///
     /// 막대는 위·아래를 오갈 수 있으므로, 자리와 얽힌 제약만 따로 모아 통째로 갈아 끼운다.
-    private func layoutSections() {
+    func layoutSections() {
         NSLayoutConstraint.deactivate(sectionConstraints)
         sectionConstraints = []
 
@@ -683,6 +704,14 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             rootView.addSubview(flowStrip, positioned: .below, relativeTo: resizeOverlay)
         }
         flowStrip.isHidden = !showFlow
+        if receiveStrip.superview == nil {
+            receiveStrip.translatesAutoresizingMaskIntoConstraints = false
+            rootView.addSubview(receiveStrip, positioned: .below, relativeTo: resizeOverlay)
+        }
+        // AirDrop으로 받는 중에는 맨 위 줄 바로 아래에 띠가 끼어든다. 본문과 서식 막대는 그 아래로 내려간다.
+        let showReceive = (airDropReceiver?.isActive ?? false) && !isCollapsed
+        receiveStrip.isHidden = !showReceive
+        let contentTop: NSLayoutYAxisAnchor = showReceive ? receiveStrip.bottomAnchor : header.bottomAnchor
         let bottom = showFlow ? flowStrip.topAnchor : rootView.bottomAnchor
         let position: FormatToolbarPosition = isCollapsed ? .hidden : toolbarPosition
 
@@ -698,7 +727,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             // 위쪽(제목·아이콘, 또는 위에 붙은 서식 막대)과 본문 사이를 띄운다.
             // 붙어 있으면 본문 첫 줄이 버튼 줄의 일부처럼 읽힌다.
             scrollView.topAnchor.constraint(
-                equalTo: position == .top ? formatToolbar.bottomAnchor : header.bottomAnchor,
+                equalTo: position == .top ? formatToolbar.bottomAnchor : contentTop,
                 // 접혀 있을 때는 본문이 없으니 띄울 것도 없다. 띄우면 접힌 창이 그만큼 커진다.
                 constant: isCollapsed ? 0 : Self.bodyTopSpacing
             ),
@@ -724,7 +753,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             break
         case .top:
             constraints += [
-                formatToolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
+                formatToolbar.topAnchor.constraint(equalTo: contentTop),
                 formatToolbar.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
                 formatToolbar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             ]
@@ -741,7 +770,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         case .left, .right:
             // 세로 막대는 머리 영역 아래부터 창 바닥까지 선다.
             constraints += [
-                formatToolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
+                formatToolbar.topAnchor.constraint(equalTo: contentTop),
                 formatToolbar.bottomAnchor.constraint(
                     equalTo: bottom,
                     constant: -ResizeOverlayView.reservedInset
@@ -756,6 +785,15 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
                         equalTo: rootView.trailingAnchor,
                         constant: -(ResizeOverlayView.reservedInset - 4)
                     ),
+            ]
+        }
+
+        if showReceive {
+            constraints += [
+                receiveStrip.topAnchor.constraint(equalTo: header.bottomAnchor),
+                receiveStrip.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+                receiveStrip.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+                receiveStrip.heightAnchor.constraint(equalToConstant: ReceiveStripView.height),
             ]
         }
 
@@ -865,6 +903,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
             formatController?.setHighlightColor(hex)
         case .removeHighlight:
             formatController?.removeHighlight()
+        case .insertImage:
+            formatController?.chooseAndInsertImages()
         }
         scheduleBodySave()
     }
@@ -918,7 +958,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         scheduleBodySave()
     }
 
-    private func scheduleBodySave() {
+    func scheduleBodySave() {
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDebounce, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -967,10 +1007,17 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
         userDidResize(to: panel.frame.size)
     }
 
-    /// 창이 좁으면 슬라이더를 감춘다. 버튼과 겹쳐 눌리는 것이 더 나쁘다.
+    /// 창이 좁으면 슬라이더 · 접기 · 색을 먼저 감춘다. 버튼과 겹쳐 눌리는 것이 더 나쁘다.
+    /// AirDrop · 내보내기 · 핀은 끝까지 남긴다.
     private func updateOpacitySliderVisibility() {
-        opacitySlider.isHidden = panel.frame.width < 300
+        let isNarrow = panel.frame.width < Self.narrowWidth
+        opacitySlider.isHidden = isNarrow
+        foldButton.isHidden = isNarrow
+        appearanceButton.isHidden = isNarrow
     }
+
+    /// 이 폭보다 좁으면 머리 영역의 덜 쓰는 아이콘을 숨긴다.
+    private static let narrowWidth: CGFloat = 320
 
     private func scheduleFrameSave() {
         frameSaveTimer?.invalidate()
@@ -1067,6 +1114,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 핀 아이콘만 지금 상태에 맞춘다. 파일은 건드리지 않는다.
     /// 글자 크기를 바꿀 때마다 메모의 수정 시각이 갱신되면 헛된 동기화 충돌이 생긴다.
     private func updatePinImage() {
+        pinButton.contentTintColor = NSColor.black.withAlphaComponent(meta.isPinned ? 0.9 : 0.62)
         pinButton.image = NSImage(
             systemSymbolName: meta.isPinned ? "pin.fill" : "pin.slash",
             accessibilityDescription: "항상 위"
@@ -1104,6 +1152,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     /// 창을 닫는다. 메모 파일은 남는다 (WIN-10).
     public func close() {
+        tearDownAirDropAndSheets()
         formatController?.dismissPopups()
         titleChanged()
         saveBodyNow()
@@ -1120,6 +1169,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 파일에는 이미 "닫힘"으로 적혀 있으므로, 그 값을 다시 쓰지 않는다.
     /// 그렇지 않으면 수정 시각이 갱신돼 다음 동기화에서 헛된 충돌이 생긴다.
     public func closeWithoutMarkingClosed() {
+        tearDownAirDropAndSheets()
         formatController?.dismissPopups()
         saveFrameNow()
         panel.orderOut(nil)
@@ -1168,6 +1218,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     public func setHidden(_ hidden: Bool) {
         if hidden {
+            stopAirDropReceiving()
             formatController?.dismissPopups()
             panel.orderOut(nil)
         } else {

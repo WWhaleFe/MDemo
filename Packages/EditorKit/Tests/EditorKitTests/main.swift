@@ -1,5 +1,7 @@
 import AppKit
-import EditorKit
+import ImageIO
+import UniformTypeIdentifiers
+@testable import EditorKit
 import MarkdownEngine
 import TestKit
 
@@ -1007,6 +1009,515 @@ runner.test("복사한 것을 그대로 붙여 넣으면 같은 내용이 된다
         t.expect(to.onPasteText?(copied) == true)
         t.expectEqual(to.currentMarkdown(), source)
     }
+}
+
+// MARK: - 본문 이미지 (IMG-01 ~ IMG-08)
+
+/// 시험용 PNG 파일을 임시 폴더에 만든다.
+func makeTestPNG(in directory: URL, name: String, width: Int, height: Int) throws -> URL {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    )!
+    context.setFillColor(CGColor(red: 1, green: 0.4, blue: 0.2, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let url = directory.appendingPathComponent(name)
+    let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+    return url
+}
+
+let imageSample = "앞 글\n![스샷](attachments/a1b2c3d4.png =260)\n뒤 글"
+
+runner.test("이미지 줄은 화면에서 첨부 글자 하나이고 저장하면 원문 그대로다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: imageSample)
+        let lines = textView.string.components(separatedBy: "\n")
+        t.expectEqual(lines, ["앞 글", "\u{FFFC}", "뒤 글"], "원문 글자가 화면에 남았다")
+        t.expectEqual(textView.currentMarkdown(), imageSample)
+        t.expectEqual(textView.selectedImageIndex, nil)
+        textView.setSelectedRange(NSRange(location: 4, length: 1))
+        t.expectEqual(textView.selectedImageIndex, 4, "이미지를 고르지 못함")
+    }
+}
+
+runner.test("노션으로 복사하면 이미지 줄이 빠지고 글만 나간다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: imageSample)
+        textView.setSelectedRange(NSRange(location: 0, length: (textView.string as NSString).length))
+        t.expectEqual(textView.selectedMarkdown(), "앞 글\n뒤 글")
+    }
+}
+
+runner.test("이미지 줄 끝에 글이 붙어도 저장하면 이미지 한 줄과 글 한 줄로 나뉜다") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "![](attachments/p.png)")
+        let end = (textView.string as NSString).length
+        textView.textStorage?.replaceCharacters(in: NSRange(location: end, length: 0), with: "붙은 글")
+        t.expectEqual(textView.currentMarkdown(), "![](attachments/p.png)\n붙은 글")
+
+        let before = makeTextView(loading: "글\n![](attachments/p.png)")
+        // 앞 줄과 합쳐진 경우 (줄바꿈을 지움)
+        before.textStorage?.replaceCharacters(in: NSRange(location: 1, length: 1), with: "")
+        t.expectEqual(before.currentMarkdown(), "글\n![](attachments/p.png)")
+    }
+}
+
+runner.test("이미지 줄 뒤에서 글을 치면 새 줄이 열린다") { t in
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "![](attachments/p.png)")
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+        textView.insertText("새 글", replacementRange: NSRange(location: NSNotFound, length: 0))
+        t.expectEqual(textView.currentMarkdown(), "![](attachments/p.png)\n새 글")
+
+        let (above, _) = makeEditor(loading: "![](attachments/p.png)")
+        above.setSelectedRange(NSRange(location: 0, length: 0))
+        above.insertText("위 글", replacementRange: NSRange(location: NSNotFound, length: 0))
+        t.expectEqual(above.currentMarkdown(), "위 글\n![](attachments/p.png)")
+    }
+}
+
+runner.test("크기를 바꾸면 =너비가 본문에 반영되고 되돌릴 수 있다 (IMG-03, IMG-04)") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: "![a](attachments/p.png)")
+        let undoManager = UndoManager()
+        // 편집기의 되돌리기 관리자를 시험용으로 갈아 끼울 수는 없으므로 동작만 확인한다.
+        textView.setImageWidth(300, at: 0, actionName: "이미지 크기")
+        t.expectEqual(textView.currentMarkdown(), "![a](attachments/p.png =300)")
+        textView.setImageWidth(nil, at: 0, actionName: "이미지 크기")
+        t.expectEqual(textView.currentMarkdown(), "![a](attachments/p.png)", "너비 맞춤은 =너비를 뺀다")
+        _ = undoManager
+    }
+}
+
+runner.test("이미지 줄을 지우면 줄까지 사라진다 (IMG-03)") { t in
+    MainActor.assumeIsolated {
+        let textView = makeTextView(loading: imageSample)
+        textView.deleteImageLine(at: 4)
+        t.expectEqual(textView.currentMarkdown(), "앞 글\n뒤 글")
+
+        let last = makeTextView(loading: "글\n![](attachments/p.png)")
+        last.deleteImageLine(at: 2)
+        t.expectEqual(last.currentMarkdown(), "글", "마지막 줄을 지우면 빈 줄이 남지 않아야 한다")
+
+        let only = makeTextView(loading: "![](attachments/p.png)")
+        only.setSelectedRange(NSRange(location: 0, length: 1))
+        only.deleteBackward(nil)
+        t.expectEqual(only.currentMarkdown(), "", "고른 이미지는 Backspace로 지워진다")
+    }
+}
+
+runner.test("이미지 파일을 넣으면 첨부 폴더에 저장되고 본문에 한 줄이 들어간다 (IMG-01, IMG-07)") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("img-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = try makeTestPNG(in: root.appendingPathComponent("src"), name: "사진.png", width: 400, height: 200)
+
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "첫 줄")
+        let attachments = root.appendingPathComponent("memo/attachments")
+        textView.imageStore = MemoImageStore(directory: attachments)
+        textView.setSelectedRange(NSRange(location: 3, length: 0))
+
+        t.expect(textView.onInsertImageFiles?([source]) == true, "이미지를 넣지 못함")
+        waitForImageInsertion(textView)
+        let markdown = textView.currentMarkdown()
+        let lines = markdown.components(separatedBy: "\n")
+        t.expectEqual(lines.first, "첫 줄")
+        t.expect(lines.count >= 2 && lines[1].hasPrefix("![사진](attachments/") && lines[1].hasSuffix(".png)"), "본문 줄이 이상함: \(markdown)")
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: attachments.path)) ?? []
+        t.expectEqual(files.count, 1, "첨부 파일이 저장되지 않음")
+        t.expectEqual(textView.imageStore?.naturalSize(of: files.first ?? "")?.width, 400)
+        let thumb = textView.imageStore?.thumbnail(of: files.first ?? "", displayWidth: 100, scale: 2)
+        t.expect(thumb != nil, "썸네일을 만들지 못함")
+        t.expect((thumb?.size.width ?? 9999) <= 400, "썸네일이 원본보다 크다")
+
+        // 이미지 아래 줄에 커서가 있어야 곧바로 글을 이어 쓴다.
+        t.expectEqual(textView.selectedImageIndex, nil)
+    }
+}
+
+runner.test("빈 줄에 이미지를 넣으면 그 줄이 이미지가 되고 아래에 새 줄이 생긴다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("img-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = try makeTestPNG(in: root.appendingPathComponent("src"), name: "a.png", width: 50, height: 50)
+
+    MainActor.assumeIsolated {
+        let (textView, _) = makeEditor(loading: "")
+        textView.imageStore = MemoImageStore(directory: root.appendingPathComponent("att"))
+        t.expect(textView.onInsertImageFiles?([source]) == true)
+        waitForImageInsertion(textView)
+        let markdown = textView.currentMarkdown()
+        t.expect(markdown.hasPrefix("![a](attachments/") && !markdown.contains("\n"), "이미지 한 줄이어야 한다: \(markdown)")
+        t.expect(textView.string.hasSuffix("\n"), "아래에 새 줄이 생겨야 한다")
+        t.expectEqual(textView.selectedRange().location, (textView.string as NSString).length, "커서는 아래 새 줄에 있어야 한다")
+    }
+}
+
+runner.test("이미지 줄의 높이는 이미지 크기를 따르고 줄 폭을 넘지 않는다 (IMG-08)") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("img-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("attachments")
+    _ = try makeTestPNG(in: directory, name: "p.png", width: 400, height: 200)
+
+    MainActor.assumeIsolated {
+        func usedHeight(_ markdown: String) -> CGFloat {
+            let textView = MemoTextView.makeTextKit1(frame: NSRect(x: 0, y: 0, width: 300, height: 300))
+            textView.imageStore = MemoImageStore(directory: directory)
+            textView.loadMarkdown(markdown, theme: theme, textAlpha: 1.0)
+            guard let manager = textView.layoutManager, let container = textView.textContainer else { return 0 }
+            manager.ensureLayout(for: container)
+            return manager.usedRect(for: container).height
+        }
+        // 너비 100이면 높이 50 (비율 2:1)
+        let sized = usedHeight("![](attachments/p.png =100)")
+        t.expect(sized >= 50 && sized < 70, "너비 100의 이미지 줄 높이가 50쯤이어야 한다: \(sized)")
+        // 너비를 생략하면 원본(400x200)이 줄 폭(약 276)에 맞춰 줄어든다. 높이는 138 안팎.
+        let fit = usedHeight("![](attachments/p.png)")
+        t.expect(fit > 120 && fit < 160, "줄 폭에 맞춰 줄어들어야 한다: \(fit)")
+        // 파일이 없으면 자리표시 높이(56)를 잡는다.
+        let missing = usedHeight("![](attachments/none.png)")
+        t.expect(missing >= 56, "없는 이미지도 자리를 잡아야 한다: \(missing)")
+    }
+}
+
+// MARK: - 글자 읽기 넣기 · 이미지 내보내기
+
+@MainActor
+func makeEditorWithImage(markdown: String, root: URL) throws -> (MemoTextView, LiveFormatController) {
+    _ = try makeTestPNG(in: root.appendingPathComponent("attachments"), name: "p.png", width: 80, height: 40)
+    let (textView, controller) = makeEditor(loading: markdown)
+    textView.imageStore = MemoImageStore(directory: root.appendingPathComponent("attachments"))
+    return (textView, controller)
+}
+
+runner.test("글자 읽어서 아래에 넣기: 이미지는 남고 서식이 입혀지며 한 번에 되돌아간다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ocr-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let (textView, controller) = try makeEditorWithImage(markdown: "위\n![](attachments/p.png)\n아래", root: root)
+        let undo = UndoManager()
+        textView.allowsUndo = true
+        _ = undo
+        textView.setSelectedRange(NSRange(location: 2, length: 1))
+        guard let request = textView.imageTextRequest(replacingImage: false) else { t.expect(false, "요청을 못 만듦"); return }
+        t.expect(controller.applyImageText("# 제목\n- [ ] 우유\n- [x] 빵\n1. 하나", isPlain: false, for: request))
+        t.expectEqual(
+            textView.currentMarkdown(),
+            "위\n![](attachments/p.png)\n# 제목\n- [ ] 우유\n- [x] 빵\n1. 하나\n아래"
+        )
+    }
+}
+
+runner.test("글자로 바꾸고 이미지 지우기: 이미지 줄이 글로 바뀐다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ocr-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let (textView, controller) = try makeEditorWithImage(markdown: "위\n![](attachments/p.png)\n아래", root: root)
+        textView.setSelectedRange(NSRange(location: 2, length: 1))
+        guard let request = textView.imageTextRequest(replacingImage: true) else { t.expect(false, "요청을 못 만듦"); return }
+        t.expect(controller.applyImageText("첫 줄\n둘째 줄", isPlain: true, for: request))
+        t.expectEqual(textView.currentMarkdown(), "위\n첫 줄\n둘째 줄\n아래")
+        // 같은 요청을 다시 쓰면 이미지가 이미 없으므로 넣지 않는다.
+        t.expect(!controller.applyImageText("또", isPlain: true, for: request))
+    }
+}
+
+runner.test("글자 읽기: 마지막 줄의 이미지 아래에도 들어가고, 텍스트만 모드는 기호를 서식으로 읽지 않는다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ocr-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let (textView, controller) = try makeEditorWithImage(markdown: "![](attachments/p.png)", root: root)
+        textView.setSelectedRange(NSRange(location: 0, length: 1))
+        guard let request = textView.imageTextRequest(replacingImage: false) else { t.expect(false, "요청을 못 만듦"); return }
+        t.expect(controller.applyImageText("# 기호 그대로", isPlain: true, for: request))
+        let markdown = textView.currentMarkdown()
+        t.expect(markdown.hasPrefix("![](attachments/p.png)\n"), markdown)
+        t.expect(markdown.contains("# 기호 그대로"), markdown)
+        // 글을 못 찾은 경우(빈 글)는 넣지 않는다.
+        t.expect(!controller.applyImageText("  \n ", isPlain: false, for: request))
+    }
+}
+
+runner.test("내보내기 크기: 배율과 아래 표시 줄, 흐름 줄이 높이에 더해진다") { t in
+    var options = MemoExportOptions()
+    t.expectEqual(options.scale, 2)
+    var layout = options.layout(contentSize: CGSize(width: 300, height: 500), flowHeight: 36)
+    t.expectEqual(layout.pixelWidth, 600)
+    t.expectEqual(layout.pixelHeight, (500 + 28) * 2)
+    t.expectEqual(layout.sizeText, "600 × 1056 px")
+    options.includesFlowStrip = true
+    options.scale = 2
+    layout = options.layout(contentSize: CGSize(width: 300, height: 500), flowHeight: 36)
+    t.expectEqual(layout.pixelHeight, (500 + 36 + 28) * 2)
+    options.showsFooter = false
+    options.scale = 1
+    layout = options.layout(contentSize: CGSize(width: 300, height: 500), flowHeight: 36)
+    t.expectEqual(layout.pixelWidth, 300)
+    t.expectEqual(layout.pixelHeight, 536)
+    t.expectEqual(layout.sizeText, "300 × 536 px")
+    t.expect(!layout.isTooLarge)
+    t.expect(MemoExportOptions(scale: 2).layout(contentSize: CGSize(width: 300, height: 9000), flowHeight: 0).isTooLarge)
+    t.expectEqual(MemoExportOptions.scales, [1, 2])
+    t.expectEqual(MemoExportOptions(scale: 3).scale, 2)
+    t.expectEqual(MemoExportOptions(scale: 9).scale, 2)
+    options.scale = 3
+    t.expectEqual(options.scale, 2)
+    t.expectEqual(MemoExportOptions(scale: 0).scale, 1)
+}
+
+runner.test("내보내기: 본문 전체 높이가 PNG로 그려지고 이미지 줄도 들어간다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("exp-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let lines = (1...40).map { "줄 \($0)" }.joined(separator: "\n")
+        let (textView, _) = try makeEditorWithImage(markdown: "# 제목\n![](attachments/p.png)\n\(lines)", root: root)
+        let size = textView.exportContentSize()
+        t.expect(size.height > 300, "글 전체 높이를 재야 한다: \(size.height)")
+        let options = MemoExportOptions(usesMemoColor: true, showsFooter: true, includesFlowStrip: false, scale: 2)
+        guard let rep = MemoExportRenderer.render(
+            textView: textView, flowStrip: nil, options: options,
+            backgroundColor: NSColor(srgbRed: 1, green: 0.95, blue: 0.7, alpha: 1), footerText: "2026. 11. 25. · MDemo"
+        ), let data = MemoExportRenderer.pngData(rep) else { t.expect(false, "그리지 못함"); return }
+        let expected = options.layout(contentSize: size, flowHeight: 0)
+        t.expectEqual(rep.pixelsWide, expected.pixelWidth)
+        t.expectEqual(rep.pixelsHigh, expected.pixelHeight)
+        t.expect(data.count > 1000, "PNG가 너무 작다")
+        t.expectEqual(data.prefix(4), Data([0x89, 0x50, 0x4E, 0x47]))
+        // 배경을 켰으면 가장자리 픽셀이 메모 색이다 (투명이 아니다).
+        let corner = rep.colorAt(x: 1, y: 1)
+        t.expect((corner?.alphaComponent ?? 0) > 0.99, "배경이 칠해져야 한다 \(String(describing: corner)) \(rep.pixelsWide)x\(rep.pixelsHigh) \(rep.size)")
+
+        var transparent = options
+        transparent.usesMemoColor = false
+        let bare = MemoExportRenderer.render(
+            textView: textView, flowStrip: nil, options: transparent, backgroundColor: .red, footerText: ""
+        )
+        t.expect((bare?.colorAt(x: bare!.pixelsWide - 2, y: bare!.pixelsHigh - 2)?.alphaComponent ?? 1) < 0.05, "배경을 끄면 투명해야 한다")
+    }
+}
+
+
+@MainActor
+func waitForImageInsertion(_ view: MemoTextView) {
+    let deadline = Date().addingTimeInterval(5)
+    while !view.string.contains("\u{FFFC}") && Date() < deadline { pumpMainLoop(0.01) }
+}
+
+/// 창을 띄우지 않고도 실제 편집 되돌리기를 제공한다.
+@MainActor
+final class HeadlessUndoDelegate: NSObject, NSTextViewDelegate {
+    let manager = UndoManager()
+    override init() { super.init(); manager.groupsByEvent = false }
+    func undoManager(for view: NSTextView) -> UndoManager? { manager }
+}
+
+runner.test("H1 여러 줄 선택 치환은 이미지와 남은 글을 나눈다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = try makeTestPNG(in: root, name: "p.png", width: 40, height: 20)
+    MainActor.assumeIsolated {
+        let cases: [(String, NSRange, String)] = [
+            ("가나다\n라마바", NSRange(location: 1, length: 4), "가\n\u{FFFC}\n마바"),
+            ("가나다\n라마바", NSRange(location: 1, length: 6), "가\n\u{FFFC}\n"),
+            ("\n둘째 줄", NSRange(location: 0, length: 5), "\u{FFFC}\n"),
+            ("\n뒤", NSRange(location: 0, length: 0), "\u{FFFC}\n뒤"),
+        ]
+        for (body, selection, expected) in cases {
+            let (view, _) = makeEditor(loading: body)
+            view.imageStore = MemoImageStore(directory: root.appendingPathComponent("attachments"))
+            view.setSelectedRange(selection)
+            t.expect(view.onInsertImageFiles?([source]) == true)
+            waitForImageInsertion(view)
+            t.expectEqual(view.string, expected)
+            t.expect(view.selectedRange().location <= (view.string as NSString).length)
+        }
+    }
+}
+
+runner.test("H1 첨부를 포함한 삭제와 교체를 되돌리면 첨부가 돌아온다") { t in
+    MainActor.assumeIsolated {
+        for operation in 0..<8 {
+            let (view, _) = makeEditor(loading: "앞\n![설명](attachments/p.png =120)\n뒤")
+            let delegate = HeadlessUndoDelegate()
+            view.delegate = delegate
+            let before = view.currentMarkdown()
+            delegate.manager.beginUndoGrouping()
+            switch operation {
+            case 0: view.setSelectedRange(NSRange(location: 3, length: 0)); view.deleteBackward(nil)
+            case 1: view.setSelectedRange(NSRange(location: 2, length: 0)); view.deleteForward(nil)
+            case 7:
+                view.setSelectedRange(NSRange(location: 4, length: 0))
+                view.deleteBackward(nil)
+                view.deleteBackward(nil)
+            default:
+                view.setSelectedRange(NSRange(location: 0, length: 4))
+                switch operation {
+                case 2: view.deleteBackward(nil)
+                case 3: view.deleteForward(nil)
+                case 4: view.cut(nil)
+                case 5: view.insertText("대체", replacementRange: NSRange(location: NSNotFound, length: 0))
+                default:
+                    view.setSelectedRange(NSRange(location: 1, length: 3))
+                    _ = view.onPasteText?("# 대체\n본문")
+                }
+            }
+            delegate.manager.endUndoGrouping()
+            t.expect(!view.currentMarkdown().contains("![설명]"), "이미지를 실제로 제거하지 못함: \(operation)")
+            t.expect(delegate.manager.canUndo, "되돌리기 미등록: \(operation)")
+            if delegate.manager.canUndo { delegate.manager.undo() }
+            t.expectEqual(view.currentMarkdown(), before, "경로 \(operation)")
+            t.expect(view.textStorage?.attribute(.attachment, at: 2, effectiveRange: nil) is MemoImageAttachment, "첨부 유실: \(operation)")
+            if delegate.manager.canRedo { delegate.manager.redo(); delegate.manager.undo() }
+            t.expectEqual(view.currentMarkdown(), before, "다시 실행 왕복 \(operation)")
+        }
+    }
+}
+
+runner.test("H1 이미지 앞 입력 줄바꿈도 되돌리기에 포함된다") { t in
+    MainActor.assumeIsolated {
+        let (view, _) = makeEditor(loading: "![](attachments/p.png)\n본문\n![](attachments/q.png)")
+        let delegate = HeadlessUndoDelegate()
+        view.delegate = delegate
+        let before = view.currentMarkdown()
+        delegate.manager.beginUndoGrouping()
+        view.setImageWidth(120, at: 5)
+        delegate.manager.endUndoGrouping()
+        delegate.manager.beginUndoGrouping()
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.insertText("가", replacementRange: NSRange(location: NSNotFound, length: 0))
+        delegate.manager.endUndoGrouping()
+        delegate.manager.undo()
+        t.expectEqual(view.string, "\u{FFFC}\n본문\n\u{FFFC}")
+        delegate.manager.undo()
+        t.expectEqual(view.currentMarkdown(), before)
+    }
+}
+
+runner.test("H1 첨부가 사라진 줄의 선택 복사는 첫 글자를 보존한다") { t in
+    MainActor.assumeIsolated {
+        let view = makeTextView(loading: "![](attachments/p.png)")
+        view.textStorage?.removeAttribute(.attachment, range: NSRange(location: 0, length: 1))
+        view.textStorage?.replaceCharacters(in: NSRange(location: 0, length: 1), with: "가나다")
+        view.setSelectedRange(NSRange(location: 0, length: 3))
+        t.expectEqual(view.selectedMarkdown(), "가나다")
+        t.expectEqual(AttributedTextBridge.visiblePrefix(for: .image(MarkdownImage(path: "attachments/p.png"))), "")
+    }
+}
+
+runner.test("H1 이미지 그리기는 공유 썸네일 크기를 바꾸지 않는다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try makeTestPNG(in: root, name: "p.png", width: 400, height: 200)
+    MainActor.assumeIsolated {
+        let view = makeTextView(loading: "![](attachments/p.png =100)")
+        let store = MemoImageStore(directory: root)
+        view.imageStore = store
+        let cached = store.thumbnail(of: "p.png", displayWidth: 100, scale: 2)!
+        let size = cached.size
+        let attachment = view.textStorage!.attribute(.attachment, at: 0, effectiveRange: nil) as! MemoImageAttachment
+        let rendered = attachment.image(forBounds: NSRect(x: 0, y: 0, width: 100, height: 50), textContainer: view.textContainer, characterIndex: 0)
+        t.expectEqual(rendered?.size, NSSize(width: 100, height: 50))
+        t.expectEqual(cached.size, size)
+        view.setImageWidth(999999999999999999, at: 0)
+        view.textContainer!.widthTracksTextView = false
+        let bounds = attachment.attachmentBounds(for: view.textContainer, proposedLineFragment: NSRect(x: 0, y: 0, width: CGFloat.greatestFiniteMagnitude, height: 100), glyphPosition: .zero, characterIndex: 0)
+        t.expect(bounds.width <= view.bounds.width)
+        t.expectNil(store.fileURL(for: ".."), "폴더 탈출")
+    }
+}
+
+
+runner.test("H1 이미지 저장은 비동기로 끝나고 요청 순서를 지킨다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = try makeTestPNG(in: root, name: "첫째.png", width: 60, height: 30)
+    let second = try makeTestPNG(in: root, name: "둘째.png", width: 40, height: 20)
+    MainActor.assumeIsolated {
+        let (view, _) = makeEditor()
+        view.imageStore = MemoImageStore(directory: root.appendingPathComponent("attachments"))
+        t.expect(view.onInsertImageFiles?([first]) == true)
+        t.expect(view.onInsertImageFiles?([second]) == true)
+        t.expectEqual(view.string, "", "이미지 저장이 호출자 안에서 끝났다")
+        let deadline = Date().addingTimeInterval(5)
+        while !view.currentMarkdown().contains("![둘째]") && Date() < deadline { pumpMainLoop(0.01) }
+        let markdown = view.currentMarkdown()
+        if let firstRange = markdown.range(of: "![첫째]"), let secondRange = markdown.range(of: "![둘째]") {
+            t.expect(firstRange.lowerBound < secondRange.lowerBound)
+        } else { t.expect(false, "이미지 저장이 완료되지 않음") }
+    }
+}
+
+runner.test("H1 메모 이미지 복사 붙여넣기는 설명과 너비를 보존한다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    MainActor.assumeIsolated {
+        do {
+            let (view, _) = try makeEditorWithImage(markdown: "![원래 설명](attachments/p.png =120)", root: root)
+            view.setSelectedRange(NSRange(location: 0, length: 1))
+            view.copy(nil)
+            view.setSelectedRange(NSRange(location: 1, length: 0))
+            t.expect(view.pasteImageClipboardData(view.imageClipboardData(at: 0)!))
+            let deadline = Date().addingTimeInterval(5)
+            while AttributedTextBridge.styledLines(from: view.textStorage!).count < 2 && Date() < deadline { pumpMainLoop(0.01) }
+            let images = AttributedTextBridge.styledLines(from: view.textStorage!).compactMap { line -> MarkdownImage? in
+                if case .image(let image) = line.block { return image }; return nil
+            }
+            t.expectEqual(images.count, 2)
+            t.expectEqual(images.last?.alt, "원래 설명")
+            t.expectEqual(images.last?.width, 120)
+        } catch { t.expect(false, "\(error)") }
+    }
+}
+
+
+runner.test("H1 극단적인 표시 폭도 썸네일 정수 변환에서 넘치지 않는다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try makeTestPNG(in: root, name: "p.png", width: 400, height: 200)
+    MainActor.assumeIsolated {
+        let store = MemoImageStore(directory: root)
+        for width in [CGFloat.greatestFiniteMagnitude, .infinity, .nan, -1, 0] {
+            let image = store.thumbnail(of: "p.png", displayWidth: width, scale: 2)
+            t.expectNotNil(image)
+            t.expect((image?.size.width ?? 401) <= 400)
+        }
+    }
+}
+
+runner.test("H1 크기 끌기 중에는 기존 썸네일을 쓰고 끝나면 새 크기로 읽는다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try makeTestPNG(in: root, name: "p.png", width: 800, height: 400)
+    MainActor.assumeIsolated {
+        let view = makeTextView(loading: "![](attachments/p.png =100)")
+        let store = MemoImageStore(directory: root)
+        view.imageStore = store
+        let attachment = view.textStorage!.attribute(.attachment, at: 0, effectiveRange: nil) as! MemoImageAttachment
+        let old = store.thumbnail(of: "p.png", displayWidth: 100, scale: 2)!
+        attachment.beginResizing(thumbnail: old)
+        store.purge()
+        let rect = NSRect(x: 0, y: 0, width: 350, height: 175)
+        let stretched = attachment.image(forBounds: rect, textContainer: view.textContainer, characterIndex: 0)!
+        t.expectEqual(stretched.representations.first?.pixelsWide, old.representations.first?.pixelsWide)
+        attachment.endResizing()
+        let decoded = attachment.image(forBounds: rect, textContainer: view.textContainer, characterIndex: 0)!
+        t.expect((decoded.representations.first?.pixelsWide ?? 0) > (old.representations.first?.pixelsWide ?? 0))
+    }
+}
+
+runner.test("H1 첨부 파일 주소는 구분자와 폴더 및 밖을 향한 심볼릭 링크를 거부한다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("h1-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("attachments/folder"), withIntermediateDirectories: true)
+    let outside = try makeTestPNG(in: root, name: "outside.png", width: 40, height: 20)
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("attachments/link.png"), withDestinationURL: outside)
+    let store = MemoImageStore(directory: root.appendingPathComponent("attachments"))
+    for name in ["", ".", "..", "../outside.png", "a/b.png", "a\\b.png", "link.png", "folder"] {
+        t.expectNil(store.fileURL(for: name), name)
+    }
+    t.expectNotNil(store.fileURL(for: "missing.png"))
 }
 
 runner.finish()

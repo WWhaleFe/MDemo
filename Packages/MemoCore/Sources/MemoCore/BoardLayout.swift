@@ -24,9 +24,29 @@ public struct BoardLayout: Codable, Equatable, Sendable {
     public var placements: [String: Placement]
     public var bentoSpans: [String: BentoSpan]
 
-    public init(placements: [String: Placement] = [:], bentoSpans: [String: BentoSpan] = [:]) {
+    public var manualOrder: [MemoID]
+
+    public init(placements: [String: Placement] = [:], bentoSpans: [String: BentoSpan] = [:], manualOrder: [MemoID] = []) {
         self.placements = placements
         self.bentoSpans = bentoSpans
+        self.manualOrder = manualOrder
+    }
+
+    private enum CodingKeys: String, CodingKey { case placements, bentoSpans, manualOrder }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        placements = try values.decodeIfPresent([String: Placement].self, forKey: .placements) ?? [:]
+        bentoSpans = try values.decodeIfPresent([String: BentoSpan].self, forKey: .bentoSpans) ?? [:]
+        manualOrder = try values.decodeIfPresent([MemoID].self, forKey: .manualOrder) ?? []
+    }
+
+    /// 새 메모는 맨 위에 놓고, 없어진 메모와 중복된 ID는 버린다.
+    public func normalizedOrder(among ids: [MemoID]) -> [MemoID] {
+        let alive = Set(ids)
+        var seen = Set<MemoID>()
+        let saved = manualOrder.filter { alive.contains($0) && seen.insert($0).inserted }
+        return ids.filter { !seen.contains($0) } + saved
     }
 
     public func placement(for id: MemoID) -> Placement? { placements[id.rawValue] }

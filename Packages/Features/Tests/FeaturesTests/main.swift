@@ -1,5 +1,8 @@
 @testable import Features
 import Foundation
+import ImageIO
+import Services
+import UniformTypeIdentifiers
 import MemoCore
 import TestKit
 
@@ -517,6 +520,244 @@ runner.test("찾는 범위와 그룹이 모든 범위에서 같은 규칙으로 
     model.resetSearchOptions()
     t.expect(!model.hasCustomSearchOptions, "기본값으로 돌아오지 않았다")
     UserDefaults.standard.removeObject(forKey: "memoList.searchTarget")
+}
+
+runner.test("미리보기에서 이미지 줄은 원문 대신 [이미지]로 보인다") { t in
+    let source = "제목\n![영수증](attachments/a1b2c3d4.png =260)\n본문\n![잘린](attachments/ab"
+    t.expectEqual(cleanedMemoPreview(source), "[이미지]\n본문\n[이미지]")
+    t.expectEqual(cleanedMemoPreview(source, singleLine: true), "[이미지] · 본문 · [이미지]")
+    // 이미지로 시작하는 메모는 이미지 줄이 아니라 첫 글 줄이 제목이다.
+    t.expectEqual(cleanedMemoPreview("![](attachments/x.png)\n진짜 제목\n내용"), "[이미지]\n내용")
+    // 이미지만 있어도 깨지지 않는다.
+    t.expectEqual(cleanedMemoPreview("![](attachments/x.png)"), "[이미지]")
+    // 느낌표로 시작하는 보통 글은 이미지가 아니다.
+    t.expectEqual(cleanedMemoPreview("제목\n![중요] 메모"), "![중요] 메모")
+}
+
+runner.test("이미지 줄은 체크리스트 진행 계산에 영향이 없다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let meta = model.store.createMemo()
+        model.store.saveBody(id: meta.id, body: "할 일\n![](attachments/x.png)\n- [x] 하나\n![](attachments/y.png)\n- [ ] 둘")
+        model.refresh()
+        guard let memo = model.visibleMemos.first(where: { $0.id == meta.id }) else { t.expect(false, "메모 없음"); return }
+        let info = model.cardInfo(for: memo)
+        t.expectEqual(info.tasks.map(\.checked), [true, false])
+        t.expectEqual(info.tasks.map(\.text), ["하나", "둘"])
+        t.expect(!info.preview.contains("!["), "미리보기에 이미지 원문이 남았다: \(info.preview)")
+        t.expectEqual(info.singleLinePreview, "[이미지] · 하나 · [이미지] · 둘")
+    }
+}
+
+@MainActor
+func writeTestPNG(to url: URL) throws {
+    let context = CGContext(
+        data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    )!
+    context.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 40, height: 20))
+    let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+}
+
+runner.test("목록에서 받은 사진은 첨부 폴더에 저장되고 본문 맨 위 · 맨 아래에 순서대로 들어간다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let downloads = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let first = downloads.appendingPathComponent("사진 하나.png")
+        let second = downloads.appendingPathComponent("둘.png")
+        try writeTestPNG(to: first)
+        try writeTestPNG(to: second)
+
+        let top = model.store.createMemo()
+        model.store.saveBody(id: top.id, body: "# 제목\n본문")
+        var editCalls = 0
+        let actions = MemoWindowActions(withExternalBodyEdit: { _, edit in editCalls += 1; edit() })
+        let topSession = ListAirDropSession(
+            memoID: top.id, title: "제목", position: .top, store: model.store, windowActions: actions,
+            receiver: AirDropReceiver(directory: downloads)
+        )
+        topSession.handleReceived(first)
+        topSession.handleReceived(second)
+        let topBody = model.store.loadDocument(id: top.id)?.body ?? ""
+        let topLines = topBody.components(separatedBy: "\n")
+        t.expectEqual(topLines.first, "# 제목")
+        t.expect(topLines[1].hasPrefix("![사진 하나](attachments/") && topLines[2].hasPrefix("![둘](attachments/"), "순서가 다르다: \(topBody)")
+        t.expectEqual(topLines.last, "본문")
+        t.expectEqual(editCalls, 2, "창 쪽 편집 경로를 거쳐야 한다")
+
+        let bottom = model.store.createMemo()
+        model.store.saveBody(id: bottom.id, body: "글")
+        let bottomSession = ListAirDropSession(
+            memoID: bottom.id, title: "글", position: .bottom, store: model.store, windowActions: actions,
+            receiver: AirDropReceiver(directory: downloads)
+        )
+        bottomSession.handleReceived(first)
+        let bottomLines = (model.store.loadDocument(id: bottom.id)?.body ?? "").components(separatedBy: "\n")
+        t.expectEqual(bottomLines.first, "글")
+        t.expect(bottomLines.last?.hasPrefix("![사진 하나](attachments/") == true)
+
+        // 첨부 파일이 그 메모의 폴더에 저장되고, 다운로드 폴더 원본은 그대로다.
+        let saved = (try? FileManager.default.contentsOfDirectory(atPath: model.store.attachmentsDirectory(for: top.id).path)) ?? []
+        t.expectEqual(saved.count, 2)
+        t.expect(FileManager.default.fileExists(atPath: first.path), "원본이 지워졌다")
+        // 읽을 수 없는 파일은 건너뛰고 본문을 건드리지 않는다.
+        let broken = downloads.appendingPathComponent("깨짐.png")
+        try Data([1, 2, 3]).write(to: broken)
+        let before = model.store.loadDocument(id: bottom.id)?.body
+        bottomSession.handleReceived(broken)
+        t.expectEqual(model.store.loadDocument(id: bottom.id)?.body, before)
+    }
+}
+
+
+runner.test("복제 메뉴는 잠금과 휴지통에서 차단하고 복제본 전체를 선택한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = model.store.createMemo(group: "업무").id
+        let b = model.store.createMemo(group: "업무").id
+        model.store.updateMeta(id: a) { $0.title = "가나다" }
+        model.store.updateMeta(id: b) { $0.title = "라마바" }
+        model.scope = .group("업무")
+        let positions = model.boardPlacements(for: model.visibleMemos)
+        model.selection = [a, b]
+        t.expect(model.canDuplicate([a, b]))
+        model.duplicate(model.orderedSelection)
+        t.expectEqual(model.selection.count, 2)
+        t.expect(model.selection.isDisjoint(with: [a, b]))
+        t.expectEqual(Set(model.visibleMemos.prefix(2).map(\.id)), model.selection)
+        for copy in model.visibleMemos where model.selection.contains(copy.id) {
+            let source = copy.meta.title == "가나다 사본" ? a : b
+            t.expectEqual(model.store.boardLayout.placement(for: copy.id), positions[source].map { .init(x: $0.x + 24, y: $0.y + 24) })
+        }
+        model.store.updateMeta(id: a) { $0.isLocked = true }
+        t.expect(!model.canDuplicate([a]))
+        t.expect(!model.canDuplicate([a, b]))
+        let count = model.store.summaries.count
+        let selection = model.selection
+        model.duplicate([a, b])
+        t.expectEqual(model.store.summaries.count, count)
+        t.expectEqual(model.selection, selection)
+        model.scope = .trash
+        t.expect(!model.canDuplicate([b]))
+        model.duplicate([b])
+        t.expectEqual(model.store.summaries.count, count)
+    }
+}
+
+runner.test("화면에 뜬 메모와 흐름에서 복제해도 새 메모를 목록에 보여 준다") { t in
+    try MainActor.assumeIsolated {
+        let (model, windows, root) = try makeModelWithWindows()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = model.store.createMemo().id
+        let b = model.store.createMemo().id
+        windows.onScreen = [a]
+        model.scope = .visible
+        model.duplicate([a])
+        t.expectEqual(model.scope, .all)
+        t.expectEqual(model.orderedSelection.count, 1)
+        t.expectEqual(windows.onScreen, [a])
+        model.store.link(from: a, to: b, kind: .flow)
+        model.scope = .flow(a)
+        model.duplicate([a])
+        t.expectEqual(model.scope, .all)
+        t.expectEqual(model.orderedSelection.count, 1)
+    }
+}
+
+runner.test("직접 순서는 한 줄과 여러 줄을 보이는 순서대로 옮긴다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<5).map { _ in model.store.createMemo().id }
+        model.store.setManualOrder(ids)
+        model.sortOrder = MemoSortOrder(key: .manual)
+        model.reorder([ids[1]], to: 4)
+        t.expectEqual(model.visibleMemos.map(\.id), [ids[0], ids[2], ids[3], ids[1], ids[4]])
+        model.reorder([ids[4], ids[2]], to: 0)
+        t.expectEqual(model.visibleMemos.map(\.id), [ids[2], ids[4], ids[0], ids[3], ids[1]])
+        t.expectEqual(model.bentoOrdered(model.visibleMemos).map(\.id), model.visibleMemos.map(\.id))
+        model.reorder([ids[2]], to: 1)
+        t.expectEqual(model.visibleMemos.first?.id, ids[2], "자기 자리로 놓으면 순서가 바뀌지 않는다")
+    }
+}
+
+runner.test("그룹과 검색 안의 이동은 전역 순서에서 그 자리만 바꾸고 직접 순서로 전환한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<5).map { n in model.store.createMemo(group: n % 2 == 0 ? "업무" : "개인").id }
+        for (n, id) in ids.enumerated() { model.store.saveBody(id: id, body: "# 제목 \(n)\n\(n % 2 == 0 ? "업무" : "개인")") }
+        model.store.setManualOrder(ids)
+        model.sortOrder = MemoSortOrder(key: .title, ascending: false)
+        model.scope = .group("업무")
+        t.expectEqual(model.visibleMemos.map(\.id), [ids[4], ids[2], ids[0]])
+        model.reorder([ids[0]], to: 1)
+        t.expectEqual(model.sortOrder.key, .manual)
+        t.expectEqual(model.store.boardLayout.manualOrder, [ids[4], ids[1], ids[0], ids[3], ids[2]])
+        model.scope = .all
+        model.query = "개인"
+        model.reorder([ids[3]], to: 0)
+        t.expectEqual(model.store.boardLayout.manualOrder, [ids[4], ids[3], ids[0], ids[1], ids[2]])
+        model.query = ""
+        model.moveByKeyboard(ids[4], direction: 1)
+        t.expectEqual(model.visibleMemos.prefix(2).map(\.id), [ids[3], ids[4]])
+        model.scope = .trash
+        let saved = model.store.boardLayout.manualOrder
+        model.reorder([ids[4]], to: 0)
+        t.expectEqual(model.store.boardLayout.manualOrder, saved)
+        model.scope = .flow(ids[0])
+        t.expect(!model.canReorder)
+    }
+}
+
+runner.test("직접 순서는 새 메모를 맨 위에 놓고 삭제를 정리하며 재시작 뒤 유지된다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = model.store.createMemo().id
+        let b = model.store.createMemo().id
+        model.store.setManualOrder([a, b])
+        model.sortOrder = MemoSortOrder(key: .manual)
+        let c = model.store.createMemo().id
+        t.expectEqual(model.visibleMemos.map(\.id), [c, a, b])
+        model.store.moveToTrash(id: a)
+        t.expectEqual(model.store.boardLayout.manualOrder, [c, b])
+        let repository = try FileMemoRepository(rootDirectory: root)
+        let restarted = MemoStore(repository: repository)
+        t.expectEqual(restarted.boardLayout.manualOrder, [c, b])
+    }
+}
+
+runner.test("새로고침은 동기화로 받은 직접 순서를 보존한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = model.store.createMemo().id
+        let b = model.store.createMemo().id
+        let repository = try FileMemoRepository(rootDirectory: root)
+        let c = MemoMeta(id: .generate())
+        try repository.save(MemoDocument(meta: c, body: "새 메모"))
+        try repository.saveBoardLayout(BoardLayout(manualOrder: [b, c.id, a]))
+        model.refresh()
+        model.sortOrder = MemoSortOrder(key: .manual)
+        t.expectEqual(model.visibleMemos.map(\.id), [b, c.id, a])
+        t.expectEqual(try repository.loadBoardLayout().manualOrder, [b, c.id, a])
+    }
+}
+
+runner.test("직접 순서의 벤토는 뒤의 작은 카드로 앞 빈칸을 채우지 않는다") { t in
+    let spans: [BoardLayout.BentoSpan] = [.small, .wide, .small]
+    let cells = BentoGrid.bentoCells(spans: spans, width: 440, preservingOrder: true).cells
+    for pair in zip(cells, cells.dropFirst()) {
+        t.expect(pair.0.minY < pair.1.minY || (pair.0.minY == pair.1.minY && pair.0.minX < pair.1.minX))
+    }
 }
 
 runner.finish()

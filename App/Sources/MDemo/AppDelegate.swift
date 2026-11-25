@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 새 버전 확인 (켤 때 한 번, 그 뒤 하루에 한 번). 설정에서 끌 수 있다.
         container.updateChecker.startAutomaticChecks()
 
+        // 본문에서 쓰지 않고 하루 넘게 지난 첨부 이미지를 정리한다 (IMG-07). 창이 뜨기 전, 켤 때 한 번만 한다.
+        container.store.pruneUnusedAttachments()
+
         // 지난 실행에서 열려 있던 메모를 그대로 되살린다 (WIN-06).
         container.windowRegistry.restoreOpenMemos()
 

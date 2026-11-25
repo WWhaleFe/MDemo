@@ -18,19 +18,32 @@ public struct MemoWindowActions {
     public var arrange: (_ byGroup: Bool) -> Void
 
     public var arrangeInOrder: ([MemoID]) -> Void
+    /// 그 메모를 띄우고 이미지로 내보내기 시트를 연다.
+    public var exportAsImage: (MemoID) -> Void
+    /// 창 밖(저장소 경로)에서 그 메모 본문을 고친다. 떠 있는 창이 있으면 고치기 전에 창의 편집 내용을 저장하고,
+    /// 고친 뒤 창 내용을 다시 읽는다. 창이 없으면 고치기만 한다.
+    public var withExternalBodyEdit: (MemoID, () -> Void) -> Void
+    /// 새 메모를 만들어 띄우고 바로 AirDrop 사진 받기를 시작한다.
+    public var createMemoReceivingAirDrop: () -> Void
 
     public init(
         isVisible: @escaping (MemoID) -> Bool = { _ in false },
         open: @escaping ([MemoID]) -> Void = { _ in },
         hide: @escaping ([MemoID]) -> Void = { _ in },
         arrange: @escaping (_ byGroup: Bool) -> Void = { _ in },
-        arrangeInOrder: @escaping ([MemoID]) -> Void = { _ in }
+        arrangeInOrder: @escaping ([MemoID]) -> Void = { _ in },
+        exportAsImage: @escaping (MemoID) -> Void = { _ in },
+        withExternalBodyEdit: @escaping (MemoID, () -> Void) -> Void = { _, edit in edit() },
+        createMemoReceivingAirDrop: @escaping () -> Void = {}
     ) {
         self.isVisible = isVisible
         self.open = open
         self.hide = hide
         self.arrange = arrange
         self.arrangeInOrder = arrangeInOrder
+        self.exportAsImage = exportAsImage
+        self.withExternalBodyEdit = withExternalBodyEdit
+        self.createMemoReceivingAirDrop = createMemoReceivingAirDrop
     }
 
     /// 창 계층이 없는 자리에서 쓰는 빈 구현.

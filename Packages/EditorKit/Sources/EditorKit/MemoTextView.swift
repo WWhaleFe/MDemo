@@ -7,6 +7,24 @@ import MemoCore
 /// M0 시점에는 순수 텍스트 편집만 한다. 실시간 마크다운 변환(MD-*)과 저장은 M1에서 붙인다.
 /// 서식은 전부 텍스트 속성으로만 표현한다 — 서식마다 뷰를 만들면 메모리가 창 수에 곱해진다(§4-5).
 public final class MemoTextView: NSTextView {
+    /// 이 창의 이미지 읽기 도구와 캐시 (IMG-01). 창이 사라지면 함께 사라진다.
+    public var imageStore: MemoImageStore?
+    /// 끌기가 시작될 때 계산한 이미지 파일 목록. 이동 중에는 다시 읽지 않는다.
+    var draggedImageURLs: [URL] = []
+
+    /// 이미지 파일을 넣어 달라는 요청(붙여넣기·끌어 놓기). 처리했으면 true. LiveFormatController가 연결한다.
+    public var onInsertImageFiles: (([URL]) -> Bool)?
+    /// 이미지 데이터(스크린샷 등)를 넣어 달라는 요청.
+    public var onInsertImageData: ((Data) -> Bool)?
+    /// 메모 이미지의 데이터와 설명 및 너비를 함께 붙여 넣는다.
+    var onInsertImageContent: ((Data, String, Int?) -> Bool)?
+    /// 이미지 글자 읽기(OCR)를 요청한다 (이미지 우클릭 메뉴). 인식과 미리보기 시트는 창 계층이 맡는다.
+    public var onRequestImageText: ((ImageTextRequest) -> Void)?
+    /// 메모 제목. "다른 이름으로 저장"의 기본 파일 이름을 만들 때 쓴다.
+    public var memoTitleProvider: (() -> String?)?
+    /// 줄이 바뀌어 다음에 칠 글자의 서식을 본문으로 되돌려야 할 때 (이미지 줄 앞뒤). LiveFormatController가 연결한다.
+    var onNeedsTypingReset: (() -> Void)?
+
     /// 텍스트 알파를 뺀 기본 글자색. 알파는 이 색에 별도로 곱해 적용한다 (OPA-02).
     private var baseTextColor: NSColor = .labelColor
     private var currentTextAlpha: Double = 1.0
@@ -42,7 +60,8 @@ public final class MemoTextView: NSTextView {
     private func configure() {
         drawsBackground = false            // 배경은 창 레이어가 그린다 (투명도 분리, OPA-01)
         isRichText = false                 // 저장 포맷은 마크다운이므로 RTF 붙여넣기를 막는다
-        importsGraphics = false            // 이미지는 M5에서 첨부 파일로 처리한다 (IMG-07)
+        importsGraphics = false            // 이미지는 첨부 파일로 처리한다 (IMG-07, MemoTextView+Images)
+        registerForDraggedTypes(registeredDraggedTypes + [.fileURL])
         isAutomaticQuoteSubstitutionEnabled = false   // 마크다운 기호가 변형되면 안 된다
         isAutomaticDashSubstitutionEnabled = false
         isAutomaticTextReplacementEnabled = false
@@ -189,16 +208,20 @@ public final class MemoTextView: NSTextView {
     }
 
     public override func insertNewline(_ sender: Any?) {
+        // 고른 이미지 위에서 엔터를 치면 이미지가 지워지지 않게 그 뒤로 커서를 옮긴다.
+        if let index = selectedImageIndex { setSelectedRange(NSRange(location: index + 1, length: 0)) }
         if onNewline?() == true { return }
         super.insertNewline(sender)
     }
 
     public override func insertTab(_ sender: Any?) {
+        if selectedImageIndex != nil { return }
         if onIndent?(true) == true { return }
         super.insertTab(sender)
     }
 
     public override func insertBacktab(_ sender: Any?) {
+        if selectedImageIndex != nil { return }
         if onIndent?(false) == true { return }
         super.insertBacktab(sender)
     }
@@ -213,6 +236,7 @@ public final class MemoTextView: NSTextView {
         onEditorClick?()
 
         let point = convert(event.locationInWindow, from: nil)
+        if handleImageMouseDown(event, at: point) { return }
         let index = characterIndexForInsertion(at: point)
         if onToggleCheckbox?(index) == true { return }
         super.mouseDown(with: event)
@@ -266,6 +290,7 @@ public final class MemoTextView: NSTextView {
 
     public override func paste(_ sender: Any?) {
         // 조합 중이면 입력기가 먼저다 (NFR-08).
+        if pasteImagesIfAny() { return }
         guard !isComposingText,
               let text = NSPasteboard.general.string(forType: .string),
               onPasteText?(text) == true

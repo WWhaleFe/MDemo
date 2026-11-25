@@ -231,6 +231,8 @@ extension LiveFormatController {
 
         let lineRange = text.lineRange(for: NSRange(location: caret.location, length: 0))
         let oldBlock = blockStyle(in: textStorage, at: lineRange.location)
+        // 이미지 줄은 다른 블록으로 바꾸지 않는다. 지우려면 이미지를 고르고 지운다.
+        if case .image = oldBlock { return }
         let newBlock = isSameKind(oldBlock, block) ? .paragraph : block
 
         let oldPrefix = AttributedTextBridge.visiblePrefix(for: oldBlock)

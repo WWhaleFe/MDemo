@@ -47,6 +47,11 @@ public enum MarkdownParser {
             return (.divider, "")
         }
 
+        // 이미지: 줄 전체가 `![설명](경로 =너비)`일 때만이다 (IMG-08).
+        if let image = MarkdownImage.parse(trimmed) {
+            return (.image(image), "")
+        }
+
         // 제목: # ~ ###### (들여쓰기 없음)
         if indentLevel == 0, trimmed.hasPrefix("#") {
             var level = 0

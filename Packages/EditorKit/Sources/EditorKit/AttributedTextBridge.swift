@@ -27,6 +27,10 @@ public enum AttributedTextBridge {
         theme: EditorTheme,
         textAlpha: Double
     ) -> NSAttributedString {
+        // 이미지 줄은 첨부 글자 하나다. 원문은 첨부가 들고 있다 (IMG-01).
+        if case .image(let image) = line.block {
+            return imageLine(image, theme: theme, textAlpha: textAlpha)
+        }
         let result = NSMutableAttributedString()
         let prefix = visiblePrefix(for: line.block)
         if !prefix.isEmpty {
@@ -46,6 +50,22 @@ public enum AttributedTextBridge {
         return result
     }
 
+    /// 이미지 한 줄(줄바꿈 제외). 글자 한 개짜리 첨부이고 블록 서식에 이미지 정보를 실어 둔다.
+    public static func imageLine(_ image: MarkdownImage, theme: EditorTheme, textAlpha: Double) -> NSAttributedString {
+        let result = NSMutableAttributedString(attachment: MemoImageAttachment(reference: image))
+        let range = NSRange(location: 0, length: result.length)
+        result.addAttributes([
+            .font: theme.font(for: .paragraph),
+            .foregroundColor: theme.textColor.withAlphaComponent(textAlpha),
+            .memoBlockStyle: BlockStyleBox(.image(image)),
+            .memoInlineStyle: 0,
+        ], range: range)
+        return result
+    }
+
+    /// 이미지 줄의 글자 자리. 첨부 글자(U+FFFC) 하나다.
+    public static let attachmentCharacter = "\u{FFFC}"
+
     /// 화면에 보이는 기호. 마크다운 기호는 숨기지만(MD-01), 목록·체크박스는 표식이 없으면 읽을 수 없다.
     public static func visiblePrefix(for block: BlockStyle) -> String {
         switch block {
@@ -63,6 +83,8 @@ public enum AttributedTextBridge {
             return "❝ "
         case .divider:
             return "──────────"
+        case .image:
+            return ""
         case .heading, .paragraph, .codeBlock, .tableRow:
             return ""
         }
@@ -145,7 +167,7 @@ public enum AttributedTextBridge {
             let contentLength = max(0, NSMaxRange(lineRange) - lineStart - trailingNewlineLength(fullText, lineRange))
             let contentRange = NSRange(location: lineStart, length: contentLength)
 
-            lines.append(styledLine(from: attributed, range: contentRange))
+            lines.append(contentsOf: styledLines(splittingImagesIn: attributed, range: contentRange, startsAtLineStart: true))
 
             if NSMaxRange(lineRange) <= lineStart { break }
             lineStart = NSMaxRange(lineRange)
@@ -174,6 +196,19 @@ public enum AttributedTextBridge {
                let box = attributed.attribute(.memoBlockStyle, at: lineStart, effectiveRange: nil) as? BlockStyleBox {
                 block = box.value
             }
+            // 이미지가 든 줄은 글과 이미지를 줄로 나눠 가져간다. 이미지 줄은 클립보드 저장 단계에서 빠진다.
+            let wholeLine = NSRange(location: lineStart, length: contentLength)
+            if !imageAttachments(in: attributed, range: wholeLine).isEmpty {
+                let pickedLine = NSIntersectionRange(wholeLine, selection)
+                lines.append(contentsOf: styledLines(
+                    splittingImagesIn: attributed, range: pickedLine, startsAtLineStart: pickedLine.location == lineStart
+                ))
+                if NSMaxRange(lineRange) <= lineStart { break }
+                lineStart = NSMaxRange(lineRange)
+                continue
+            }
+
+            if case .image = block { block = .paragraph }
             let prefixLength = min((visiblePrefix(for: block) as NSString).length, contentLength)
             let content = NSRange(location: lineStart + prefixLength, length: contentLength - prefixLength)
             let picked = NSIntersectionRange(content, selection)
@@ -218,13 +253,63 @@ public enum AttributedTextBridge {
         return last == "\n" ? 1 : 0
     }
 
-    private static func styledLine(from attributed: NSAttributedString, range: NSRange) -> StyledLine {
+    /// 한 줄 범위 안의 첨부 이미지 글자 위치와 첨부.
+    static func imageAttachments(in attributed: NSAttributedString, range: NSRange) -> [(index: Int, attachment: MemoImageAttachment)] {
+        guard range.length > 0 else { return [] }
+        var found: [(Int, MemoImageAttachment)] = []
+        attributed.enumerateAttribute(.attachment, in: range) { value, subrange, _ in
+            guard let attachment = value as? MemoImageAttachment else { return }
+            // 첨부 글자는 한 글자씩이지만 속성이 같으면 묶여 나오므로 글자마다 풀어 둔다.
+            for index in subrange.location..<NSMaxRange(subrange) {
+                found.append((index, attachment))
+            }
+        }
+        return found
+    }
+
+    /// 줄 하나를 서식 표현으로. 이미지가 섞여 있으면 `글 / 이미지 / 글`로 줄을 나눈다.
+    ///
+    /// 이미지 줄 끝에 글을 이어 쓰거나 앞 줄과 합쳐져도 파일에는 이미지가 한 줄로 남게 하는 안전망이다.
+    private static func styledLines(
+        splittingImagesIn attributed: NSAttributedString,
+        range: NSRange,
+        startsAtLineStart: Bool
+    ) -> [StyledLine] {
+        let images = imageAttachments(in: attributed, range: range)
+        guard !images.isEmpty else {
+            return [styledLine(from: attributed, range: range, isLineStart: startsAtLineStart)]
+        }
+
+        var lines: [StyledLine] = []
+        var position = range.location
+        var isLineStart = startsAtLineStart
+        for (index, attachment) in images {
+            if index > position {
+                let text = NSRange(location: position, length: index - position)
+                lines.append(styledLine(from: attributed, range: text, isLineStart: isLineStart))
+            }
+            lines.append(StyledLine(block: .image(attachment.reference), spans: []))
+            position = index + 1
+            isLineStart = false
+        }
+        if position < NSMaxRange(range) {
+            let text = NSRange(location: position, length: NSMaxRange(range) - position)
+            lines.append(styledLine(from: attributed, range: text, isLineStart: false))
+        }
+        return lines
+    }
+
+    /// `isLineStart`가 아니면 줄 중간의 조각이므로 블록 표식 없이 문단으로 본다.
+    private static func styledLine(from attributed: NSAttributedString, range: NSRange, isLineStart: Bool = true) -> StyledLine {
         guard range.length > 0 else { return StyledLine(block: .paragraph, spans: []) }
 
         var block = BlockStyle.paragraph
-        if let box = attributed.attribute(.memoBlockStyle, at: range.location, effectiveRange: nil) as? BlockStyleBox {
+        if isLineStart,
+           let box = attributed.attribute(.memoBlockStyle, at: range.location, effectiveRange: nil) as? BlockStyleBox {
             block = box.value
         }
+        // 이미지 줄은 위의 나누기 단계에서만 만든다. 첨부가 없는데 이미지 서식이 남은 글은 문단이다.
+        if case .image = block { block = .paragraph }
 
         let prefixLength = (visiblePrefix(for: block) as NSString).length
         let contentRange = NSRange(

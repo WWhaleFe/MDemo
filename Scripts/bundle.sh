@@ -38,6 +38,17 @@ cp "$ROOT/App/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 # 앱 아이콘. 원본 PNG를 바꿨다면 Scripts/make-icon.sh로 다시 만든다.
 cp "$ROOT/App/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
+# 시스템 메뉴와 컨트롤이 앱 강조색을 찾도록 에셋 카탈로그를 번들에 넣는다.
+# actool은 Xcode에 포함되므로 Command Line Tools만 있을 때는 생략한다.
+if xcrun --find actool >/dev/null 2>&1; then
+    echo "▸ 색상 에셋 컴파일 중…"
+    xcrun actool "$ROOT/App/Resources/Assets.xcassets" \
+        --compile "$APP_DIR/Contents/Resources" \
+        --platform macosx --minimum-deployment-target 14.0
+else
+    echo "⚠ actool을 찾을 수 없어 앱 강조색 에셋 컴파일을 생략합니다."
+fi
+
 # 유료 개발자 계정이 없으므로 임시(ad-hoc) 서명을 쓴다.
 # 계정을 확보하면 Developer ID 서명 + 공증으로 이 줄만 바꾸면 된다.
 echo "▸ 서명 중 (ad-hoc)…"

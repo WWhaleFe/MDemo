@@ -21,6 +21,11 @@ public struct MemoListView: View {
     @State private var pendingPermanentDelete: [MemoID] = []
     @State private var addingGroup = false
     @State private var groupName = ""
+    @State private var contextRow: MemoID?
+    @State private var hoveredRow: MemoID?
+    @State private var reordering: Set<MemoID> = []
+    @State private var reorderTarget: MemoID?
+    @State private var reorderAfter = false
     @State private var anchor: MemoID?
     @State private var boardTarget: MemoID?
     @FocusState private var searchFocused: Bool
@@ -56,6 +61,7 @@ public struct MemoListView: View {
                             else { cards(memos, index: index) }
                         }
                     }.id(contentGroup).transition(Self.fadeThrough)
+                    if let session = model.airDrop { airDropStrip(session) }
                     selectionBar(index: index)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -167,6 +173,17 @@ public struct MemoListView: View {
                 .background(ListTheme.card, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(ListTheme.hairline))
                 .layoutPriority(-1)
+            Button {
+                model.windowActions.createMemoReceivingAirDrop()
+                model.refresh()
+            } label: {
+                // 테두리 없이 옆의 핀 · 화면 모드 단추와 같은 모양으로 둔다.
+                AirDropGlyph().foregroundStyle(ListTheme.muted)
+                    .frame(width: 18, height: 18)
+                    .frame(width: 32, height: 32)
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).fixedSize().help("AirDrop으로 받은 사진으로 새 메모")
+                .accessibilityLabel("AirDrop으로 받은 사진으로 새 메모")
             Button(action: onCreateMemo) {
                 Label("새 메모", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(ListTheme.card)
                     .padding(.horizontal, 12).frame(height: 32).background(ListTheme.ink, in: RoundedRectangle(cornerRadius: 8))
@@ -284,9 +301,11 @@ public struct MemoListView: View {
                 Picker("정렬", selection: $model.sortOrder.key) {
                     ForEach(MemoSortKey.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                Button(model.sortOrder.ascending ? "내림차순" : "오름차순") { model.sortOrder.ascending.toggle() }
+                if model.sortOrder.key != .manual {
+                    Button(model.sortOrder.ascending ? "내림차순" : "오름차순") { model.sortOrder.ascending.toggle() }
+                }
             } label: {
-                Text(model.sortOrder.key == .modified ? "최근 수정 순" : model.sortOrder.key.label + " 순")
+                Text(model.sortOrder.key == .modified ? "최근 수정 순" : model.sortOrder.key.label + (model.sortOrder.key == .manual ? "" : " 순"))
             }.menuStyle(.borderlessButton).fixedSize()
         }.padding(.horizontal, 32).padding(.vertical, 24)
     }
@@ -315,6 +334,28 @@ public struct MemoListView: View {
                 Section {
                     ForEach(items) { memo in
                         HStack(spacing: 12) {
+                            if model.canReorder {
+                                MemoReorderHandle(id: memo.id, hovered: hoveredRow == memo.id,
+                                    begin: {
+                                        if model.selection.contains(memo.id) {
+                                            reordering = Set(model.orderedSelection)
+                                        } else {
+                                            model.selection = [memo.id]
+                                            reordering = [memo.id]
+                                        }
+                                    }, target: { id, after in
+                                        reorderTarget = id
+                                        reorderAfter = after
+                                    }, finish: { cancelled in
+                                        if !cancelled, let target = reorderTarget,
+                                           let offset = model.visibleMemos.firstIndex(where: { $0.id == target }) {
+                                            model.reorder(reordering, to: offset + (reorderAfter ? 1 : 0))
+                                        }
+                                        reordering = []
+                                        reorderTarget = nil
+                                    }, move: { model.moveByKeyboard(memo.id, direction: $0) })
+                                    .frame(width: 20, height: 48)
+                            }
                             MemoColorChip(memo: memo)
                             HStack(spacing: 4) {
                                 Text(memo.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
@@ -329,12 +370,23 @@ public struct MemoListView: View {
                             }.font(.system(size: 12).monospacedDigit()).foregroundStyle(ListTheme.muted).frame(width: 72, alignment: .trailing)
                         }.frame(height: 48).tag(memo.id).listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                             .listRowSeparatorTint(ListTheme.hairline)
+                            .onHover { inside in
+                                if inside { hoveredRow = memo.id } else if hoveredRow == memo.id { hoveredRow = nil }
+                            }
+                            .modifier(MemoRowAppearance(selected: model.selection.contains(memo.id), dragging: reordering.contains(memo.id),
+                                                        contextTarget: contextRow == memo.id, onContext: { contextRow = memo.id }))
+                            .overlay(alignment: reorderAfter ? .bottom : .top) {
+                                if !reordering.isEmpty && reorderTarget == memo.id {
+                                    Rectangle().fill(ListTheme.ink).frame(height: 2).allowsHitTesting(false)
+                                }
+                            }
                     }
                 } header: {
                     if !title.isEmpty { Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(ListTheme.muted) }
                 }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden)
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in contextRow = nil }
             .contextMenu(forSelectionType: MemoID.self) { ids in rowMenu(for: model.targets(for: ids), index: index) } primaryAction: { ids in
                 if !model.isShowingTrash { openMemos(model.targets(for: ids)) }
             }
@@ -352,7 +404,7 @@ public struct MemoListView: View {
             let spans = mode == .bento ? model.bentoSpans(for: memos) : [:]
             let tile = canCreateTile
             let cardSpans = ordered.map { spans[$0.id] ?? .small } + (tile ? [.small] : [])
-            let cells = mode == .bento ? BentoGrid.bentoCells(spans: cardSpans, width: width).cells
+            let cells = mode == .bento ? BentoGrid.bentoCells(spans: cardSpans, width: width, preservingOrder: model.sortOrder.key == .manual).cells
                                        : Self.gridCells(count: cardSpans.count, width: width)
             let height = (cells.map(\.maxY).max() ?? 0)
             // 지금 보이는 범위 위아래로 한 화면씩 더 만든다. 스크롤할 때 빈칸이 보이지 않게.
@@ -514,6 +566,30 @@ public struct MemoListView: View {
     }
     private func menuTargets(_ id: MemoID) -> [MemoID] { model.selection.contains(id) ? model.orderedSelection : [id] }
 
+    /// 목록에서 AirDrop 사진을 받는 동안 목록 아래(선택 막대 위)에 뜨는 띠.
+    private func airDropStrip(_ session: ListAirDropSession) -> some View {
+        HStack(spacing: 10) {
+            AirDropGlyph().overlay(alignment: .topTrailing) {
+                Circle().fill(ListTheme.lime).frame(width: 8, height: 8)
+            }
+            Text("'\(session.title)' \(session.positionText)에 넣는 중 · 사진 \(session.receivedCount)장 받음").lineLimit(1)
+            Spacer(minLength: 8)
+            Text(String(format: "%d:%02d", session.remainingSeconds / 60, session.remainingSeconds % 60))
+                .monospacedDigit().foregroundStyle(.white.opacity(0.7))
+            Button { model.stopAirDrop() } label: {
+                Image(systemName: "stop.circle").font(.system(size: 18))
+                    .frame(width: 28, height: 28).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).help("받기 멈추기")
+            .accessibilityLabel("받기 멈추기")
+        }
+        .font(.system(size: 13)).foregroundStyle(.white)
+        .padding(.horizontal, 14).frame(height: 40)
+        .background(Color(red: 28 / 255, green: 29 / 255, blue: 32 / 255), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12).padding(.bottom, 8)
+        .accessibilityElement(children: .combine)
+    }
+
     @ViewBuilder private func selectionBar(index: MemoListModel.LinkIndex) -> some View {
         let ids = model.orderedSelection
         if !ids.isEmpty || model.isShowingTrash {
@@ -575,6 +651,21 @@ public struct MemoListView: View {
                 Button("열기") { openMemos(ids) }
                 Button("화면에 띄우기") { model.open(ids) }
                 Button("화면에서 내리기") { model.windowActions.hide(ids); model.noteWindowStateChanged() }
+                Button(ids.count == 1 ? "복제" : "\(ids.count)개 복제") { model.duplicate(ids) }
+                    .disabled(!model.canDuplicate(ids))
+                    .help(ids.contains { index.summaries[$0]?.meta.isLocked == true }
+                          ? "암호가 걸린 메모는 복제할 수 없습니다" : "선택한 메모를 첨부와 함께 복제합니다")
+                Divider()
+                Menu {
+                    Button("맨 위에 넣기") { if let id = ids.first { model.startAirDrop(for: id, position: .top) } }
+                    Button("맨 아래에 넣기") { if let id = ids.first { model.startAirDrop(for: id, position: .bottom) } }
+                } label: {
+                    Label { Text("AirDrop으로 이미지 받기") } icon: { AirDropGlyph() }
+                }.disabled(ids.count != 1)
+                Button { if let id = ids.first { model.windowActions.exportAsImage(id); model.noteWindowStateChanged() } } label: {
+                    Label { Text("이미지로 내보내기…") } icon: { ExportImageGlyph() }
+                }.disabled(ids.count != 1)
+                Divider()
                 Menu("그룹으로 이동") {
                     Button("미분류") { model.assign(ids, to: nil) }
                     ForEach(model.store.groups, id: \.self) { group in Button(group) { model.assign(ids, to: group) } }

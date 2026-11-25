@@ -21,6 +21,8 @@ public enum BlockStyle: Hashable, Sendable {
     case codeBlock
     /// 표의 한 줄 (MD-14). 구분 줄은 화면에 두지 않고 저장할 때 만들어 넣는다.
     case tableRow
+    /// 이미지 한 줄 (IMG-01). 글자 없이 이미지 참조만 갖고, 저장할 때 `![alt](경로 =너비)`로 적는다.
+    case image(MarkdownImage)
 
     /// 목록 들여쓰기 단계 (Tab/Shift+Tab, KEY-08).
     public var indent: Int {
@@ -39,6 +41,68 @@ public enum BlockStyle: Hashable, Sendable {
         case .bullet, .ordered, .checkbox: return true
         default: return false
         }
+    }
+}
+
+/// 이미지 줄의 내용 (IMG-07, IMG-08).
+///
+/// 본문에는 `![설명](attachments/파일명 =너비)` 한 줄만 적는다. 이미지 자체는 첨부 폴더의 파일이다.
+/// `=너비`는 픽셀 정수이고, 없으면 창 폭에 맞춘다(원본보다 키우지는 않는다).
+public struct MarkdownImage: Hashable, Sendable {
+    public var alt: String
+    /// 메모 폴더 기준 상대 경로 (예: `attachments/a1b2c3d4.png`).
+    public var path: String
+    public var width: Int?
+
+    public init(alt: String = "", path: String, width: Int? = nil) {
+        self.alt = Self.sanitizedAlt(alt)
+        self.path = path
+        self.width = width.map { max(1, $0) }
+    }
+
+    /// 경로의 마지막 조각. 첨부 폴더 안의 파일 이름이다.
+    public var fileName: String {
+        Self.isLocalAttachmentPath(path) ? String(path.dropFirst("attachments/".count)) : ""
+    }
+
+    /// 한 줄 마크다운. 대괄호와 줄바꿈은 문법을 깨므로 설명에서 뺀다.
+    public var markdown: String {
+        let size = width.map { " =\($0)" } ?? ""
+        return "![\(alt)](\(path)\(size))"
+    }
+
+    /// 줄 전체가 이미지 문법일 때만 읽는다. 글 사이에 낀 이미지 문법은 일반 글자로 둔다.
+    public static func parse(_ line: String) -> MarkdownImage? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")") else { return nil }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        guard let match = pattern.firstMatch(in: trimmed, range: range),
+              let altRange = Range(match.range(at: 1), in: trimmed),
+              let pathRange = Range(match.range(at: 2), in: trimmed)
+        else { return nil }
+        guard isLocalAttachmentPath(String(trimmed[pathRange])) else { return nil }
+        var width: Int?
+        if let widthRange = Range(match.range(at: 3), in: trimmed) {
+            guard let value = Int(trimmed[widthRange]), value > 0 else { return nil }
+            width = value
+        }
+        return MarkdownImage(alt: String(trimmed[altRange]), path: String(trimmed[pathRange]), width: width)
+    }
+
+    /// 첨부 폴더 바로 아래의 파일 이름만 허용한다.
+    public static func isValidFileName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".."
+            && !name.contains("/") && !name.contains("\\") && !name.contains("\0")
+    }
+
+    private static func isLocalAttachmentPath(_ path: String) -> Bool {
+        path.hasPrefix("attachments/") && isValidFileName(String(path.dropFirst("attachments/".count)))
+    }
+
+    private static let pattern = try! NSRegularExpression(pattern: #"^!\[([^\]]*)\]\(([^()\s]+)(?:\s+=(\d+))?\)$"#)
+
+    private static func sanitizedAlt(_ alt: String) -> String {
+        String(alt.filter { $0 != "[" && $0 != "]" && !$0.isNewline })
     }
 }
 

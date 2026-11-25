@@ -43,6 +43,13 @@ public struct MemoMeta: Hashable, Sendable, Codable {
     /// 출발 메모에 기록한 연결 (설계서 §4, DOC-02).
     public var links: [MemoLink]
 
+    /// 암호 기능을 위한 잠금 표시. 옛 직렬화 데이터에 키가 없어도 읽을 수 있다.
+    private var locked: Bool?
+    public var isLocked: Bool {
+        get { locked ?? false }
+        set { locked = newValue ? true : nil }
+    }
+
     public init(
         schemaVersion: Int = MemoMeta.currentSchemaVersion,
         id: MemoID,
@@ -56,7 +63,8 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         created: Date = Date(),
         modified: Date = Date(),
         conflictOf: MemoID? = nil,
-        links: [MemoLink] = []
+        links: [MemoLink] = [],
+        isLocked: Bool = false
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -71,6 +79,7 @@ public struct MemoMeta: Hashable, Sendable, Codable {
         self.modified = modified
         self.conflictOf = conflictOf
         self.links = links
+        self.locked = isLocked ? true : nil
     }
 
     /// 창을 완전히 잃어버리는 사고를 막기 위한 알파 하한선 (OPA-03).

@@ -68,6 +68,56 @@ final class MemoLayoutManager: NSLayoutManager {
         }
     }
 
+    // MARK: - 이미지 (IMG-03)
+
+    /// 이미지 첨부 글자 하나가 차지하는 영역 (글 상자 좌표). 아직 배치가 안 됐으면 nil.
+    func attachmentRect(forCharacterIndex index: Int) -> NSRect? {
+        guard let textStorage, index >= 0, index < textStorage.length,
+              textStorage.attribute(.attachment, at: index, effectiveRange: nil) is MemoImageAttachment
+        else { return nil }
+        ensureLayout(forCharacterRange: NSRange(location: index, length: 1))
+        let glyph = glyphIndexForCharacter(at: index)
+        guard glyph < numberOfGlyphs else { return nil }
+        let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = self.location(forGlyphAt: glyph)
+        let size = attachmentSize(forGlyphAt: glyph)
+        guard size.width > 0, size.height > 0 else { return nil }
+        // 첨부의 바닥이 기준선이므로, 기준선에서 높이만큼 올라간 곳이 윗변이다.
+        // `attachmentBounds`가 바닥을 4pt 내려 놓았으니 그만큼 되돌린다.
+        return NSRect(
+            x: line.minX + location.x,
+            y: line.minY + location.y - size.height + MemoImageAttachment.baselineDrop,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    /// 고른 이미지에 테두리와 네 모서리 손잡이를 그린다.
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+        guard let textView = firstTextView else { return }
+        let selected = MainActor.assumeIsolated { (textView as? MemoTextView)?.selectedImageIndex }
+        guard let index = selected, let rect = attachmentRect(forCharacterIndex: index) else { return }
+        let glyph = glyphIndexForCharacter(at: index)
+        guard NSLocationInRange(glyph, glyphsToShow) else { return }
+
+        let box = rect.offsetBy(dx: origin.x, dy: origin.y)
+        let ink = NSColor(srgbRed: 0.13, green: 0.13, blue: 0.14, alpha: 1)
+        ink.setStroke()
+        let border = NSBezierPath(rect: box.insetBy(dx: 1, dy: 1))
+        border.lineWidth = 2
+        border.stroke()
+
+        for handle in MemoImageHandle.rects(in: box) {
+            NSColor.white.setFill()
+            NSBezierPath(rect: handle.rect).fill()
+            ink.setStroke()
+            let outline = NSBezierPath(rect: handle.rect.insetBy(dx: 0.75, dy: 0.75))
+            outline.lineWidth = 1.5
+            outline.stroke()
+        }
+    }
+
     /// 바탕 띠의 폭. 줄바꿈을 끄면 글 상자 폭이 끝없이 넓어지므로 그때는 텍스트 뷰 폭을 따른다.
     private func bandWidth(in container: NSTextContainer) -> CGFloat {
         if !container.widthTracksTextView, let textView = container.textView {
@@ -96,5 +146,30 @@ final class MemoLayoutManager: NSLayoutManager {
         style.border.setStroke()
         path.lineWidth = 1
         path.stroke()
+    }
+}
+
+/// 고른 이미지의 모서리 손잡이 (IMG-03). 그리는 쪽과 누르는 쪽이 같은 치수를 쓴다.
+/// 손잡이는 이미지 영역 안쪽에 둔다. 바깥에 두면 선택을 풀 때 지워지지 않고 남는다.
+struct MemoImageHandle {
+    enum Corner { case topLeft, topRight, bottomLeft, bottomRight
+
+        /// 왼쪽 모서리는 오른쪽으로 끌면 줄어든다.
+        var growsToTheRight: Bool { self == .topRight || self == .bottomRight }
+    }
+
+    static let size: CGFloat = 10
+
+    let corner: Corner
+    let rect: NSRect
+
+    static func rects(in box: NSRect) -> [MemoImageHandle] {
+        let s = size
+        return [
+            MemoImageHandle(corner: .topLeft, rect: NSRect(x: box.minX, y: box.minY, width: s, height: s)),
+            MemoImageHandle(corner: .topRight, rect: NSRect(x: box.maxX - s, y: box.minY, width: s, height: s)),
+            MemoImageHandle(corner: .bottomLeft, rect: NSRect(x: box.minX, y: box.maxY - s, width: s, height: s)),
+            MemoImageHandle(corner: .bottomRight, rect: NSRect(x: box.maxX - s, y: box.maxY - s, width: s, height: s)),
+        ]
     }
 }

@@ -8,11 +8,13 @@ public enum MemoSortKey: String, CaseIterable, Sendable {
     case modified
     case created
     case title
+    case manual
 
     public var label: String {
         switch self {
         case .modified: return "수정일"
         case .created: return "생성일"
+        case .manual: return "직접 순서"
         case .title: return "제목"
         }
     }
@@ -60,9 +62,11 @@ public enum MemoSearch {
 
     /// 정렬 (SRC-03).
     public static func sorted(_ summaries: [MemoSummary], by order: MemoSortOrder) -> [MemoSummary] {
-        summaries.sorted { left, right in
+        if order.key == .manual { return summaries }
+        return summaries.sorted { left, right in
             let result: Bool
             switch order.key {
+            case .manual: return false
             case .modified:
                 result = left.meta.modified < right.meta.modified
             case .created:

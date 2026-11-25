@@ -75,6 +75,34 @@ public final class WindowRegistry {
         return meta.id
     }
 
+    /// 새 메모를 만들어 띄우고 바로 AirDrop 사진 받기를 시작한다.
+    /// 받은 사진이 없이 끝나도 빈 메모는 일반 새 메모처럼 그대로 남는다.
+    @discardableResult
+    public func createMemoReceivingAirDrop() -> MemoID {
+        let id = createMemo()
+        controllers[id]?.startAirDropReceiving()
+        return id
+    }
+
+    /// 그 메모를 띄우고 이미지로 내보내기 시트를 연다 (목록 우클릭).
+    public func presentExportSheet(for id: MemoID) {
+        openMemo(id: id)
+        controllers[id]?.presentExportSheet()
+    }
+
+    /// 창 밖(저장소 경로)에서 그 메모 본문을 고친다. 떠 있는 창이 있으면 먼저 창의 편집 내용을 저장하고,
+    /// 고친 뒤 창 내용을 새 본문으로 다시 읽어 서로 어긋나지 않게 한다. 창이 없으면 고치기만 한다.
+    public func withExternalBodyEdit(id: MemoID, _ edit: () -> Void) {
+        let controller = controllers[id]
+        controller?.saveBodyNow()
+        edit()
+        controller?.reloadBodyFromStore()
+    }
+
+    public func isReceivingAirDrop(id: MemoID) -> Bool {
+        controllers[id]?.isReceivingAirDrop ?? false
+    }
+
     /// 이미 있는 메모를 화면에 띄운다. 본문은 이때 처음 읽는다 (LST-04).
     public func openMemo(id: MemoID) {
         if let existing = controllers[id] {

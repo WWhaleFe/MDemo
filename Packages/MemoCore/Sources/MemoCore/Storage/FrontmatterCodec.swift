@@ -109,7 +109,8 @@ public enum FrontmatterCodec {
             created: created,
             modified: modified,
             conflictOf: fields[Key.conflictOf.rawValue].map(unquote).map(MemoID.init(rawValue:)),
-            links: parseLinks(fields[Key.links.rawValue])
+            links: parseLinks(fields[Key.links.rawValue]),
+            isLocked: parseBool(fields[Key.locked.rawValue]) ?? false
         )
     }
 
@@ -132,6 +133,7 @@ public enum FrontmatterCodec {
         lines.append("\(Key.textAlpha.rawValue): \(formatNumber(meta.textAlpha))")
         lines.append("\(Key.open.rawValue): \(meta.isOpen)")
         lines.append("\(Key.pinned.rawValue): \(meta.isPinned)")
+        if meta.isLocked { lines.append("\(Key.locked.rawValue): true") }
         lines.append("\(Key.created.rawValue): \(formatDate(meta.created))")
         lines.append("\(Key.modified.rawValue): \(formatDate(meta.modified))")
         if let conflictOf = meta.conflictOf {
@@ -166,6 +168,7 @@ public enum FrontmatterCodec {
         case modified
         case conflictOf
         case links
+        case locked
     }
 
     /// 잘못된 항목만 건너뛰고 첫 등장 순서대로 중복을 합친다 (DOC-02).

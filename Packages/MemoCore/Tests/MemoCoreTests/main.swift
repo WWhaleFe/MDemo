@@ -1,4 +1,7 @@
+import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import MemoCore
 import TestKit
 
@@ -264,6 +267,101 @@ runner.test("깨진 파일 하나가 다른 메모 목록을 막지 않는다") 
     let summaries = try repository.loadSummaries()
     t.expectEqual(summaries.count, 1, "정상 메모는 읽혀야 한다")
     t.expectEqual(summaries.first?.id, healthy.id)
+}
+
+// MARK: - 첨부 이미지 (IMG-06, IMG-07)
+
+/// 시험용 단색 이미지 데이터.
+func makeImageData(width: Int, height: Int, type: UTType) -> Data {
+    let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    )!
+    context.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let data = NSMutableData()
+    let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+    return data as Data
+}
+
+runner.test("작은 PNG는 원본 그대로, 짧은 이름으로 저장된다 (IMG-07)") { t in
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("att-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let data = makeImageData(width: 300, height: 200, type: .png)
+
+    let saved = try AttachmentImages.save(imageData: data, into: directory)
+    t.expect(saved.fileName.hasSuffix(".png"), "PNG는 PNG로 저장해야 한다: \(saved.fileName)")
+    t.expect(saved.fileName.count <= 14, "이름이 짧아야 한다")
+    t.expectEqual(saved.relativePath, "attachments/\(saved.fileName)")
+    t.expectEqual(saved.pixelWidth, 300)
+    t.expectEqual(try Data(contentsOf: directory.appendingPathComponent(saved.fileName)), data, "원본 바이트가 바뀌었다")
+    let other = try AttachmentImages.save(imageData: data, into: directory)
+    t.expect(other.fileName != saved.fileName, "이름이 겹쳤다")
+}
+
+runner.test("긴 변이 2400px을 넘으면 줄여서 저장한다 (IMG-06)") { t in
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("att-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let png = try AttachmentImages.save(imageData: makeImageData(width: 3000, height: 1500, type: .png), into: directory)
+    t.expect(png.fileName.hasSuffix(".png"))
+    t.expectEqual(png.pixelWidth, 2400)
+    t.expectEqual(png.pixelHeight, 1200, "비율이 유지되어야 한다")
+    let size = AttachmentImages.pixelSize(of: directory.appendingPathComponent(png.fileName))
+    t.expectEqual(size?.width, 2400)
+
+    let jpeg = try AttachmentImages.save(imageData: makeImageData(width: 1000, height: 3200, type: .jpeg), into: directory)
+    t.expect(jpeg.fileName.hasSuffix(".jpg"), "JPEG는 JPEG로 저장해야 한다")
+    t.expectEqual(jpeg.pixelHeight, 2400)
+    t.expectEqual(jpeg.pixelWidth, 750)
+}
+
+runner.test("PNG·JPEG가 아닌 입력은 JPEG로 바꿔 저장한다") { t in
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("att-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let saved = try AttachmentImages.save(imageData: makeImageData(width: 100, height: 100, type: .tiff), into: directory)
+    t.expect(saved.fileName.hasSuffix(".jpg"))
+    t.expect(AttachmentImages.pixelSize(of: directory.appendingPathComponent(saved.fileName)) != nil)
+}
+
+runner.test("이미지가 아닌 데이터는 저장하지 않는다") { t in
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("att-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var failed = false
+    do { _ = try AttachmentImages.save(imageData: Data("글자".utf8), into: directory) } catch { failed = true }
+    t.expect(failed, "이미지가 아닌데 저장됨")
+}
+
+runner.test("본문에서 쓰지 않는 오래된 첨부만 정리한다 (IMG-07)") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let meta = MemoMeta(id: .generate())
+    try repository.save(MemoDocument(meta: meta, body: "![쓰는 것](attachments/used.png =100)\n글"))
+    let attachments = repository.attachmentsDirectory(for: meta.id)
+    try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+    let old = Date().addingTimeInterval(-3 * 86_400)
+    for name in ["used.png", "unused-old.png", "unused-new.png"] {
+        let url = attachments.appendingPathComponent(name)
+        try Data("x".utf8).write(to: url)
+        if name != "unused-new.png" {
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: url.path)
+        }
+    }
+
+    let removed = repository.pruneUnusedAttachments(modifiedBefore: Date().addingTimeInterval(-86_400))
+    t.expectEqual(removed, 1)
+    let exists = { (name: String) in FileManager.default.fileExists(atPath: attachments.appendingPathComponent(name).path) }
+    t.expect(exists("used.png"), "쓰는 파일을 지웠다")
+    t.expect(!exists("unused-old.png"), "오래된 미사용 파일이 남았다")
+    t.expect(exists("unused-new.png"), "방금 만든 파일은 되돌리기 대비로 남겨야 한다")
+}
+
+runner.test("이미지 줄은 제목 후보에서 빠진다") { t in
+    let summary = MemoSummary(meta: MemoMeta(id: .generate()), preview: "![a](attachments/p.png)\n진짜 제목")
+    t.expectEqual(summary.title, "진짜 제목")
 }
 
 // MARK: - 기기별 상태 (SYNC-07)
@@ -800,6 +898,193 @@ runner.test("휴지통 메모도 본문으로 찾는다") { t in
         t.expectEqual(store.filter(store.trashed, query: "휴지통속낱말", target: .body).count, 1)
         t.expectEqual(store.filter(store.trashed, query: "없는낱말", target: .body).count, 0)
     }
+}
+
+// MARK: - 본문에 이미지 줄 끼우기 (목록 창 AirDrop 받기)
+
+runner.test("본문 이미지 넣기: 맨 아래는 끝에 잇고 끝 줄바꿈을 지킨다") { t in
+    let a = "![a](attachments/a.png)"
+    let b = "![b](attachments/b.png)"
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "글", at: .bottom), "글\n\(a)")
+    t.expectEqual(BodyImageInsertion.inserting([a, b], into: "글\n", at: .bottom), "글\n\(a)\n\(b)\n")
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "", at: .bottom), a)
+}
+
+runner.test("본문 이미지 넣기: 맨 위는 제목 줄 바로 아래, 제목이 아니면 맨 앞") { t in
+    let a = "![a](attachments/a.png)"
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "# 제목\n본문", at: .top), "# 제목\n\(a)\n본문")
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "본문\n둘째", at: .top), "\(a)\n본문\n둘째")
+    // `#`만 있는 글은 제목이 아니다.
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "#해시태그", at: .top), "\(a)\n#해시태그")
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "# 제목", at: .top), "# 제목\n\(a)")
+    t.expectEqual(BodyImageInsertion.inserting([a], into: "", at: .top), a)
+}
+
+runner.test("본문 이미지 넣기: 여러 장을 맨 위에 받아도 받은 순서가 유지된다") { t in
+    let lines = (1...3).map { "![\($0)](attachments/\($0).png)" }
+    var body = "# 제목\n본문"
+    for (count, line) in lines.enumerated() {
+        body = BodyImageInsertion.inserting([line], into: body, at: .top, skippingInserted: count)
+    }
+    t.expectEqual(body, "# 제목\n\(lines.joined(separator: "\n"))\n본문")
+}
+
+runner.test("다른 이름으로 저장: 원본은 바이트 그대로, PNG·JPEG는 변환되고 덮어쓸 수 있다") { t in
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let saved = try AttachmentImages.save(imageData: makeImageData(width: 120, height: 60, type: .png), into: directory)
+    let source = directory.appendingPathComponent(saved.fileName)
+
+    let copy = directory.appendingPathComponent("복사본.png")
+    try AttachmentImages.export(from: source, to: copy, format: .original)
+    t.expectEqual(try Data(contentsOf: copy), try Data(contentsOf: source))
+    // 같은 자리에 다시 저장하면 덮어쓴다.
+    try AttachmentImages.export(from: source, to: copy, format: .original)
+
+    let jpeg = directory.appendingPathComponent("변환.jpg")
+    try AttachmentImages.export(from: source, to: jpeg, format: .jpeg)
+    let bytes = try Data(contentsOf: jpeg)
+    t.expectEqual(Array(bytes.prefix(2)), [0xFF, 0xD8], "JPEG 머리가 아님")
+    t.expectEqual(AttachmentImages.pixelSize(of: jpeg)?.width, 120)
+
+    let png = directory.appendingPathComponent("변환2.png")
+    try AttachmentImages.export(from: jpeg, to: png, format: .png)
+    t.expectEqual(Array(try Data(contentsOf: png).prefix(4)), [0x89, 0x50, 0x4E, 0x47])
+
+    t.expectEqual(AttachmentImages.ExportFormat.jpeg.fileExtension, "jpg")
+    t.expectNil(AttachmentImages.ExportFormat.original.fileExtension)
+    var failed = false
+    do { try AttachmentImages.export(from: directory.appendingPathComponent("없음.png"), to: png, format: .png) } catch { failed = true }
+    t.expect(failed, "없는 파일은 실패해야 한다")
+}
+
+
+// MARK: - 메모 복제
+
+runner.test("복제는 폴더 전체와 본문을 보존하고 새 메타데이터와 보드 자리를 기록한다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let old = Date(timeIntervalSince1970: 100)
+        let source = MemoMeta(id: .generate(), title: "회의", group: "업무", colorHex: "#ABCDEF",
+            backgroundAlpha: 0.6, textAlpha: 0.7, isOpen: true, isPinned: false,
+            created: old, modified: old, conflictOf: .generate(),
+            links: [MemoLink(to: .generate(), kind: .flow)])
+        let body = "첫 줄\n![사진](attachments/사진.png)\n본문"
+        let original = MemoDocument(meta: source, body: body, unknownFrontmatterLines: ["future: value"])
+        try repository.save(original)
+        let attachments = repository.attachmentsDirectory(for: source.id)
+        try FileManager.default.createDirectory(at: attachments.appendingPathComponent("하위"), withIntermediateDirectories: true)
+        let bytes = Data([0, 1, 2, 255])
+        try bytes.write(to: attachments.appendingPathComponent("사진.png"))
+        try bytes.write(to: attachments.appendingPathComponent("하위/파일.bin"))
+        let extra = attachments.deletingLastPathComponent().appendingPathComponent("추가.json")
+        try bytes.write(to: extra)
+        let store = MemoStore(repository: repository)
+        store.setBoardPlacement(.init(x: -40, y: 80), for: source.id)
+        let started = Date()
+        let copies = store.duplicate([source.id])
+        t.expectEqual(copies.count, 1)
+        guard let copyID = copies.first else { return }
+        let copied = try repository.load(id: copyID)
+        t.expect(copyID != source.id)
+        t.expectEqual(copied.body, body)
+        t.expectEqual(copied.meta.title, "회의 사본")
+        t.expectEqual(copied.meta.group, source.group)
+        t.expectEqual(copied.meta.colorHex, source.colorHex)
+        t.expectEqual(copied.meta.backgroundAlpha, source.backgroundAlpha)
+        t.expectEqual(copied.meta.textAlpha, source.textAlpha)
+        t.expectEqual(copied.meta.isPinned, false)
+        t.expectEqual(copied.meta.isOpen, false)
+        t.expect(copied.meta.created.timeIntervalSince(started) > -0.01)
+        t.expectEqual(copied.meta.created, copied.meta.modified)
+        t.expectEqual(copied.meta.links, [])
+        t.expectNil(copied.meta.conflictOf)
+        t.expectEqual(copied.unknownFrontmatterLines, ["future: value"])
+        let destination = repository.attachmentsDirectory(for: copyID)
+        t.expectEqual(try Data(contentsOf: destination.appendingPathComponent("사진.png")), bytes)
+        t.expectEqual(try Data(contentsOf: destination.appendingPathComponent("하위/파일.bin")), bytes)
+        t.expectEqual(try Data(contentsOf: destination.deletingLastPathComponent().appendingPathComponent("추가.json")), bytes)
+        t.expectEqual(try repository.load(id: source.id), original)
+        t.expectEqual(store.summaries.map(\.id), [source.id, copyID])
+        let restarted = MemoStore(repository: repository)
+        t.expectEqual(restarted.boardLayout.placement(for: copyID), .init(x: -16, y: 104))
+        t.expectEqual(restarted.summaries.first?.id, copyID)
+        try Data([9]).write(to: destination.appendingPathComponent("사진.png"))
+        t.expectEqual(try Data(contentsOf: attachments.appendingPathComponent("사진.png")), bytes)
+    }
+}
+
+runner.test("복제 제목은 사본과 빈 번호를 쓰고 직접 제목이 없으면 본문 제목을 유지한다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    MainActor.assumeIsolated {
+        let store = MemoStore(repository: repository)
+        let source = store.createMemo().id
+        store.updateMeta(id: source) { $0.title = "계획" }
+        let occupied = store.createMemo().id
+        store.updateMeta(id: occupied) { $0.title = "계획 사본 3" }
+        let copies = (0..<3).compactMap { _ in store.duplicate([source]).first }
+        t.expectEqual(copies.compactMap { store.loadDocument(id: $0)?.meta.title },
+            ["계획 사본", "계획 사본 2", "계획 사본 4"])
+        let untitled = store.createMemo().id
+        store.saveBody(id: untitled, body: "본문 제목\n내용")
+        let ids = store.duplicate([untitled, source, untitled, .generate()])
+        t.expectEqual(ids.count, 2)
+        guard let id = ids.first else { return }
+        t.expectNil(store.loadDocument(id: id)?.meta.title)
+        t.expectEqual(store.summaries.first { $0.id == id }?.title, "본문 제목")
+        let originalPosition = store.boardLayout.placement(for: untitled)
+        t.expectEqual(store.boardLayout.placement(for: id), originalPosition.map { .init(x: $0.x + 24, y: $0.y + 24) })
+    }
+}
+
+runner.test("잠긴 프론트매터를 읽고 보존하며 최신 파일이 잠겼으면 복제를 건너뛴다") { t in
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try MainActor.assumeIsolated {
+        let source = MemoMeta(id: .generate())
+        try repository.save(MemoDocument(meta: source, body: "잠길 본문"))
+        let store = MemoStore(repository: repository)
+        let unlocked = store.createMemo().id
+        let lockedText = FrontmatterCodec.encode(MemoDocument(meta: source, body: "잠길 본문"))
+            .replacingOccurrences(of: "\nopen:", with: "\nlocked: true\nopen:")
+        let decoded = try FrontmatterCodec.decode(fileContents: lockedText)
+        t.expect(decoded.meta.isLocked)
+        t.expect(FrontmatterCodec.encode(decoded).contains("locked: true"))
+        t.expect(!source.isLocked)
+        try repository.save(decoded)
+        let layout = store.boardLayout
+        t.expectEqual(store.duplicate([source.id]), [])
+        t.expectEqual(store.boardLayout, layout)
+        let copies = store.duplicate([source.id, unlocked])
+        t.expectEqual(copies.count, 1)
+        t.expectEqual(try repository.loadSummaries().count, 3)
+        // 날짜는 파일에 밀리초까지만 적혀 통째로 비교하면 1밀리초 아래 차이로 흔들린다. 보존해야 할 것만 비교한다.
+        let reloaded = try repository.load(id: source.id)
+        t.expect(reloaded.meta.isLocked)
+        t.expectEqual(reloaded.body, decoded.body)
+        t.expectEqual(reloaded.meta.id, decoded.meta.id)
+        store.moveToTrash(id: unlocked)
+        t.expectEqual(store.duplicate([unlocked]), [])
+    }
+}
+
+runner.test("보드 직접 순서는 JSON 왕복과 이전 형식, 중복과 삭제 정리를 지원한다") { t in
+    let a = MemoID.generate()
+    let b = MemoID.generate()
+    let layout = BoardLayout(placements: [a.rawValue: .init(x: 12, y: 24)], bentoSpans: [b.rawValue: .wide], manualOrder: [b, a])
+    t.expectEqual(try JSONDecoder().decode(BoardLayout.self, from: JSONEncoder().encode(layout)), layout)
+    let (repository, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try repository.saveBoardLayout(layout)
+    t.expectEqual(try repository.loadBoardLayout(), layout)
+    let old = Data("{\"placements\":{},\"bentoSpans\":{}}".utf8)
+    try old.write(to: root.appendingPathComponent("board.json"))
+    t.expectEqual(try repository.loadBoardLayout().manualOrder, [])
+    let c = MemoID.generate()
+    let dirty = BoardLayout(manualOrder: [b, b, MemoID.generate(), a])
+    t.expectEqual(dirty.normalizedOrder(among: [a, b, c]), [c, b, a])
 }
 
 runner.finish()

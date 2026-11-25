@@ -421,4 +421,179 @@ runner.test("코드 박스 안의 들여쓰기와 기호는 건드리지 않는�
     t.expectEqual(lines.map(\.spans.first?.text), ["    - 그대로", "• 그대로"])
 }
 
+// MARK: - 이미지 (IMG-07, IMG-08)
+
+runner.test("이미지 줄과 =너비 문법이 왕복해도 그대로다 (IMG-08)") { t in
+    for sample in [
+        "![스샷](attachments/a1b2c3d4.png =260)",
+        "![](attachments/x.jpg)",
+        "![표 그림](attachments/img-1.jpeg =1200)",
+    ] {
+        let lines = MarkdownParser.parse(sample)
+        t.expectEqual(lines.count, 1)
+        guard case .image(let image) = lines[0].block else {
+            t.expect(false, "이미지 줄로 읽지 못함: \(sample)")
+            continue
+        }
+        t.expectEqual(image.fileName, (image.path as NSString).lastPathComponent)
+        t.expectEqual(MarkdownSerializer.serialize(lines), sample, "왕복이 달라졌다")
+    }
+    let sized = MarkdownImage.parse("![a](attachments/p.png =260)")
+    t.expectEqual(sized?.width, 260)
+    t.expectEqual(sized?.alt, "a")
+    t.expectNil(MarkdownImage.parse("![a](attachments/p.png)")?.width)
+}
+
+runner.test("글 사이에 낀 이미지 문법과 퍼센트 너비는 일반 글자로 보존한다") { t in
+    for sample in ["앞 ![a](attachments/p.png) 뒤", "![a](attachments/p.png =50%)"] {
+        let lines = MarkdownParser.parse(sample)
+        t.expectEqual(lines.map(\.block), [.paragraph])
+        t.expectEqual(MarkdownSerializer.serialize(lines), sample)
+    }
+}
+
+runner.test("이미지 줄 앞뒤 글과 섞여도 줄 구성이 유지된다") { t in
+    let sample = "# 제목\n![a](attachments/p.png =100)\n본문"
+    let lines = MarkdownParser.parse(sample)
+    t.expectEqual(lines.count, 3)
+    t.expectEqual(MarkdownSerializer.serialize(lines), sample)
+}
+
+runner.test("노션으로 복사할 때는 이미지 줄을 뺀다 (로컬 경로는 못 읽는다)") { t in
+    let lines = MarkdownParser.parse("# 제목\n![a](attachments/p.png =100)\n본문")
+    t.expectEqual(MarkdownSerializer.serialize(lines, flavor: .clipboard), "# 제목\n본문")
+    t.expectEqual(
+        MarkdownSerializer.serialize(lines, flavor: .file),
+        "# 제목\n![a](attachments/p.png =100)\n본문"
+    )
+}
+
+runner.test("설명의 대괄호와 줄바꿈은 문법을 깨지 않도록 뺀다") { t in
+    let image = MarkdownImage(alt: "a]b[c\nd", path: "attachments/p.png", width: 0)
+    t.expectEqual(image.alt, "abcd")
+    t.expectEqual(image.width, 1)
+    t.expectNotNil(MarkdownImage.parse(image.markdown))
+}
+
+runner.test("저장 기본 이름: 설명이 있으면 설명, 없으면 제목과 번호, 못 쓰는 글자는 -") { t in
+    t.expectEqual(ImageSaveName.defaultName(alt: "영수증", memoTitle: "장부", ordinal: 2, fileExtension: "png"), "영수증.png")
+    t.expectEqual(ImageSaveName.defaultName(alt: "", memoTitle: "장부", ordinal: 2, fileExtension: "jpg"), "장부 이미지 2.jpg")
+    t.expectEqual(ImageSaveName.defaultName(alt: "", memoTitle: "9/1: 회의", ordinal: 1, fileExtension: "png"), "9-1- 회의 이미지 1.png")
+    t.expectEqual(ImageSaveName.defaultName(alt: " ", memoTitle: nil, ordinal: 0, fileExtension: "png"), "메모 이미지 1.png")
+    t.expectEqual(ImageSaveName.defaultName(alt: "a:b", memoTitle: nil, ordinal: 1, fileExtension: ""), "a-b")
+}
+
+// MARK: - OCR 마크다운 만들기
+
+/// 위에서 `row`번째 줄(0이 맨 위)에 놓인 조각. 줄 간격 0.05, 기본 줄 높이 0.03.
+func ocr(_ text: String, row: Double, x: Double = 0.1, height: Double = 0.03, width: Double = 0.3) -> OCRLine {
+    OCRLine(text: text, x: x, y: 0.95 - row * 0.05, width: width, height: height)
+}
+
+runner.test("OCR: 빈 입력과 공백 조각은 빈 글") { t in
+    t.expectEqual(OCRMarkdownBuilder.build(lines: [], mode: .markdown), "")
+    t.expectEqual(OCRMarkdownBuilder.build(lines: [ocr("  ", row: 0)], mode: .plain), "")
+}
+
+runner.test("OCR: 입력 순서와 상관없이 위에서 아래로 읽는다") { t in
+    let lines = [ocr("둘째", row: 1), ocr("첫째", row: 0), ocr("셋째", row: 2)]
+    t.expectEqual(OCRMarkdownBuilder.build(lines: lines, mode: .plain), "첫째\n둘째\n셋째")
+}
+
+runner.test("OCR: 같은 높이의 조각은 왼쪽부터 한 줄로 합친다") { t in
+    let lines = [
+        ocr("세계", row: 0, x: 0.5), ocr("안녕", row: 0, x: 0.1),
+        OCRLine(text: "다음 줄", x: 0.1, y: 0.95 - 0.05, width: 0.3, height: 0.03),
+    ]
+    // 세로 중심이 조금 어긋나도(줄 높이의 절반 이내) 같은 줄이다.
+    let slanted = [
+        OCRLine(text: "왼쪽", x: 0.1, y: 0.80, width: 0.2, height: 0.03),
+        OCRLine(text: "오른쪽", x: 0.5, y: 0.805, width: 0.2, height: 0.03),
+    ]
+    t.expectEqual(OCRMarkdownBuilder.build(lines: lines, mode: .markdown), "안녕 세계\n다음 줄")
+    t.expectEqual(OCRMarkdownBuilder.build(lines: slanted, mode: .plain), "왼쪽 오른쪽")
+}
+
+runner.test("OCR: 줄 간격이 중앙값의 1.6배를 넘으면 문단을 나눈다") { t in
+    let lines = [ocr("가", row: 0), ocr("나", row: 1), ocr("다", row: 3), ocr("라", row: 4)]
+    t.expectEqual(OCRMarkdownBuilder.build(lines: lines, mode: .plain), "가\n나\n\n다\n라")
+    // 1.6배 이하의 간격은 같은 문단이다.
+    let near = [ocr("가", row: 0), ocr("나", row: 1), ocr("다", row: 2), ocr("라", row: 3.5)]
+    t.expectEqual(OCRMarkdownBuilder.build(lines: near, mode: .plain), "가\n나\n다\n라")
+}
+
+runner.test("OCR: 줄 높이로 제목을 알아본다 (1.45배 이상 #, 1.2배 이상 ##)") { t in
+    let lines = [
+        ocr("큰 제목", row: 0, height: 0.05), ocr("본문 하나", row: 1), ocr("중간 제목", row: 2, height: 0.04),
+        ocr("본문 둘", row: 3), ocr("본문 셋", row: 4),
+    ]
+    let result = OCRMarkdownBuilder.build(lines: lines, mode: .markdown)
+    t.expect(result.hasPrefix("# 큰 제목"), result)
+    t.expect(result.contains("## 중간 제목"), result)
+    t.expect(result.contains("\n본문 하나\n"), result)
+    // 텍스트만 모드는 제목 표시를 붙이지 않는다.
+    t.expect(!OCRMarkdownBuilder.build(lines: lines, mode: .plain).contains("#"))
+}
+
+runner.test("OCR: 모두 같은 높이면 제목이 없다") { t in
+    let lines = [ocr("하나", row: 0), ocr("둘", row: 1)]
+    t.expectEqual(OCRMarkdownBuilder.build(lines: lines, mode: .markdown), "하나\n둘")
+}
+
+runner.test("OCR: 줄머리 기호는 글머리 목록으로") { t in
+    let lines = ["• 사과", "· 배", "▪ 귤", "◦ 감", "- 포도", "* 딸기"].enumerated().map { ocr($1, row: Double($0)) }
+    t.expectEqual(
+        OCRMarkdownBuilder.build(lines: lines, mode: .markdown),
+        "- 사과\n- 배\n- 귤\n- 감\n- 포도\n- 딸기"
+    )
+    // 공백 없는 하이픈은 글의 일부다.
+    t.expectEqual(OCRMarkdownBuilder.build(lines: [ocr("-5도", row: 0)], mode: .markdown), "-5도")
+    // 텍스트만 모드는 기호를 그대로 둔다.
+    t.expectEqual(OCRMarkdownBuilder.build(lines: [ocr("• 사과", row: 0)], mode: .plain), "• 사과")
+}
+
+runner.test("OCR: 번호는 1. 꼴로") { t in
+    let lines = ["1. 하나", "2) 둘", "③ 셋", "⑩ 열"].enumerated().map { ocr($1, row: Double($0)) }
+    t.expectEqual(OCRMarkdownBuilder.build(lines: lines, mode: .markdown), "1. 하나\n2. 둘\n3. 셋\n10. 열")
+    // 소수나 금액은 번호가 아니다.
+    t.expectEqual(OCRMarkdownBuilder.build(lines: [ocr("3.5달러", row: 0)], mode: .markdown), "3.5달러")
+}
+
+runner.test("OCR: 체크 기호는 체크리스트로") { t in
+    let lines = ["☐ 할 일", "□ 둘", "▢ 셋", "☑ 끝", "✓ 완료", "✔ 확인", "☒ 취소", "■ 네모"]
+        .enumerated().map { ocr($1, row: Double($0)) }
+    t.expectEqual(
+        OCRMarkdownBuilder.build(lines: lines, mode: .markdown),
+        "- [ ] 할 일\n- [ ] 둘\n- [ ] 셋\n- [x] 끝\n- [x] 완료\n- [x] 확인\n- [x] 취소\n- [x] 네모"
+    )
+}
+
+runner.test("OCR: 줄 높이의 1.5배 이상 안쪽에서 시작하는 목록은 두 칸 들인다") { t in
+    let lines = [
+        ocr("• 위", row: 0, x: 0.1), ocr("• 아래", row: 1, x: 0.1 + 0.03 * 1.6),
+        ocr("• 살짝", row: 2, x: 0.1 + 0.03 * 1.4),
+    ]
+    t.expectEqual(OCRMarkdownBuilder.build(lines: lines, mode: .markdown), "- 위\n  - 아래\n- 살짝")
+    // 목록이 아닌 줄은 안쪽에서 시작해도 들이지 않는다.
+    t.expectEqual(
+        OCRMarkdownBuilder.build(lines: [ocr("본문", row: 0, x: 0.1), ocr("들어간 글", row: 1, x: 0.4)], mode: .markdown),
+        "본문\n들어간 글"
+    )
+}
+
+runner.test("OCR: 제목 줄은 목록 기호가 있어도 제목으로 둔다") { t in
+    let lines = [ocr("1. 개요", row: 0, height: 0.05), ocr("글", row: 1), ocr("글", row: 2)]
+    t.expect(OCRMarkdownBuilder.build(lines: lines, mode: .markdown).hasPrefix("# 1. 개요"))
+}
+
+runner.test("H1 경로는 첨부 폴더의 파일 한 단계만 허용한다") { t in
+    for path in ["attachments/.", "attachments/..", "attachments/", "attachments/a/b.png", "attachments/a\\b.png", "../a.png", "https://example.com/a.png"] {
+        let source = "![설명](\(path))"
+        t.expectNil(MarkdownImage.parse(source), source)
+        t.expectEqual(MarkdownSerializer.serialize(MarkdownParser.parse(source)), source)
+        t.expectEqual(MarkdownSerializer.serialize(MarkdownParser.parse(source), flavor: .clipboard), source)
+    }
+    t.expectNotNil(MarkdownImage.parse("![설명](attachments/a.png =120)"))
+}
+
 runner.finish()

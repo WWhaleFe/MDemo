@@ -15,6 +15,7 @@ public enum ListTheme {
     public static let sidebarBg = color("사이드바", 0xEFEFF1, 0x1E1F22)
     public static let boardBg = color("보드", 0xEEEFF1, 0x1B1C1F)
     public static let card = color("카드", 0xFFFFFF, 0x26272A)
+    public static let selectedRow = color("고른 줄", 0xE3E4E8, 0x2E3035)
     public static let ink = color("먹색", 0x1C1D20, 0xEDEDEF)
     public static let text2 = color("본문", 0x5B5E66, 0xA9ABB2)
     public static let muted = color("보조", 0x6B6E76, 0x8C8F96)

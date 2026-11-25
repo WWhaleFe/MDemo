@@ -35,6 +35,8 @@ public final class MemoListModel {
     }
 
     public var scope: Scope = .all
+    /// 목록에서 메모를 열지 않고 AirDrop 사진을 받는 중이면 그 세션 (받기 띠가 보여 준다).
+    public var airDrop: ListAirDropSession?
     /// 검색칸에 친 글자. 찾기에는 `appliedQuery`를 쓴다.
     public var query: String = "" {
         didSet { queryDidChange() }
@@ -112,6 +114,7 @@ public final class MemoListModel {
         var summaries: [MemoSummary]
         var trashed: [MemoSummary]
         var revision: Int
+        var manualOrder: [MemoID]
     }
     @ObservationIgnored private var visibleCache: (key: VisibleKey, memos: [MemoSummary])?
 
@@ -119,7 +122,7 @@ public final class MemoListModel {
     public var visibleMemos: [MemoSummary] {
         // 캐시를 쓰더라도 관찰 값은 모두 읽어야 화면이 다시 그려진다.
         let key = VisibleKey(scope: scope, query: appliedQuery, searchTarget: searchTarget, searchGroup: searchGroup,
-                             sortOrder: sortOrder, summaries: store.summaries, trashed: store.trashed, revision: windowStateRevision)
+                             sortOrder: sortOrder, summaries: store.summaries, trashed: store.trashed, revision: windowStateRevision, manualOrder: store.boardLayout.manualOrder)
         if let visibleCache, visibleCache.key == key { return visibleCache.memos }
         let memos = computeVisibleMemos()
         visibleCache = (key, memos)
@@ -156,7 +159,45 @@ public final class MemoListModel {
         base = store.filter(base, query: appliedQuery, target: searchTarget)
         // 흐름은 흐름 순서를 지킨다.
         if case .flow = scope { return base }
-        return MemoSearch.sorted(base, by: sortOrder)
+        if sortOrder.key == .manual, !isShowingTrash {
+            let byID = Dictionary(uniqueKeysWithValues: base.map { ($0.id, $0) })
+            return store.boardLayout.normalizedOrder(among: store.summaries.map(\.id)).compactMap { byID[$0] }
+        }
+        return MemoSearch.sorted(base, by: sortOrder.key == .manual ? .newestFirst : sortOrder)
+    }
+
+    public var canReorder: Bool {
+        if case .flow = scope { return false }
+        return !isShowingTrash
+    }
+
+    /// 목적지는 이동 전 보이는 목록의 틈 번호다. 거른 범위 밖의 자리는 그대로 둔다.
+    public func reorder(_ ids: Set<MemoID>, to destination: Int) {
+        guard canReorder else { return }
+        let visible = visibleMemos.map(\.id)
+        let moving = visible.filter { ids.contains($0) }
+        guard !moving.isEmpty else { return }
+        let gap = max(0, min(destination, visible.count))
+        var remaining = visible.filter { !ids.contains($0) }
+        let insertion = visible.prefix(gap).filter { !ids.contains($0) }.count
+        remaining.insert(contentsOf: moving, at: insertion)
+        guard remaining != visible else { return }
+        var global = store.boardLayout.normalizedOrder(among: store.summaries.map(\.id))
+        let included = Set(visible)
+        // 정렬을 처음 바꿀 때도 지금 보이는 차례를 출발점으로 삼는다.
+        var replacement = remaining.makeIterator()
+        for i in global.indices where included.contains(global[i]) { global[i] = replacement.next()! }
+        store.setManualOrder(global)
+        sortOrder = MemoSortOrder(key: .manual)
+    }
+
+    public func moveByKeyboard(_ id: MemoID, direction: Int) {
+        let visible = visibleMemos.map(\.id)
+        let ids = selection.contains(id) ? selection : [id]
+        let offsets = visible.indices.filter { ids.contains(visible[$0]) }
+        guard let first = offsets.first, let last = offsets.last else { return }
+        if direction < 0, first > 0 { reorder(ids, to: first - 1) }
+        if direction > 0, last + 1 < visible.count { reorder(ids, to: last + 2) }
     }
 
     public var isShowingTrash: Bool {
@@ -228,6 +269,28 @@ public final class MemoListModel {
 
     public func moveSelectionToTrash() {
         moveToTrash(orderedSelection)
+    }
+
+    public func canDuplicate(_ ids: [MemoID]) -> Bool {
+        !isShowingTrash && !ids.isEmpty && ids.allSatisfy { id in
+            store.summaries.contains { $0.id == id && !$0.meta.isLocked }
+        }
+    }
+
+    /// 화면에 보이는 기본 자리를 저장한 뒤 복제하고 새 메모를 선택한다.
+    public func duplicate(_ ids: [MemoID]) {
+        guard canDuplicate(ids) else { return }
+        let positions = boardPlacements(for: visibleMemos)
+        let missing = ids.filter { store.boardLayout.placement(for: $0) == nil }
+        store.setBoardPlacements(Dictionary(uniqueKeysWithValues: Set(missing).compactMap { id in
+            positions[id].map { (id, $0) }
+        }))
+        let copies = store.duplicate(ids)
+        guard !copies.isEmpty else { return }
+        // 복제본은 창과 연결이 없으므로 이 두 보기에서는 전체 목록으로 옮긴다.
+        if scope == .visible { scope = .all }
+        if case .flow = scope { scope = .all }
+        selection = Set(copies)
     }
 
     public func moveToTrash(_ ids: [MemoID]) {
@@ -472,7 +535,8 @@ public final class MemoListModel {
 
     /// 벤토에서 큰 카드부터 놓는 차례로 정렬한 메모.
     func bentoOrdered(_ memos: [MemoSummary]) -> [MemoSummary] {
-        bentoEntry(for: memos).order.map { memos[$0] }
+        if sortOrder.key == .manual { return memos }
+        return bentoEntry(for: memos).order.map { memos[$0] }
     }
 
     private func computeBentoSpans(for memos: [MemoSummary]) -> [MemoID: BoardLayout.BentoSpan] {
