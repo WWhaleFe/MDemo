@@ -23,5 +23,6 @@ pub mod json;
 pub mod ledger;
 pub mod link;
 pub mod meta;
+pub mod store;
 
 mod unicode;

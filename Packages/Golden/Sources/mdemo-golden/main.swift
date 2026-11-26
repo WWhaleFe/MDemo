@@ -108,6 +108,12 @@ func generate(input: URL, output: URL) throws {
     drive.saveState(drive.loadState())
     try copyResult("drive-state.json")
 
+    // 검색 일치는 따로 둔 저장소 폴더에서 한다(보드 계산용 메모와 섞이지 않게).
+    if fm.fileExists(atPath: input.appendingPathComponent("search-cases.json").path) {
+        let searchRoot = work.appendingPathComponent("search-root")
+        try emit("search-results.json", searchResults(input: input.appendingPathComponent("search-cases.json"), root: searchRoot, keychain: keychain))
+    }
+
     let scenario = try JSONDecoder().decode(Scenario.self, from: read("board-calculations.json"))
     let ids = scenario.ids.map { MemoID(rawValue: $0) }
     let edges = scenario.edges.map(\.value)
@@ -148,8 +154,14 @@ func generate(input: URL, output: URL) throws {
 }
 
 do {
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "scenario" {
+        try MainActor.assumeIsolated {
+            try runScenario(file: URL(fileURLWithPath: CommandLine.arguments[2]), dataDir: URL(fileURLWithPath: CommandLine.arguments[3]))
+        }
+        exit(0)
+    }
     guard CommandLine.arguments.count == 3 else {
-        throw NSError(domain: "인자", code: 1, userInfo: [NSLocalizedDescriptionKey: "사용법: mdemo-golden <입력 폴더> <출력 폴더>"])
+        throw NSError(domain: "인자", code: 1, userInfo: [NSLocalizedDescriptionKey: "사용법: mdemo-golden <입력 폴더> <출력 폴더> | mdemo-golden scenario <시나리오.json> <데이터 폴더>"])
     }
     try MainActor.assumeIsolated {
         try generate(input: URL(fileURLWithPath: CommandLine.arguments[1]), output: URL(fileURLWithPath: CommandLine.arguments[2]))

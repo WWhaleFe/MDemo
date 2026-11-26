@@ -11,6 +11,7 @@ if ! [[ "$N" =~ ^[0-9]+$ && "$SEED" =~ ^[0-9]+$ ]] || [ "$N" -lt 1 ]; then
 fi
 cargo build --offline --locked --manifest-path "$ROOT/core/Cargo.toml" -p mdemo-golden --bins
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/mdemo-fuzz.XXXXXX")"
+mkdir -p "$WORK/run"; : > "$WORK/search-diff-count"
 trap 'rm -rf "$WORK"' EXIT
 START=$SECONDS
 DONE=0
@@ -29,10 +30,18 @@ while [ "$DONE" -lt "$N" ]; do
         python3 - "$WORK/swift" "$WORK/rust" <<'PY' || STATUS=1
 import pathlib, sys
 swift, rust = map(pathlib.Path, sys.argv[1:])
-names = {'board.json', 'groups.json', 'device-state.json', 'destroyed.json', 'local-only.json', 'board-calculations.json', 'relations.json'}
+names = {'board.json', 'groups.json', 'device-state.json', 'destroyed.json', 'local-only.json', 'board-calculations.json', 'relations.json', 'search-results.json'}
 names |= {str(p.relative_to(swift)) for p in (swift / 'memos').glob('*.md')}
 names |= {str(p.relative_to(rust)) for p in (rust / 'memos').glob('*.md')}
 differences = [n for n in sorted(names) if not (swift/n).is_file() or not (rust/n).is_file() or (swift/n).read_bytes() != (rust/n).read_bytes()]
+# 검색 판정은 맥에서 Foundation(Swift)에 남긴다(계획표 1장). Rust 검색은 Windows 기본 구현이라
+# 무작위 비교의 검색 차이는 실패로 치지 않고 건수만 남긴다. 고정 사례 477개 일치는 golden-check가 강제한다.
+if 'search-results.json' in differences:
+    import json
+    a = json.loads((swift/'search-results.json').read_text()); b = json.loads((rust/'search-results.json').read_text())
+    n = sum(1 for x, y in zip(a, b) if x != y)
+    with open(pathlib.Path(sys.argv[1]).parent / 'search-diff-count', 'a') as f: f.write(f'{n}\n')
+    differences.remove('search-results.json')
 for name in differences:
     print(f'차이: {name}')
 print(f'차이 파일 {len(differences)}개') if differences else None
@@ -53,6 +62,6 @@ PY
     fi
     DONE=$((DONE + COUNT))
     if [ $((DONE % 5000)) -eq 0 ] || [ "$DONE" -eq "$N" ]; then
-        echo "퍼즈: $DONE/$N, $((SECONDS - START))초, 차이 0건, 시드 $SEED"
+        echo "퍼즈: $DONE/$N, $((SECONDS - START))초, 차이 0건, 시드 $SEED (참고: 검색 판정 차이 $(awk '{s+=$1} END {print s+0}' "$WORK/search-diff-count")건, 맥은 Swift 검색 유지)"
     fi
 done

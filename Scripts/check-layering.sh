@@ -37,8 +37,8 @@ else
 fi
 
 # C 모듈은 CoreBridge만, CoreBridge는 화면 아래 계층만 참조한다.
-FFI_HITS="$(rg -n --glob '*.swift' '^\s*(@[A-Za-z]+\s+)*(public\s+|internal\s+|private\s+|fileprivate\s+|package\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(MDemoCoreFFI)(\b|\.)' "$ROOT/Packages" "$ROOT/App" | grep -v '/Packages/CoreBridge/' || true)"
-BRIDGE_HITS="$(rg -n --glob '*.swift' '^\s*(@[A-Za-z]+\s+)*(public\s+|internal\s+|private\s+|fileprivate\s+|package\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?CoreBridge(\b|\.)' "$ROOT/Packages/Features" "$ROOT/Packages/StickyWindow" "$ROOT/Packages/EditorKit" "$ROOT/App" || true)"
+FFI_HITS="$(grep -rEn --include='*.swift' '^[[:space:]]*(@[A-Za-z]+[[:space:]]+)*((public|internal|private|fileprivate|package)[[:space:]]+)?import[[:space:]]+((typealias|struct|class|enum|protocol|let|var|func)[[:space:]]+)?MDemoCoreFFI([.[:space:]]|$)' "$ROOT/Packages" "$ROOT/App" | grep -v '/Packages/CoreBridge/' || true)"
+BRIDGE_HITS="$(grep -rEn --include='*.swift' '^[[:space:]]*(@[A-Za-z]+[[:space:]]+)*((public|internal|private|fileprivate|package)[[:space:]]+)?import[[:space:]]+((typealias|struct|class|enum|protocol|let|var|func)[[:space:]]+)?CoreBridge([.[:space:]]|$)' "$ROOT/Packages/Features" "$ROOT/Packages/StickyWindow" "$ROOT/Packages/EditorKit" "$ROOT/App" || true)"
 if [ -n "$FFI_HITS$BRIDGE_HITS" ]; then
     echo "✗ Rust 경계 계층 규칙 위반:"
     echo "$FFI_HITS$BRIDGE_HITS"

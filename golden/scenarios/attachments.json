@@ -1,0 +1,93 @@
+{
+  "description": "첨부: 저장, 덮어쓰기, 본문에서 쓰는 파일 보존, 오래된 미사용 파일 정리, 삭제, 휴지통 왕복",
+  "ops": [
+    {
+      "op": "create",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-10T08:00:00.000Z"
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "keep.png",
+      "bytes": "b2xk"
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "keep.png",
+      "bytes": "iVBORw0KGgoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHw=="
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "unused.png",
+      "bytes": "iVBORw0KGgoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHzE="
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "old.bin",
+      "bytes": "AAEC/w=="
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "fresh.jpg",
+      "bytes": "/9j/4GpwZWc="
+    },
+    {
+      "op": "saveBody",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-10T08:05:00.000Z",
+      "body": "사진\n![](attachments/keep.png)\n끝"
+    },
+    {
+      "op": "touch",
+      "path": "memos/01SC0000000000000000000001/attachments/keep.png",
+      "time": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "op": "touch",
+      "path": "memos/01SC0000000000000000000001/attachments/unused.png",
+      "time": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "op": "touch",
+      "path": "memos/01SC0000000000000000000001/attachments/old.bin",
+      "time": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "op": "touch",
+      "path": "memos/01SC0000000000000000000001/attachments/fresh.jpg",
+      "time": "2026-03-09T23:00:00.000Z"
+    },
+    {
+      "op": "pruneUnusedAttachments",
+      "now": "2026-03-10T12:00:00.000Z",
+      "days": 1
+    },
+    {
+      "op": "removeAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "fresh.jpg"
+    },
+    {
+      "op": "removeAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "missing.png"
+    },
+    {
+      "op": "moveToTrash",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-11T00:00:00.000Z"
+    },
+    {
+      "op": "restore",
+      "id": "01SC0000000000000000000001"
+    }
+  ],
+  "mtimeCheck": [
+    "memos/01SC0000000000000000000001/attachments/keep.png"
+  ]
+}

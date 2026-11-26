@@ -26,6 +26,9 @@ public final class MemoStore {
     @ObservationIgnored private var unlocking = Set<MemoID>()
     @ObservationIgnored private var lockSessions: [MemoID: MemoLockSession] = [:]
     @ObservationIgnored private let repository: any MemoRepository
+    /// 시험 · 시나리오 전용 주입 지점. 앱은 기본값(실제 시각 · 새 ULID)을 그대로 쓴다.
+    @ObservationIgnored public var clock: @Sendable () -> Date = { MemoMeta.now() }
+    @ObservationIgnored public var generateID: @Sendable () -> MemoID = { MemoID.generate() }
 
     public init(repository: any MemoRepository, keychain: any MemoKeychain = DeviceMemoKeychain()) {
         self.keychain = keychain
@@ -56,7 +59,7 @@ public final class MemoStore {
     /// 새 메모를 만들고 파일로 저장한다 (KEY-10).
     @discardableResult
     public func createMemo(colorHex: String = MemoColor.presets[0].hex, group: String? = nil) -> MemoMeta {
-        let meta = MemoMeta(id: .generate(), group: group, colorHex: colorHex)
+        let meta = MemoMeta(id: generateID(), group: group, colorHex: colorHex, created: clock(), modified: clock())
         let document = MemoDocument(meta: meta, body: "")
         try? repository.save(document)
         summaries.insert(MemoSummary(meta: meta, preview: ""), at: 0)
@@ -163,7 +166,7 @@ public final class MemoStore {
             if document.body == body { return true }
             document.body = body
         }
-        document.meta.modified = MemoMeta.now()
+        document.meta.modified = clock()
         do { try repository.save(document) } catch { return false }
         updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(body.prefix(200)))
         return true
@@ -178,7 +181,7 @@ public final class MemoStore {
         // 바뀐 것이 없으면 쓰지 않는다. 앱을 켤 때 열린 창마다 `open: true`를 다시 쓰며
         // 수정 시각이 올라가, 동기화가 내용 변화 없는 메모를 매번 올리고 두 기기에서 충돌 사본을 만들었다.
         guard document.meta != before else { return }
-        document.meta.modified = MemoMeta.now()
+        document.meta.modified = clock()
         do { try repository.save(document) } catch { return }
         updateSummary(meta: document.meta, preview: document.meta.isLocked ? "" : String(document.body.prefix(200)))
     }
@@ -441,10 +444,10 @@ public final class MemoStore {
     }
 
     /// 보관 기간이 지난 항목을 자동으로 비운다 (TRS-03). 앱 시작 시 한 번 호출한다.
-    public func emptyTrash(olderThan days: Int) {
+    public func emptyTrash(olderThan days: Int, now: Date = Date()) {
         defer { onPrivacyChange?() }
         guard days > 0 else { return }
-        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now
         for memo in (try? repository.loadTrashSummaries()) ?? [] where memo.meta.isLocked && (memo.deletedAt ?? .distantFuture) < cutoff { try? destroyMemo(id: memo.id) }
         try? repository.emptyTrash(deletedBefore: cutoff)
         reloadSummaries()

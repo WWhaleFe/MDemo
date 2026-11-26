@@ -42,6 +42,11 @@ if ! "$ROOT/Scripts/golden-check.sh" rust; then
     FAILED=1
 fi
 
+# 같은 연산 시나리오를 두 구현으로 돌려 데이터 폴더를 비교한다.
+if ! "$ROOT/Scripts/scenario-check.sh"; then
+    FAILED=1
+fi
+
 if [ $FAILED -eq 0 ]; then
     echo "✓ 전체 테스트 통과"
 else

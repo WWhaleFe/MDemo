@@ -37,6 +37,49 @@ pub fn nfd(s: &str) -> String {
     }
     out.into_iter().filter_map(char::from_u32).collect()
 }
+/// 본문 검색용 정규 분해. 글자마다 원래 글자의 번호(태그)를 달고 다닌다.
+pub fn nfd_chars(input: &[(char, usize)]) -> Vec<(char, usize)> {
+    fn decompose(c: u32, out: &mut Vec<u32>) {
+        if (0xac00..=0xd7a3).contains(&c) {
+            let index = c - 0xac00;
+            out.push(0x1100 + index / 588);
+            out.push(0x1161 + (index % 588) / 28);
+            if index % 28 != 0 {
+                out.push(0x11a7 + index % 28)
+            }
+        } else if let Ok(i) = DECOMPOSITION.binary_search_by_key(&c, |v| v.0) {
+            for d in DECOMPOSITION[i].1 {
+                decompose(*d, out)
+            }
+        } else {
+            out.push(c)
+        }
+    }
+    let class = |c: u32| {
+        CLASS
+            .binary_search_by_key(&c, |v| v.0)
+            .map(|i| CLASS[i].1)
+            .unwrap_or(0)
+    };
+    // 완성형을 풀어 생긴 뒷부분(고정)은 다른 글자의 결합 기호와 자리를 바꾸지 않는다(Swift 관찰).
+    let mut out: Vec<(u32, usize, bool)> = Vec::new();
+    for (c, tag) in input {
+        let mut parts = Vec::new();
+        decompose(*c as u32, &mut parts);
+        out.extend(parts.into_iter().enumerate().map(|(i, p)| (p, *tag, i > 0)));
+    }
+    for i in 1..out.len() {
+        let mut j = i;
+        let current = class(out[i].0);
+        while j > 0 && current != 0 && !out[i].2 && !out[j - 1].2 && class(out[j - 1].0) > current {
+            out.swap(j, j - 1);
+            j -= 1;
+        }
+    }
+    out.into_iter()
+        .filter_map(|(c, tag, _)| char::from_u32(c).map(|c| (c, tag)))
+        .collect()
+}
 const DECOMPOSITION: &[(u32, &[u32])] = &[
     (192, &[65, 768]),
     (193, &[65, 769]),

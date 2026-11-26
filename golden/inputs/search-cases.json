@@ -1,0 +1,1912 @@
+{
+ "cases": [
+  {
+   "body": "Hello World",
+   "query": "hello"
+  },
+  {
+   "body": "Hello World",
+   "query": "WORLD"
+  },
+  {
+   "body": "Hello World",
+   "query": "o w"
+  },
+  {
+   "body": "Hello World",
+   "query": "  hello  "
+  },
+  {
+   "body": "Hello World",
+   "query": "worlds"
+  },
+  {
+   "body": "ABC",
+   "query": "abc"
+  },
+  {
+   "body": "straße",
+   "query": "STRASSE"
+  },
+  {
+   "body": "STRASSE",
+   "query": "straße"
+  },
+  {
+   "body": "Straße",
+   "query": "ß"
+  },
+  {
+   "body": "ﬁnal",
+   "query": "FI"
+  },
+  {
+   "body": "ﬁnal",
+   "query": "ﬁ"
+  },
+  {
+   "body": "final",
+   "query": "ﬁ"
+  },
+  {
+   "body": "İstanbul",
+   "query": "istanbul"
+  },
+  {
+   "body": "İstanbul",
+   "query": "i̇stanbul"
+  },
+  {
+   "body": "ISPARTA",
+   "query": "ısparta"
+  },
+  {
+   "body": "ısparta",
+   "query": "ISPARTA"
+  },
+  {
+   "body": "istanbul",
+   "query": "İSTANBUL"
+  },
+  {
+   "body": "Iİıi",
+   "query": "ii"
+  },
+  {
+   "body": "TITLE",
+   "query": "title"
+  },
+  {
+   "body": "title",
+   "query": "TİTLE"
+  },
+  {
+   "body": "ΣΑΣ",
+   "query": "σας"
+  },
+  {
+   "body": "σας",
+   "query": "ΣΑΣ"
+  },
+  {
+   "body": "ΌΣΟΣ",
+   "query": "όσος"
+  },
+  {
+   "body": "Привет",
+   "query": "ПРИВЕТ"
+  },
+  {
+   "body": "привет мир",
+   "query": "Мир"
+  },
+  {
+   "body": "ǅ",
+   "query": "ǆ"
+  },
+  {
+   "body": "한글 메모",
+   "query": "한글"
+  },
+  {
+   "body": "한글 메모",
+   "query": "한"
+  },
+  {
+   "body": "한글 메모",
+   "query": "하"
+  },
+  {
+   "body": "한글 메모",
+   "query": "ㅎ"
+  },
+  {
+   "body": "한글 메모",
+   "query": "글 메"
+  },
+  {
+   "body": "한글 메모",
+   "query": "한글"
+  },
+  {
+   "body": "한글 메모",
+   "query": "한글 메모"
+  },
+  {
+   "body": "한글 메모",
+   "query": "한글 메모"
+  },
+  {
+   "body": "한글 메모",
+   "query": "하"
+  },
+  {
+   "body": "한글 메모",
+   "query": "하"
+  },
+  {
+   "body": "한글 메모",
+   "query": "하"
+  },
+  {
+   "body": "가나다",
+   "query": "나"
+  },
+  {
+   "body": "각",
+   "query": "가"
+  },
+  {
+   "body": "각",
+   "query": "ㄱ"
+  },
+  {
+   "body": "ᄒᆞᆫ",
+   "query": "ᄒ"
+  },
+  {
+   "body": "한글",
+   "query": "ᆫ"
+  },
+  {
+   "body": "ㅎㅏㄴ",
+   "query": "한"
+  },
+  {
+   "body": "한",
+   "query": "ㅎㅏㄴ"
+  },
+  {
+   "body": "café",
+   "query": "café"
+  },
+  {
+   "body": "café",
+   "query": "café"
+  },
+  {
+   "body": "café",
+   "query": "cafe"
+  },
+  {
+   "body": "café",
+   "query": "cafe"
+  },
+  {
+   "body": "café",
+   "query": "caf"
+  },
+  {
+   "body": "café",
+   "query": "é"
+  },
+  {
+   "body": "café",
+   "query": "é"
+  },
+  {
+   "body": "café",
+   "query": "́"
+  },
+  {
+   "body": "é",
+   "query": "e"
+  },
+  {
+   "body": "É",
+   "query": "é"
+  },
+  {
+   "body": "ẹ́",
+   "query": "ẹ́"
+  },
+  {
+   "body": "ä",
+   "query": "ä"
+  },
+  {
+   "body": "ä",
+   "query": "Ä"
+  },
+  {
+   "body": "ñ",
+   "query": "n"
+  },
+  {
+   "body": "Å",
+   "query": "å"
+  },
+  {
+   "body": "Å",
+   "query": "å"
+  },
+  {
+   "body": "x́y",
+   "query": "xy"
+  },
+  {
+   "body": "👩‍👩‍👧‍👦",
+   "query": "👩"
+  },
+  {
+   "body": "👩‍👩‍👧‍👦",
+   "query": "👩‍👩‍👧‍👦"
+  },
+  {
+   "body": "a👩‍👩‍👧‍👦b",
+   "query": "👩‍👩‍👧‍👦"
+  },
+  {
+   "body": "👩‍👩‍👧‍👦",
+   "query": "👦"
+  },
+  {
+   "body": "👩‍👩‍👧‍👦",
+   "query": "‍"
+  },
+  {
+   "body": "👋🏽",
+   "query": "👋"
+  },
+  {
+   "body": "👋🏽",
+   "query": "🏽"
+  },
+  {
+   "body": "👋🏽",
+   "query": "👋🏽"
+  },
+  {
+   "body": "🇰🇷",
+   "query": "🇰"
+  },
+  {
+   "body": "🇰🇷🇯🇵",
+   "query": "🇷🇯"
+  },
+  {
+   "body": "❤️",
+   "query": "❤"
+  },
+  {
+   "body": "❤",
+   "query": "❤️"
+  },
+  {
+   "body": "😀 웃음",
+   "query": "😀"
+  },
+  {
+   "body": "☺️",
+   "query": "☺"
+  },
+  {
+   "body": "ＡＢＣ",
+   "query": "abc"
+  },
+  {
+   "body": "ABC",
+   "query": "ＡＢＣ"
+  },
+  {
+   "body": "ＡＢＣ",
+   "query": "ＡＢＣ"
+  },
+  {
+   "body": "ｶﾀｶﾅ",
+   "query": "カタカナ"
+  },
+  {
+   "body": "カタカナ",
+   "query": "ｶﾀｶﾅ"
+  },
+  {
+   "body": "ガ",
+   "query": "カ"
+  },
+  {
+   "body": "ガ",
+   "query": "ガ"
+  },
+  {
+   "body": "ｶﾞ",
+   "query": "ガ"
+  },
+  {
+   "body": "１２３",
+   "query": "123"
+  },
+  {
+   "body": "Ⅳ",
+   "query": "iv"
+  },
+  {
+   "body": "ⅳ",
+   "query": "Ⅳ"
+  },
+  {
+   "body": "x²",
+   "query": "x2"
+  },
+  {
+   "body": "㈱",
+   "query": "(株)"
+  },
+  {
+   "body": "ﬃ",
+   "query": "ffi"
+  },
+  {
+   "body": "　전각공백",
+   "query": "전각공백"
+  },
+  {
+   "body": "a　b",
+   "query": "a b"
+  },
+  {
+   "body": "abc",
+   "query": ""
+  },
+  {
+   "body": "abc",
+   "query": " "
+  },
+  {
+   "body": "abc",
+   "query": "   "
+  },
+  {
+   "body": "abc",
+   "query": "\t"
+  },
+  {
+   "body": "abc",
+   "query": " "
+  },
+  {
+   "body": "abc",
+   "query": "　"
+  },
+  {
+   "body": "",
+   "query": ""
+  },
+  {
+   "body": "",
+   "query": "a"
+  },
+  {
+   "body": "a b",
+   "query": "a b"
+  },
+  {
+   "body": "a b",
+   "query": "a  b"
+  },
+  {
+   "body": "a\nb",
+   "query": "a\nb"
+  },
+  {
+   "body": "a\nb",
+   "query": "a b"
+  },
+  {
+   "body": "a\nb",
+   "query": "b"
+  },
+  {
+   "body": "a\nb",
+   "query": "a\n"
+  },
+  {
+   "body": "a\nb",
+   "query": "\nb"
+  },
+  {
+   "body": "a\r\nb",
+   "query": "a\nb"
+  },
+  {
+   "body": "a\rb",
+   "query": "a\rb"
+  },
+  {
+   "body": "a\tb",
+   "query": "\tb"
+  },
+  {
+   "body": " abc",
+   "query": "abc "
+  },
+  {
+   "body": "abc",
+   "query": "abc\n"
+  },
+  {
+   "body": "abc",
+   "query": "\nabc"
+  },
+  {
+   "body": "a​b",
+   "query": "ab"
+  },
+  {
+   "body": "a­b",
+   "query": "ab"
+  },
+  {
+   "body": "a b",
+   "query": "b"
+  },
+  {
+   "body": "# 제목\n본문",
+   "query": "제목"
+  },
+  {
+   "body": "![](a.png)\n본문",
+   "query": "본문"
+  },
+  {
+   "body": "---\nx\n---\n본문",
+   "query": "x"
+  },
+  {
+   "body": "본문",
+   "query": "---"
+  },
+  {
+   "body": "日本語のメモ",
+   "query": "日本"
+  },
+  {
+   "body": "中文备忘录",
+   "query": "备忘"
+  },
+  {
+   "body": "العربية",
+   "query": "عرب"
+  },
+  {
+   "body": "שלום",
+   "query": "של"
+  },
+  {
+   "body": "ไทย",
+   "query": "ไ"
+  },
+  {
+   "body": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz",
+   "query": "z"
+  },
+  {
+   "body": "a​b",
+   "query": "ab"
+  },
+  {
+   "body": "ab",
+   "query": "a​b"
+  },
+  {
+   "body": "a‌b",
+   "query": "ab"
+  },
+  {
+   "body": "a‍b",
+   "query": "ab"
+  },
+  {
+   "body": "ab",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍",
+   "query": "a"
+  },
+  {
+   "body": "a­b",
+   "query": "ab"
+  },
+  {
+   "body": "﻿abc",
+   "query": "abc"
+  },
+  {
+   "body": "a⁠b",
+   "query": "ab"
+  },
+  {
+   "body": "a️b",
+   "query": "ab"
+  },
+  {
+   "body": "ab",
+   "query": "​ab"
+  },
+  {
+   "body": "٣",
+   "query": "3"
+  },
+  {
+   "body": "३",
+   "query": "3"
+  },
+  {
+   "body": "①",
+   "query": "1"
+  },
+  {
+   "body": "𝟏",
+   "query": "1"
+  },
+  {
+   "body": "１２３",
+   "query": "１２３"
+  },
+  {
+   "body": "0１",
+   "query": "01"
+  },
+  {
+   "body": "ａｂｃ",
+   "query": "abc"
+  },
+  {
+   "body": "abc",
+   "query": "ａｂｃ"
+  },
+  {
+   "body": "ＡＢＣ",
+   "query": "ａｂｃ"
+  },
+  {
+   "body": "ø",
+   "query": "o"
+  },
+  {
+   "body": "ø",
+   "query": "Ø"
+  },
+  {
+   "body": "æ",
+   "query": "AE"
+  },
+  {
+   "body": "đ",
+   "query": "d"
+  },
+  {
+   "body": "ł",
+   "query": "L"
+  },
+  {
+   "body": "e",
+   "query": "é"
+  },
+  {
+   "body": "é",
+   "query": "E"
+  },
+  {
+   "body": "ǆ",
+   "query": "Ǆ"
+  },
+  {
+   "body": "ǆ",
+   "query": "ǅ"
+  },
+  {
+   "body": "ΐ",
+   "query": "Ϊ́"
+  },
+  {
+   "body": "ﬆ",
+   "query": "ST"
+  },
+  {
+   "body": "ŉ",
+   "query": "ʼN"
+  },
+  {
+   "body": "ẞ",
+   "query": "ss"
+  },
+  {
+   "body": "ß",
+   "query": "ẞ"
+  },
+  {
+   "body": "ᄀ",
+   "query": "ㄱ"
+  },
+  {
+   "body": "ㄱ",
+   "query": "ᄀ"
+  },
+  {
+   "body": "ᄀ",
+   "query": "ᄀ"
+  },
+  {
+   "body": "가",
+   "query": "가"
+  },
+  {
+   "body": "한",
+   "query": "한"
+  },
+  {
+   "body": "한글",
+   "query": "ᅡ"
+  },
+  {
+   "body": "á",
+   "query": "́"
+  },
+  {
+   "body": "a",
+   "query": "́"
+  },
+  {
+   "body": "́",
+   "query": "́"
+  },
+  {
+   "body": "🏽",
+   "query": "🏽"
+  },
+  {
+   "body": "a🏽",
+   "query": "🏽"
+  },
+  {
+   "body": "👋🏿",
+   "query": "🏿"
+  },
+  {
+   "body": "🇰🇷",
+   "query": "🇷"
+  },
+  {
+   "body": "🇰🇷",
+   "query": "🇰🇷"
+  },
+  {
+   "body": "1️⃣",
+   "query": "1"
+  },
+  {
+   "body": "1️⃣",
+   "query": "⃣"
+  },
+  {
+   "body": "é",
+   "query": "é"
+  },
+  {
+   "body": "é",
+   "query": "é"
+  },
+  {
+   "body": "Ａ",
+   "query": "a"
+  },
+  {
+   "body": "ａ",
+   "query": "A"
+  },
+  {
+   "body": "ｱ",
+   "query": "ア"
+  },
+  {
+   "body": "アｱ",
+   "query": "ｱ"
+  },
+  {
+   "body": "ｳﾞ",
+   "query": "ヴ"
+  },
+  {
+   "body": "ヴ",
+   "query": "ウ゛"
+  },
+  {
+   "body": "ｱ",
+   "query": "ｱ"
+  },
+  {
+   "body": "ｶﾞ",
+   "query": "ｶ"
+  },
+  {
+   "body": "ガ",
+   "query": "ｶﾞ"
+  },
+  {
+   "body": "a‍b",
+   "query": "‍"
+  },
+  {
+   "body": "a‍b",
+   "query": "‍b"
+  },
+  {
+   "body": "a‍b",
+   "query": "a‍"
+  },
+  {
+   "body": "👩‍👩",
+   "query": "👩‍"
+  },
+  {
+   "body": "👩‍👩",
+   "query": "‍👩"
+  },
+  {
+   "body": "a‌b",
+   "query": "‌"
+  },
+  {
+   "body": "a​b",
+   "query": "​"
+  },
+  {
+   "body": "a­b",
+   "query": "­"
+  },
+  {
+   "body": "a️",
+   "query": "️"
+  },
+  {
+   "body": "a️b",
+   "query": "a"
+  },
+  {
+   "body": "a⃣",
+   "query": "a"
+  },
+  {
+   "body": "a⃣",
+   "query": "⃣"
+  },
+  {
+   "body": "á",
+   "query": "a"
+  },
+  {
+   "body": "á̂",
+   "query": "̂"
+  },
+  {
+   "body": "á̂",
+   "query": "́"
+  },
+  {
+   "body": "각",
+   "query": "ᆨ"
+  },
+  {
+   "body": "가",
+   "query": "ᅡ"
+  },
+  {
+   "body": "⑩",
+   "query": "1"
+  },
+  {
+   "body": "⑩",
+   "query": "10"
+  },
+  {
+   "body": "⒈",
+   "query": "1"
+  },
+  {
+   "body": "⓵",
+   "query": "1"
+  },
+  {
+   "body": "❶",
+   "query": "1"
+  },
+  {
+   "body": "½",
+   "query": "1"
+  },
+  {
+   "body": "¹",
+   "query": "1"
+  },
+  {
+   "body": "₂",
+   "query": "2"
+  },
+  {
+   "body": "①",
+   "query": "１"
+  },
+  {
+   "body": "Ⅻ",
+   "query": "12"
+  },
+  {
+   "body": "三",
+   "query": "3"
+  },
+  {
+   "body": "٣",
+   "query": "٣"
+  },
+  {
+   "body": "٣",
+   "query": "３"
+  },
+  {
+   "body": "३",
+   "query": "٣"
+  },
+  {
+   "body": "①",
+   "query": "2"
+  },
+  {
+   "body": "⑨",
+   "query": "9"
+  },
+  {
+   "body": "⓪",
+   "query": "0"
+  },
+  {
+   "body": "０",
+   "query": "0"
+  },
+  {
+   "body": "0",
+   "query": "０"
+  },
+  {
+   "body": "৩",
+   "query": "3"
+  },
+  {
+   "body": "๓",
+   "query": "3"
+  },
+  {
+   "body": "௩",
+   "query": "3"
+  },
+  {
+   "body": "𝟑",
+   "query": "3"
+  },
+  {
+   "body": "𝟑",
+   "query": "３"
+  },
+  {
+   "body": "⁰",
+   "query": "0"
+  },
+  {
+   "body": "⑴",
+   "query": "1"
+  },
+  {
+   "body": "🄀",
+   "query": "0"
+  },
+  {
+   "body": "❷",
+   "query": "2"
+  },
+  {
+   "body": "➀",
+   "query": "1"
+  },
+  {
+   "body": "㊀",
+   "query": "1"
+  },
+  {
+   "body": "㈠",
+   "query": "1"
+  },
+  {
+   "body": "ⅰ",
+   "query": "I"
+  },
+  {
+   "body": "ℓ",
+   "query": "l"
+  },
+  {
+   "body": "№",
+   "query": "no"
+  },
+  {
+   "body": "™",
+   "query": "tm"
+  },
+  {
+   "body": "ǈ",
+   "query": "lj"
+  },
+  {
+   "body": "Ǉ",
+   "query": "ǈ"
+  },
+  {
+   "body": "ᵃ",
+   "query": "a"
+  },
+  {
+   "body": "ª",
+   "query": "a"
+  },
+  {
+   "body": "ﬀ",
+   "query": "ff"
+  },
+  {
+   "body": "ﬅ",
+   "query": "ſt"
+  },
+  {
+   "body": "ſ",
+   "query": "S"
+  },
+  {
+   "body": "K",
+   "query": "k"
+  },
+  {
+   "body": "Å",
+   "query": "å"
+  },
+  {
+   "body": "Ω",
+   "query": "ω"
+  },
+  {
+   "body": "ᾳ",
+   "query": "Αι"
+  },
+  {
+   "body": "ᾼ",
+   "query": "ᾳ"
+  },
+  {
+   "body": "ΰ",
+   "query": "Ϋ́"
+  },
+  {
+   "body": "ǰ",
+   "query": "J̌"
+  },
+  {
+   "body": "ẖ",
+   "query": "H̱"
+  },
+  {
+   "body": "ß",
+   "query": "SS "
+  },
+  {
+   "body": "ﬁ ",
+   "query": "FI"
+  },
+  {
+   "body": "#️⃣",
+   "query": "#"
+  },
+  {
+   "body": "a1️⃣",
+   "query": "1"
+  },
+  {
+   "body": "1️⃣",
+   "query": "1️⃣"
+  },
+  {
+   "body": "🔢1️⃣2️⃣",
+   "query": "2"
+  },
+  {
+   "body": "*️⃣",
+   "query": "*"
+  },
+  {
+   "body": "a️",
+   "query": "a"
+  },
+  {
+   "body": "①②",
+   "query": "②"
+  },
+  {
+   "body": "①②",
+   "query": "①"
+  },
+  {
+   "body": "⑩",
+   "query": "⑩"
+  },
+  {
+   "body": "＄",
+   "query": "$"
+  },
+  {
+   "body": "Ａ１",
+   "query": "a1"
+  },
+  {
+   "body": "ｚ",
+   "query": "Z"
+  },
+  {
+   "body": "ǅ",
+   "query": "ǆ"
+  },
+  {
+   "body": "İ",
+   "query": "i̇"
+  },
+  {
+   "body": "ß",
+   "query": "ß"
+  },
+  {
+   "body": "ǈ",
+   "query": "ǉ"
+  },
+  {
+   "body": "한글",
+   "query": "ㅎ"
+  },
+  {
+   "body": "뷁",
+   "query": "ᄫ"
+  },
+  {
+   "body": "한",
+   "query": "ᄒ"
+  },
+  {
+   "body": "한",
+   "query": "ᅡ"
+  },
+  {
+   "body": "한",
+   "query": "한"
+  },
+  {
+   "body": "한",
+   "query": "하"
+  },
+  {
+   "body": "하",
+   "query": "하"
+  },
+  {
+   "body": "각ᆨ",
+   "query": "각"
+  },
+  {
+   "body": "🧑‍💻",
+   "query": "💻"
+  },
+  {
+   "body": "🧑‍💻",
+   "query": "🧑"
+  },
+  {
+   "body": "👨‍👩‍👧",
+   "query": "👩‍👧"
+  },
+  {
+   "body": "🏳️‍🌈",
+   "query": "🏳"
+  },
+  {
+   "body": "🏳️‍🌈",
+   "query": "🌈"
+  },
+  {
+   "body": "ａ",
+   "query": "ｱ"
+  },
+  {
+   "body": "x²",
+   "query": "x2"
+  },
+  {
+   "body": "²",
+   "query": "2"
+  },
+  {
+   "body": "³",
+   "query": "3"
+  },
+  {
+   "body": "x₂",
+   "query": "x2"
+  },
+  {
+   "body": "x¹",
+   "query": "x1"
+  },
+  {
+   "body": "a１",
+   "query": "a1"
+  },
+  {
+   "body": "１a",
+   "query": "1a"
+  },
+  {
+   "body": "1́",
+   "query": "1"
+  },
+  {
+   "body": "1̂",
+   "query": "1"
+  },
+  {
+   "body": "a1́",
+   "query": "a1"
+  },
+  {
+   "body": "12́",
+   "query": "1"
+  },
+  {
+   "body": "하",
+   "query": "ᅡ"
+  },
+  {
+   "body": "하",
+   "query": "ᄒ"
+  },
+  {
+   "body": "ᄒ",
+   "query": "ᄒ"
+  },
+  {
+   "body": "각",
+   "query": "각"
+  },
+  {
+   "body": "각",
+   "query": "각"
+  },
+  {
+   "body": "ß",
+   "query": "s"
+  },
+  {
+   "body": "ß",
+   "query": "ss"
+  },
+  {
+   "body": "ssß",
+   "query": "sß"
+  },
+  {
+   "body": "ﬃ",
+   "query": "ffi"
+  },
+  {
+   "body": "ﬃ",
+   "query": "f"
+  },
+  {
+   "body": "⑩",
+   "query": "10"
+  },
+  {
+   "body": "⑪",
+   "query": "11"
+  },
+  {
+   "body": "⑳",
+   "query": "20"
+  },
+  {
+   "body": "⑩",
+   "query": "⑩"
+  },
+  {
+   "body": "⒑",
+   "query": "10"
+  },
+  {
+   "body": "1",
+   "query": "⑩"
+  },
+  {
+   "body": "a⑩",
+   "query": "a10"
+  },
+  {
+   "body": "a⑩",
+   "query": "a1"
+  },
+  {
+   "body": "ﬁ",
+   "query": "f"
+  },
+  {
+   "body": "ﬁ",
+   "query": "i"
+  },
+  {
+   "body": "Ǆ",
+   "query": "d"
+  },
+  {
+   "body": "ǆ",
+   "query": "dž"
+  },
+  {
+   "body": "ǆ",
+   "query": "dz"
+  },
+  {
+   "body": "Å",
+   "query": "a"
+  },
+  {
+   "body": "Å",
+   "query": "å"
+  },
+  {
+   "body": "ŉ",
+   "query": "n"
+  },
+  {
+   "body": "ŉ",
+   "query": "ʼ"
+  },
+  {
+   "body": " １",
+   "query": " 1"
+  },
+  {
+   "body": "-１",
+   "query": "-1"
+  },
+  {
+   "body": "(１)",
+   "query": "(1)"
+  },
+  {
+   "body": "가１",
+   "query": "가1"
+  },
+  {
+   "body": "_１",
+   "query": "_1"
+  },
+  {
+   "body": "a１",
+   "query": "１"
+  },
+  {
+   "body": "１",
+   "query": "a１"
+  },
+  {
+   "body": "1",
+   "query": "１"
+  },
+  {
+   "body": "x１２",
+   "query": "x12"
+  },
+  {
+   "body": "１２x",
+   "query": "12x"
+  },
+  {
+   "body": "３.１４",
+   "query": "3.14"
+  },
+  {
+   "body": "a1",
+   "query": "a１"
+  },
+  {
+   "body": "v２",
+   "query": "v2"
+  },
+  {
+   "body": "한글２",
+   "query": "글2"
+  },
+  {
+   "body": "1́",
+   "query": "１"
+  },
+  {
+   "body": "가나다",
+   "query": "가나ᅡ"
+  },
+  {
+   "body": "각",
+   "query": "각ᆨ"
+  },
+  {
+   "body": "한ᆫ",
+   "query": "한"
+  },
+  {
+   "body": "ᄀᄀ",
+   "query": "ᄀ"
+  },
+  {
+   "body": "ᆨᆨ",
+   "query": "ᆨ"
+  },
+  {
+   "body": "ᆨ",
+   "query": "ᆨᆨ"
+  },
+  {
+   "body": "Ａ１",
+   "query": "Ａ"
+  },
+  {
+   "body": "１Ａ",
+   "query": "１"
+  },
+  {
+   "body": "ǅ１",
+   "query": "ǆ1"
+  },
+  {
+   "body": "ẹ́",
+   "query": "ẹ́"
+  },
+  {
+   "body": "̣́",
+   "query": "̣́"
+  },
+  {
+   "body": "ạ́b",
+   "query": "́b"
+  },
+  {
+   "body": "Ａ",
+   "query": "Ａ"
+  },
+  {
+   "body": "ｱｲｳ",
+   "query": "ｲ"
+  },
+  {
+   "body": "ｶﾞ",
+   "query": "ﾞ"
+  },
+  {
+   "body": "ガ",
+   "query": "゙"
+  },
+  {
+   "body": "ガ",
+   "query": "ガ"
+  },
+  {
+   "body": "가゙",
+   "query": "가"
+  },
+  {
+   "body": "1",
+   "query": "1́"
+  },
+  {
+   "body": "1́",
+   "query": "1̂"
+  },
+  {
+   "body": "12",
+   "query": "1́"
+  },
+  {
+   "body": "1",
+   "query": "1️"
+  },
+  {
+   "body": "1️",
+   "query": "1"
+  },
+  {
+   "body": "a1",
+   "query": "1́"
+  },
+  {
+   "body": "1x",
+   "query": "1⃣x"
+  },
+  {
+   "body": "1́x",
+   "query": "1x"
+  },
+  {
+   "body": "1x",
+   "query": "1́x"
+  },
+  {
+   "body": "1",
+   "query": "1‍"
+  },
+  {
+   "body": "x1",
+   "query": "1́"
+  },
+  {
+   "body": "x1",
+   "query": "1️⃣"
+  },
+  {
+   "body": "2́",
+   "query": "1"
+  },
+  {
+   "body": "a",
+   "query": "1️⃣"
+  },
+  {
+   "body": "1️⃣",
+   "query": "1️⃣"
+  },
+  {
+   "body": "🙂10",
+   "query": "1️⃣"
+  },
+  {
+   "body": "10",
+   "query": "1️"
+  },
+  {
+   "body": "e",
+   "query": "é"
+  },
+  {
+   "body": "é",
+   "query": "e"
+  },
+  {
+   "body": "3é",
+   "query": "3e"
+  },
+  {
+   "body": "3x",
+   "query": "3́x"
+  },
+  {
+   "body": "３",
+   "query": "1́"
+  },
+  {
+   "body": "１",
+   "query": "１́"
+  },
+  {
+   "body": "5",
+   "query": "５⃣"
+  },
+  {
+   "body": "55",
+   "query": "5⃣"
+  },
+  {
+   "body": "a5",
+   "query": "5⃣"
+  },
+  {
+   "body": "#",
+   "query": "#️⃣"
+  },
+  {
+   "body": "#x",
+   "query": "#́"
+  },
+  {
+   "body": "5",
+   "query": "⃣"
+  },
+  {
+   "body": "á",
+   "query": "́"
+  },
+  {
+   "body": "‍",
+   "query": "‍"
+  },
+  {
+   "body": "a‍",
+   "query": "‍"
+  },
+  {
+   "body": "‍a",
+   "query": "‍"
+  },
+  {
+   "body": "a‍",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍",
+   "query": "a"
+  },
+  {
+   "body": "‍",
+   "query": ""
+  },
+  {
+   "body": "１́",
+   "query": "１"
+  },
+  {
+   "body": "①́",
+   "query": "①"
+  },
+  {
+   "body": "①́",
+   "query": "1"
+  },
+  {
+   "body": "⑩́",
+   "query": "⑩"
+  },
+  {
+   "body": "⑩́",
+   "query": "10"
+  },
+  {
+   "body": "⑩́",
+   "query": "1"
+  },
+  {
+   "body": "⑩",
+   "query": "⑩́"
+  },
+  {
+   "body": "10́",
+   "query": "10"
+  },
+  {
+   "body": "1́",
+   "query": "⑩"
+  },
+  {
+   "body": "⑩x",
+   "query": "⑩"
+  },
+  {
+   "body": "⑩́x",
+   "query": "⑩x"
+  },
+  {
+   "body": "²́",
+   "query": "2"
+  },
+  {
+   "body": "٣́",
+   "query": "3"
+  },
+  {
+   "body": "٣́",
+   "query": "٣"
+  },
+  {
+   "body": "a‍ b",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍\tb",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍\nb",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍ b",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍.b",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍　b",
+   "query": "a‍"
+  },
+  {
+   "body": "①‍‍\t",
+   "query": "①‍‍"
+  },
+  {
+   "body": "ᅡ‍",
+   "query": "ᅡ"
+  },
+  {
+   "body": "ᅡ‍ア",
+   "query": "ᅡ"
+  },
+  {
+   "body": "ᄒ‍",
+   "query": "ᄒ"
+  },
+  {
+   "body": "ᅡ-",
+   "query": "ᅡ"
+  },
+  {
+   "body": "ᅡア",
+   "query": "ᅡ"
+  },
+  {
+   "body": "ᅡa",
+   "query": "ᅡ"
+  },
+  {
+   "body": "가‍ア",
+   "query": "가"
+  },
+  {
+   "body": "ᆫ‍ア",
+   "query": "ᆫ"
+  },
+  {
+   "body": "a‍ア",
+   "query": "a"
+  },
+  {
+   "body": "a‍😀",
+   "query": "a"
+  },
+  {
+   "body": "a‍1",
+   "query": "a"
+  },
+  {
+   "body": "a‍٣",
+   "query": "a"
+  },
+  {
+   "body": "a‍한",
+   "query": "a"
+  },
+  {
+   "body": "a‍$",
+   "query": "a"
+  },
+  {
+   "body": "a‍→",
+   "query": "a"
+  },
+  {
+   "body": "a‍😀",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍1",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍한",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍→",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍(",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍·",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍。",
+   "query": "a‍"
+  },
+  {
+   "body": "a‍́",
+   "query": "a‍"
+  },
+  {
+   "body": "1 é",
+   "query": "e"
+  },
+  {
+   "body": "1 é",
+   "query": "é"
+  },
+  {
+   "body": "x 1́",
+   "query": "1"
+  },
+  {
+   "body": "x 1́ y",
+   "query": "1 y"
+  },
+  {
+   "body": "a 1́",
+   "query": "a 1"
+  },
+  {
+   "body": "a 1́",
+   "query": "a 1́"
+  },
+  {
+   "body": "é 1",
+   "query": "e 1"
+  },
+  {
+   "body": "1é",
+   "query": "1e"
+  },
+  {
+   "body": "1 é",
+   "query": "1 e"
+  },
+  {
+   "body": "1x é",
+   "query": "e"
+  },
+  {
+   "body": "®1́",
+   "query": "®1"
+  },
+  {
+   "body": "®1́",
+   "query": "1"
+  },
+  {
+   "body": "a™1́",
+   "query": "™1"
+  },
+  {
+   "body": "a™1́",
+   "query": "a™1"
+  },
+  {
+   "body": "\n1́",
+   "query": "\n1"
+  },
+  {
+   "body": "-1́",
+   "query": "-1"
+  },
+  {
+   "body": "-1́",
+   "query": "1"
+  },
+  {
+   "body": "a\n1x́",
+   "query": "\n1x"
+  },
+  {
+   "body": "1ab́",
+   "query": "ab"
+  },
+  {
+   "body": "1ab́",
+   "query": "1ab"
+  },
+  {
+   "body": "1 á",
+   "query": "1 a"
+  },
+  {
+   "body": "1  á",
+   "query": "a"
+  },
+  {
+   "body": "a1 b́",
+   "query": "a1 b"
+  },
+  {
+   "body": "2 3́",
+   "query": "2 3"
+  },
+  {
+   "body": "2 3́",
+   "query": "2 3́"
+  },
+  {
+   "body": "1",
+   "query": "①"
+  },
+  {
+   "body": "10",
+   "query": "⑩"
+  },
+  {
+   "body": "1",
+   "query": "¹"
+  },
+  {
+   "body": "2",
+   "query": "₂"
+  },
+  {
+   "body": "1",
+   "query": "❶"
+  },
+  {
+   "body": "1",
+   "query": "𝟏"
+  },
+  {
+   "body": "3",
+   "query": "٣"
+  },
+  {
+   "body": "3",
+   "query": "３"
+  },
+  {
+   "body": "1",
+   "query": "⓵"
+  },
+  {
+   "body": "0",
+   "query": "⓪"
+  },
+  {
+   "body": "x1",
+   "query": "①"
+  },
+  {
+   "body": "x1",
+   "query": "１"
+  },
+  {
+   "body": "10x",
+   "query": "⑩"
+  },
+  {
+   "body": "1‍",
+   "query": "‍1"
+  },
+  {
+   "body": "a‍1",
+   "query": "‍1"
+  },
+  {
+   "body": "1",
+   "query": "‍1"
+  }
+ ]
+}

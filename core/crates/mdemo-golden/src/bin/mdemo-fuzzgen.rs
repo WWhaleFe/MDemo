@@ -115,8 +115,51 @@ fn run() -> Result<(), Box<dyn Error>> {
         .collect();
     fs::write(root.join("groups.json"), serde_json::to_vec(&groups)?)?;
     board_calculations(root, &mut r)?;
+    search_cases(root, count, &mut r)?;
     Ok(())
 }
+/// 본문 검색 일치 비교용 무작위 (본문, 검색어) 쌍. 결합 문자 · 한글 자모 · 대소문자 접기 · 숫자 · 이모지 조각을 섞는다.
+fn search_cases(root: &Path, count: usize, r: &mut Random) -> Result<(), Box<dyn Error>> {
+    const POOL: &[&str] = &[
+        "a", "B", "x", "é", "e\u{301}", "É", "\u{323}", "\u{301}", "한", "ᄒ", "ᅡ", "ᆫ", "각", "ᆨ", "ß", "SS", "ss", "ẞ",
+        "ﬁ", "fi", "ﬃ", "İ", "ı", "i", "I", "Σ", "σ", "ς", "ǅ", "ǆ", "\u{212a}", "\u{212b}", "ᾳ", "\u{345}", "Α", "ι",
+        "１", "1", "²", "①", "⑩", "10", "٣", "3", "⒈", "Ａ", "ａ", "ｱ", "ア", "ｶﾞ", "ガ", "\u{3099}", "👩", "\u{200d}",
+        "👦", "🏽", "👋", "🇰", "🇷", "1\u{fe0f}\u{20e3}", "#", "\u{fe0f}", " ", "\t", "\n", "\u{a0}", "\u{3000}", "\u{200b}",
+        "-", "(", ")", "日", "本", "😀", "™", "ℓ", "Ⅳ", "½",
+    ];
+    let mut cases = Vec::new();
+    for _ in 0..count {
+        let mut body = String::new();
+        for _ in 0..r.next() % 10 + 1 {
+            body.push_str(r.pick(POOL));
+        }
+        let chars: Vec<char> = body.chars().collect();
+        let mut query: String = match r.next() % 4 {
+            0 | 1 => {
+                let start = r.next() as usize % chars.len();
+                let len = r.next() as usize % (chars.len() - start) + 1;
+                chars[start..start + len].iter().collect()
+            }
+            2 => (0..r.next() % 3 + 1).map(|_| r.pick(POOL)).collect(),
+            _ => {
+                let start = r.next() as usize % chars.len();
+                let len = r.next() as usize % (chars.len() - start) + 1;
+                let part: String = chars[start..start + len].iter().collect();
+                if r.next() % 2 == 0 { part.to_uppercase() } else { part.to_lowercase() }
+            }
+        };
+        match r.next() % 8 {
+            0 => query = format!(" {query}"),
+            1 => query = format!("{query}\n"),
+            2 => query.clear(),
+            _ => {}
+        }
+        cases.push(json!({"body": body, "query": query}));
+    }
+    fs::write(root.join("search-cases.json"), serde_json::to_vec(&json!({ "cases": cases }))?)?;
+    Ok(())
+}
+
 /// v0.14 · v0.15 보드 계산용 무작위 입력: 재정렬 · 관계(ids · edges), 길찾기(routingCases), 엇갈림(crossingPaths).
 fn board_calculations(root: &Path, r: &mut Random) -> Result<(), Box<dyn Error>> {
     const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";

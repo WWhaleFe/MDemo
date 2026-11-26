@@ -1,4 +1,6 @@
 use mdemo_core::{board_layout::BoardLayout, device_state, frontmatter, groups, json, ledger};
+mod scenario;
+mod search_cases;
 use std::{env, error::Error, fs, path::Path};
 fn run(input: &Path, output: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(output.join("memos"))?;
@@ -31,12 +33,27 @@ fn run(input: &Path, output: &Path) -> Result<(), Box<dyn Error>> {
     let calc = input.join("board-calculations.json");
     fs::write(output.join("board-calculations.json"), mdemo_core::board::golden::board_calculations(&calc)?)?;
     fs::write(output.join("relations.json"), mdemo_core::board::golden::relations(&calc)?)?;
+    // 본문 검색 일치(입력에 search-cases.json이 있을 때). 저장소 시험은 따로 둔 폴더에서 한다.
+    let cases = input.join("search-cases.json");
+    if cases.exists() {
+        let root = output.join(".search-root");
+        let text = search_cases::run(&cases, &root)?;
+        fs::remove_dir_all(&root)?;
+        fs::write(output.join("search-results.json"), text)?;
+    }
     Ok(())
 }
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.len() == 4 && args[1] == "scenario" {
+        if let Err(e) = scenario::run(Path::new(&args[2]), Path::new(&args[3])) {
+            eprintln!("시나리오 실패: {e}");
+            std::process::exit(1)
+        }
+        return;
+    }
     if args.len() != 3 {
-        eprintln!("사용법: mdemo-golden <입력> <출력>");
+        eprintln!("사용법: mdemo-golden <입력> <출력> | mdemo-golden scenario <시나리오.json> <데이터 폴더>");
         std::process::exit(2)
     }
     if let Err(e) = run(Path::new(&args[1]), Path::new(&args[2])) {

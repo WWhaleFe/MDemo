@@ -14,6 +14,8 @@ public struct FileMemoRepository: MemoRepository {
     public let rootDirectory: URL
     /// 시험용: 실제 원자적 기록 직전의 바이트를 검사하거나 쓰기 실패를 주입한다.
     public var beforeMemoWrite: (@Sendable (URL, Data) throws -> Void)?
+    /// 시험 · 시나리오 전용: 현재 시각 공급원. 앱은 기본값(`Date()`)을 그대로 쓴다.
+    public var clock: @Sendable () -> Date = { Date() }
 
     private static let memoFileName = "memo.md"
     private static let memosFolder = "memos"
@@ -198,7 +200,7 @@ public struct FileMemoRepository: MemoRepository {
         // 버린 시각은 폴더의 수정 시각으로 기록한다 (TRS-03).
         // 폴더를 옮기기만 하면 수정 시각은 마지막으로 고친 때 그대로라,
         // 오래 묵은 메모를 버리면 다음 자동 비우기에서 곧바로 지워졌다.
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
+        try? FileManager.default.setAttributes([.modificationDate: clock()], ofItemAtPath: destination.path)
     }
 
     private func trashDirectory(for id: MemoID) -> URL {
@@ -277,7 +279,7 @@ public struct FileMemoRepository: MemoRepository {
                     ? (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
                     : nil
                 document.meta.links.removeAll { $0.to == id }
-                document.meta.modified = Date()
+                document.meta.modified = clock()
                 try Data(FrontmatterCodec.encode(document).utf8).write(to: url, options: .atomic)
                 // 연결 정리로 휴지통 보관 기간이 다시 시작되지 않게 한다 (TRS-03).
                 if let deletedAt {
@@ -299,7 +301,7 @@ public struct FileMemoRepository: MemoRepository {
             guard MemoID(rawValue: entry.lastPathComponent).isValid else { continue }
             if let date {
                 let deletedAt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? Date()
+                    .contentModificationDate ?? clock()
                 guard deletedAt < date else { continue }
             }
             try? permanentlyDelete(id: MemoID(rawValue: entry.lastPathComponent))
