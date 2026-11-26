@@ -1,9 +1,10 @@
 name: Rust 핵심 테스트
 on:
+  workflow_dispatch:
   push:
-    paths: ['core/**', '.github/workflows/core.yml']
+    paths: ['core/**', 'golden/**', '.gitattributes', '.github/workflows/core.yml']
   pull_request:
-    paths: ['core/**', '.github/workflows/core.yml']
+    paths: ['core/**', 'golden/**', '.gitattributes', '.github/workflows/core.yml']
 jobs:
   test:
     strategy:
