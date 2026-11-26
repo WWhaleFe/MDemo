@@ -2,7 +2,7 @@
 //!
 //! 폴더 구조와 파일 이름, 쓰기 순서, 조용히 넘기는 오류까지 Swift 구현을 그대로 따른다.
 //! 시각과 ID는 `Clock` / `IdSource`로 주입해 시험과 시나리오가 고정값을 쓴다.
-//! 잠긴 메모의 저장 · 영구 삭제(암호, 열쇠, 안전 삭제)는 P4 몫이라 `StoreError::NeedsP4`만 돌려준다.
+//! 잠긴 메모의 흐름(암호, 열쇠, 안전 삭제)은 P4에서 옮겼다(`lock_flow`, `secure_delete`, `mdemo-crypto`).
 
 use crate::{id::MemoID, meta::MemoDate};
 use std::{
@@ -18,11 +18,15 @@ pub mod attachments;
 pub mod b64;
 pub mod device_store;
 mod digits;
+mod lock_flow;
 pub mod memo_store;
 pub mod repository;
 pub mod search;
+pub mod secure_delete;
 pub mod summary;
 
+#[cfg(test)]
+mod lock_tests;
 #[cfg(test)]
 mod tests;
 
@@ -43,8 +47,18 @@ pub enum StoreError {
     Damaged,
     /// 잠긴 메모를 형식에 맞지 않게 저장하려 했다 (Swift `MemoLockError.locked`).
     Locked,
-    /// 암호 · 열쇠가 필요한 일. P4에서 처리한다.
-    NeedsP4(&'static str),
+    /// 암호 형식이 맞지 않는 새 암호 (Swift `MemoLockError.invalidPassword`).
+    InvalidPassword,
+    /// 열쇠 저장소에 열쇠가 없다 (Swift `MemoLockError.missingKey`).
+    MissingKey,
+    /// 암호가 맞지 않는다 (Swift `MemoLockError.wrongPassword`).
+    WrongPassword,
+    /// 열쇠 저장소나 난수 생성 실패 (Swift `MemoLockError.keychain`).
+    KeyStore(String),
+    /// AES-GCM 태그 불일치. Swift에서는 `MemoLockError`가 아닌 `CryptoKitError.authenticationFailure`로 올라온다.
+    Authentication,
+    /// 암호문이 너무 짧다 (Swift `CryptoKitError.incorrectParameterSize`).
+    IncorrectSize,
     /// 첨부 이름이 폴더 밖을 가리키는 등 쓸 수 없다.
     BadName(String),
     Other(String),
@@ -58,7 +72,12 @@ impl fmt::Display for StoreError {
             Self::Destroyed => f.write_str("파기된 메모"),
             Self::Damaged => f.write_str("손상된 메모"),
             Self::Locked => f.write_str("잠긴 메모"),
-            Self::NeedsP4(s) => write!(f, "P4(암호)에서 처리: {s}"),
+            Self::InvalidPassword => f.write_str("4~6자, 영문 대소문자와 숫자"),
+            Self::MissingKey => f.write_str("열쇠가 없어 열 수 없는 잠긴 메모"),
+            Self::WrongPassword => f.write_str("암호가 맞지 않습니다"),
+            Self::KeyStore(s) => write!(f, "열쇠 저장소 오류: {s}"),
+            Self::Authentication => f.write_str("인증 실패"),
+            Self::IncorrectSize => f.write_str("암호문 길이 오류"),
             Self::BadName(s) => write!(f, "쓸 수 없는 이름: {s}"),
             Self::Other(s) => f.write_str(s),
         }
@@ -68,6 +87,22 @@ impl std::error::Error for StoreError {}
 impl From<io::Error> for StoreError {
     fn from(e: io::Error) -> Self {
         Self::Io(e)
+    }
+}
+impl From<mdemo_crypto::LockError> for StoreError {
+    fn from(e: mdemo_crypto::LockError) -> Self {
+        use mdemo_crypto::LockError as L;
+        match e {
+            L::InvalidPassword => Self::InvalidPassword,
+            L::MissingKey => Self::MissingKey,
+            L::WrongPassword => Self::WrongPassword,
+            L::Damaged => Self::Damaged,
+            L::Locked => Self::Locked,
+            L::Destroyed => Self::Destroyed,
+            L::KeyStore(s) => Self::KeyStore(s),
+            L::Authentication => Self::Authentication,
+            L::IncorrectSize => Self::IncorrectSize,
+        }
     }
 }
 impl From<Box<dyn std::error::Error>> for StoreError {

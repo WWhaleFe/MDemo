@@ -1,0 +1,170 @@
+{
+  "description": "4b. 처음부터 열 번 틀리면 열 번째에 파기된다(키 유도 12회, 전체 검사에서만)",
+  "ops": [
+    {
+      "op": "create",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:00:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "saveBody",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:01:00.000Z",
+      "body": "열 번 틀림",
+      "phase": 1
+    },
+    {
+      "op": "createLocked",
+      "id": "01SC0000000000000000000002",
+      "source": "01SC0000000000000000000001",
+      "password": "Ab12",
+      "time": "2026-03-01T00:05:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "relock",
+      "id": "01SC0000000000000000000002",
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz01",
+      "expect": "wrongPassword",
+      "phase": 1
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 1,
+      "header": 1,
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz02",
+      "expect": "wrongPassword",
+      "phase": 1
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 2,
+      "header": 2,
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz03",
+      "expect": "wrongPassword",
+      "phase": 1
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 3,
+      "header": 3,
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz04",
+      "expect": "wrongPassword",
+      "phase": 1
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 4,
+      "header": 4,
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz05",
+      "expect": "wrongPassword",
+      "phase": 1
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 5,
+      "header": 5,
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz06",
+      "expect": "wrongPassword",
+      "phase": 2
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 6,
+      "header": 6,
+      "phase": 2
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz07",
+      "expect": "wrongPassword",
+      "phase": 2
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 7,
+      "header": 7,
+      "phase": 2
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz08",
+      "expect": "wrongPassword",
+      "phase": 2
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 8,
+      "header": 8,
+      "phase": 2
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz09",
+      "expect": "wrongPassword",
+      "phase": 2
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 9,
+      "header": 9,
+      "phase": 2
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz10",
+      "expect": "destroyed",
+      "phase": 2
+    },
+    {
+      "op": "assertExists",
+      "path": "memos/01SC0000000000000000000002",
+      "exists": false,
+      "phase": 2
+    }
+  ]
+}

@@ -72,7 +72,23 @@ core/target/debug/mdemo-golden scenario golden/scenarios/lifecycle.json <빈 폴
 - 시각은 ISO 8601 문자열이고 `time`이 있는 연산은 그 시각으로 시계를 옮긴다. ID는 `create`의 `id`를 쓴다. 시각과 ID는 Swift에서 `FileMemoRepository.clock`, `MemoStore.clock` · `generateID`(기본값은 실제 시각과 새 ULID라 앱 동작은 같다)로, Rust에서 `Clock` · `IdSource`로 주입한다.
 - 비교: 폴더와 파일 목록, 파일 바이트, 그리고 `trash/<ID>` 폴더와 시나리오의 `mtimeCheck`에 적은 경로의 수정 시각(밀리초). "다시 쓰지 않음"은 `touch`로 수정 시각을 과거로 돌려 두고 같은 값을 저장한 뒤 시각이 그대로인지 본다. 차이는 파일별로 출력하고 실패한다.
 - 시나리오: `lifecycle`(수명 주기), `trash-30days`(휴지통과 30일 비우기), `attachments`(첨부), `no-rewrite`(다시 쓰지 않음), `destroyed-ledger`(파기 장부), `trash-collision`(같은 ID 충돌).
-- 잠긴 메모와 파기 장부가 필요한 안전 삭제, 복제, 실제 이미지 저장은 시나리오에 없다(P4와 플랫폼 몫).
+- 복제와 실제 이미지 저장은 시나리오에 없다(플랫폼 몫). 잠긴 메모와 안전 삭제는 아래 암호 시나리오에서 다룬다.
+
+## 암호 메모 교차 시나리오 (P4)
+
+`golden/lock-scenarios/*.json`(전체 검사 전용은 `full/`)은 `scenario`와 같은 연산에 암호 연산을 더한 목록이다. 실제 `MemoStore` + 데이터 폴더 안 `keychain.json`(시험용 가짜 키체인, 실제 키체인에는 닿지 않는다)을 쓴다.
+
+```sh
+Scripts/lock-check.sh          # 빠른 시나리오 7개, make test에 포함
+Scripts/lock-check.sh full     # 열 번 틀림 포함 전체 (make lock-full)
+Scripts/golden-run-swift.sh lock golden/lock-scenarios/01-cross-open.json <빈 폴더> [--phase N]
+core/target/debug/mdemo-golden lock golden/lock-scenarios/01-cross-open.json <빈 폴더> [--phase N]
+```
+
+- 연산(추가분): `createLocked{id,source?,password,expect?}`, `unlock{id,password,expect?}`, `relock{id}`, `changePassword{id,password}`, `moveToPlain{id,newId}`, `destroy{id}`, `saveLockedBody{id,body,expect?}`(`ok`/`refused`), `loadTrash`, `setFailures{id,keychain?,header?,rawKeychain?}`, `corruptBody{id}`, `flipByte{path,offset}`, `writeFile{path,text}`, `assertBody`, `assertAttachment{id,name,bytes}`, `assertFailures{id,keychain?,header?}`, `assertExists{path,exists?}`. `expect`는 `ok`나 오류 종류(`invalidPassword` `missingKey` `wrongPassword` `damaged` `locked` `destroyed` `keyStore` `authentication` `incorrectSize` `other`)다.
+- 반복 횟수는 두 실행기 모두 200만(최소값)으로 고정한다. 암호문 · 솔트 · 감싼 열쇠는 무작위라 바이트 대신 크기만 비교하고, 상대 구현이 열 수 있는지는 `assert*` 연산이 평문을 비교해 확인한다.
+- 연산의 `phase`(기본 1)로 단계를 끊어 구현을 바꿔 가며 같은 폴더를 이어 실행한다(SS, RR, SR, RS, 3단계 이상이면 SRS, RSR). 모든 조합의 연산별 결과 기록과 정규화한 최종 상태(파일 바이트, `trash/<ID>` 폴더 시각, 잠긴 메모 폴더의 백업 제외 표시, 키체인 상태)가 같아야 통과한다.
+- 시나리오: `01-cross-open`(서로의 암호 메모 열기), `02-wrong-password`(횟수), `03-damaged`(손상), `04-tenth-failure`(10번째 파기), `05-failure-max`(max 규칙), `06-change-password-and-plain`(암호 바꾸기 · 일반 메모로 옮기기), `07-secure-delete`(영구 삭제 · 휴지통 비우기), `full/04b-ten-attempts`(처음부터 열 번).
 
 ## 본문 검색 일치 비교
 

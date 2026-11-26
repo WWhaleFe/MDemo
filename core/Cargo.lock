@@ -554,6 +554,7 @@ version = "0.16.0"
 dependencies = [
  "chrono",
  "getrandom",
+ "mdemo-crypto",
  "serde",
  "serde-value",
  "serde_json",
@@ -586,6 +587,7 @@ name = "mdemo-golden"
 version = "0.16.0"
 dependencies = [
  "mdemo-core",
+ "mdemo-crypto",
  "serde_json",
 ]
 

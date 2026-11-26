@@ -17,3 +17,15 @@ codegen-units = 1
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# 암호 크레이트는 디버그 빌드에서도 최적화한다. 반복 200만 회 키 유도가 최적화 없이는 시험이 너무 느리다.
+[profile.dev.package.mdemo-crypto]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3

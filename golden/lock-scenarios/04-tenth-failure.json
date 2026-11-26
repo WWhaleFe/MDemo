@@ -1,0 +1,65 @@
+{
+  "description": "4. 10번째 틀림은 메모 폴더 · 첨부 · 열쇠 · 실패 횟수를 지우고 파기 장부에 ID를 적는다(횟수 9를 미리 심어 시험)",
+  "ops": [
+    {
+      "op": "create",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:00:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "saveBody",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:01:00.000Z",
+      "body": "파기 시험",
+      "phase": 1
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "a.png",
+      "bytes": "AQID",
+      "phase": 1
+    },
+    {
+      "op": "createLocked",
+      "id": "01SC0000000000000000000002",
+      "source": "01SC0000000000000000000001",
+      "password": "Ab12",
+      "time": "2026-03-01T00:05:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "relock",
+      "id": "01SC0000000000000000000002",
+      "phase": 1
+    },
+    {
+      "op": "setFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 9,
+      "header": 9,
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Zz99",
+      "expect": "destroyed",
+      "phase": 2
+    },
+    {
+      "op": "assertExists",
+      "path": "memos/01SC0000000000000000000002",
+      "exists": false,
+      "phase": 2
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Ab12",
+      "expect": "destroyed",
+      "phase": 2
+    }
+  ]
+}

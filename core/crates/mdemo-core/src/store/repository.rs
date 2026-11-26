@@ -9,7 +9,7 @@
 use super::{
     atomic_write, b64, modified_time, set_modified_time,
     summary::{prefix_characters, MemoSummary, PREVIEW_CHARACTER_LIMIT},
-    visible_entries, Clock, StoreError, StoreResult,
+    secure_delete, visible_entries, Clock, StoreError, StoreResult,
 };
 use crate::{
     board_layout::BoardLayout,
@@ -17,6 +17,7 @@ use crate::{
     groups, id::MemoID, json, ledger,
     meta::MemoDate,
 };
+use mdemo_crypto::{KeyStore, MemoryKeyStore};
 use std::{
     collections::BTreeSet,
     fs,
@@ -34,15 +35,25 @@ const PREVIEW_READ_LIMIT: usize = 8 * 1024;
 pub struct FileMemoRepository {
     root: PathBuf,
     clock: Arc<dyn Clock>,
+    keys: Arc<dyn KeyStore>,
 }
 
 impl FileMemoRepository {
-    /// `memos`와 `trash` 폴더를 만든다.
+    /// `memos`와 `trash` 폴더를 만든다. 열쇠 저장소는 빈 메모리 구현이다(시험 · 시나리오용).
+    /// 실제 앱은 `with_keys`로 키체인 어댑터를 넘긴다(P7).
     pub fn new(root: impl Into<PathBuf>, clock: Arc<dyn Clock>) -> StoreResult<Self> {
+        Self::with_keys(root, clock, Arc::new(MemoryKeyStore::default()))
+    }
+
+    pub fn with_keys(root: impl Into<PathBuf>, clock: Arc<dyn Clock>, keys: Arc<dyn KeyStore>) -> StoreResult<Self> {
         let root = root.into();
         fs::create_dir_all(root.join(MEMOS_FOLDER))?;
         fs::create_dir_all(root.join(TRASH_FOLDER))?;
-        Ok(Self { root, clock })
+        Ok(Self { root, clock, keys })
+    }
+
+    pub fn key_store(&self) -> &Arc<dyn KeyStore> {
+        &self.keys
     }
 
     pub fn root(&self) -> &Path {
@@ -137,8 +148,8 @@ impl FileMemoRepository {
             if !sealed {
                 return Err(StoreError::Locked);
             }
-            // 백업 제외 표시와 암호문 쓰기는 P4에서 한다.
-            return Err(StoreError::NeedsP4("잠긴 메모 저장"));
+            // 잠긴 메모 폴더는 백업에서 뺀다. 실패하면 저장도 실패한다(Swift `setResourceValues`의 `try`).
+            exclude_from_backup(&directory)?;
         }
         atomic_write(&self.memo_file(&document.meta.id), frontmatter::encode(document).as_bytes())?;
         Ok(())
@@ -206,15 +217,18 @@ impl FileMemoRepository {
 
     /// 일반 메모의 영구 삭제. 폴더째 지우므로 첨부도 함께 사라진다 (TRS-04, TRS-05).
     ///
-    /// Swift는 열쇠가 있거나 휴지통 파일을 읽지 못하거나 잠긴 메모이면 파기 장부 기록과
-    /// 안전 삭제로 간다. 그 길은 P4에서 옮기므로 여기서는 오류로 멈춘다(아무것도 바꾸기 전에).
+    /// 열쇠가 있거나 휴지통 파일을 읽지 못하거나 잠긴 메모이면 열쇠 삭제, 파기 장부 기록,
+    /// 안전 삭제 순서로 간다(Swift와 같다). 없는 ID도 이 길을 타서 파기 장부에 들어간다.
     pub fn permanently_delete(&self, id: &MemoID) -> StoreResult<()> {
         let target = self.trash_directory(id);
         let document = fs::read_to_string(target.join(MEMO_FILE_NAME))
             .ok()
             .and_then(|text| frontmatter::decode(&text).ok());
-        if document.as_ref().is_none_or(|d| d.meta.is_locked) {
-            return Err(StoreError::NeedsP4("잠긴 메모 · 읽을 수 없는 메모의 영구 삭제"));
+        let has_key = self.keys.read_key(&id.raw_value)?.is_some();
+        if has_key || document.as_ref().is_none_or(|d| d.meta.is_locked) {
+            self.keys.delete(&id.raw_value)?;
+            self.ledger_insert(id, "destroyed")?;
+            secure_delete::remove_copies(id, &self.root)?;
         }
         if target.exists() {
             fs::remove_dir_all(&target)?;
@@ -293,6 +307,38 @@ impl FileMemoRepository {
         ids.insert(id.raw_value.clone());
         Ok(ledger::write(&path, &ids)?)
     }
+}
+
+/// 맥: 폴더에 백업 제외 표시(`com.apple.metadata:com_apple_backup_excludeItem`)를 단다.
+/// Foundation의 `isExcludedFromBackup = true`가 쓰는 값(속성 목록 문자열 "com.apple.backupd")을 그대로 쓴다.
+#[cfg(target_os = "macos")]
+fn exclude_from_backup(directory: &Path) -> StoreResult<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    extern "C" {
+        fn setxattr(path: *const i8, name: *const i8, value: *const u8, size: usize, position: u32, options: i32) -> i32;
+    }
+    // bplist00 + 문자열("com.apple.backupd") + 오프셋 표 (Foundation이 쓰는 바이트와 같다)
+    const VALUE: [u8; 61] = [
+        0x62, 0x70, 0x6C, 0x69, 0x73, 0x74, 0x30, 0x30, 0x5F, 0x10, 0x11, 0x63, 0x6F, 0x6D, 0x2E, 0x61,
+        0x70, 0x70, 0x6C, 0x65, 0x2E, 0x62, 0x61, 0x63, 0x6B, 0x75, 0x70, 0x64, 0x08, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1C,
+    ];
+    let path = CString::new(directory.as_os_str().as_bytes()).map_err(|_| StoreError::Damaged)?;
+    let name = CString::new("com.apple.metadata:com_apple_backup_excludeItem").expect("속성 이름");
+    // SAFETY: 두 C 문자열은 호출이 끝날 때까지 살아 있고, 값 버퍼는 길이만큼 유효하다.
+    let status = unsafe { setxattr(path.as_ptr().cast(), name.as_ptr().cast(), VALUE.as_ptr(), VALUE.len(), 0, 0) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().into())
+    }
+}
+
+/// 그 밖의 운영체제에는 이 표시가 없다. Windows 백업 제외는 P8에서 정한다.
+#[cfg(not(target_os = "macos"))]
+fn exclude_from_backup(_directory: &Path) -> StoreResult<()> {
+    Ok(())
 }
 
 fn decode(text: &str) -> StoreResult<MemoDocument> {

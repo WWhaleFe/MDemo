@@ -184,7 +184,7 @@ fn saving_destroyed_id_fails_but_leaves_empty_folder() {
 }
 
 #[test]
-fn locked_memo_save_and_permanent_delete_are_left_to_p4() {
+fn locked_memo_save_checks_shape_and_permanent_delete_takes_the_secure_path() {
     let temp = Temp::new();
     let (repo, _) = repo(&temp);
     let mut doc = document(&id(1), "not base64", "2026-01-01T00:00:00.000Z");
@@ -193,13 +193,16 @@ fn locked_memo_save_and_permanent_delete_are_left_to_p4() {
     doc.body = b64::encode(&[7u8; 40]);
     doc.meta.lock_version = Some(1);
     doc.meta.lock_salt = Some("salt".into());
-    assert!(matches!(repo.save(&doc), Err(StoreError::NeedsP4(_))));
-    // 휴지통에 잠긴 메모(또는 읽을 수 없는 메모)가 있으면 영구 삭제는 아무것도 바꾸지 않고 멈춘다.
-    fs::create_dir_all(repo.trash_directory(&id(1))).unwrap();
-    fs::write(repo.trash_directory(&id(1)).join("memo.md"), frontmatter::encode(&doc)).unwrap();
-    assert!(matches!(repo.permanently_delete(&id(1)), Err(StoreError::NeedsP4(_))));
-    assert!(repo.trash_directory(&id(1)).exists());
-    assert!(!temp.0.join("destroyed.json").exists());
+    repo.save(&doc).unwrap();
+    assert_eq!(repo.load(&id(1)).unwrap(), doc);
+    // 잠긴 메모(또는 읽을 수 없는 메모)의 영구 삭제는 파기 장부에 적고 안전 삭제한다.
+    repo.move_to_trash(&id(1)).unwrap();
+    repo.permanently_delete(&id(1)).unwrap();
+    assert!(!repo.trash_directory(&id(1)).exists());
+    assert!(repo.destroyed().unwrap().contains(&id(1).raw_value));
+    // 없는 ID도 같은 길로 가서 장부에 들어간다 (Swift와 같다).
+    repo.permanently_delete(&id(2)).unwrap();
+    assert!(repo.destroyed().unwrap().contains(&id(2).raw_value));
 }
 
 #[test]

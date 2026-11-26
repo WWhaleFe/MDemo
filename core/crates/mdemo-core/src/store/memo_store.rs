@@ -1,12 +1,12 @@
 //! 파일에 닿는 저장 흐름 (Swift `MemoStore`에서 화면과 암호를 뺀 부분).
 //!
 //! 요약 목록과 보드 배치를 들고 있고, 저장소 호출 순서와 조용히 넘기는 오류까지 Swift와 같다.
-//! 잠긴 메모의 저장 · 영구 삭제는 P4에서 옮긴다. 복제, 흐름, 열림 상태 같은 화면 쪽 기능은
-//! 이번 범위가 아니다.
+//! 잠긴 메모의 흐름(열기 · 만들기 · 암호 바꾸기 · 파기)은 `lock_flow.rs`에 있다.
+//! 복제, 흐름, 열림 상태 같은 화면 쪽 기능은 이번 범위가 아니다.
 
 use super::{
     summary::{prefix_characters, MemoSummary, PREVIEW_CHARACTER_LIMIT},
-    Clock, FileMemoRepository, IdSource,
+    Clock, FileMemoRepository, IdSource, StoreResult,
 };
 use crate::{
     board_layout::{BoardLayout, Placement},
@@ -15,16 +15,27 @@ use crate::{
     link::{MemoLink, MemoLinkKind},
     meta::{MemoColor, MemoDate, MemoMeta},
 };
-use std::{collections::{BTreeSet, HashSet}, sync::Arc};
+use mdemo_crypto::MemoLockSession;
+use std::{collections::{BTreeSet, HashMap, HashSet}, sync::Arc};
 
 /// 휴지통 보관 하루의 길이. Swift는 달력 기준 일수(`Calendar.current`)로 빼므로
 /// 서머타임이 있는 시간대에서는 하루가 23 · 25시간일 수 있다. 여기서는 24시간으로 계산한다.
 const DAY: f64 = 86_400.;
 
+/// 새 암호 메모의 PBKDF2 반복 횟수 공급원. 시험 · 시나리오는 고정값을 쓴다.
+pub type IterationSource = Arc<dyn Fn() -> i64 + Send + Sync>;
+
 pub struct MemoStore {
-    repo: FileMemoRepository,
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdSource>,
+    pub(super) repo: FileMemoRepository,
+    pub(super) clock: Arc<dyn Clock>,
+    pub(super) ids: Arc<dyn IdSource>,
+    /// 열려 있는(잠금을 푼) 메모의 열쇠. 창을 닫거나 휴지통으로 버리면 지운다.
+    pub(super) sessions: HashMap<MemoID, Arc<MemoLockSession>>,
+    pub(super) calibrate: IterationSource,
+    /// 파기 · 영구 삭제가 끝날 때마다 부른다 (Swift `onPrivacyChange`).
+    pub on_privacy_change: Option<Box<dyn FnMut() + Send>>,
+    /// 파기 실패를 재현하는 시험용 주입 지점 (Swift `beforePrivacyRemoval`).
+    pub before_privacy_removal: Option<Box<dyn FnMut(&MemoID) -> StoreResult<()> + Send>>,
     pub summaries: Vec<MemoSummary>,
     pub groups: Vec<String>,
     pub trashed: Vec<MemoSummary>,
@@ -38,6 +49,10 @@ impl MemoStore {
             repo,
             clock,
             ids,
+            sessions: HashMap::new(),
+            calibrate: Arc::new(mdemo_crypto::calibrated_iterations),
+            on_privacy_change: None,
+            before_privacy_removal: None,
             summaries: Vec::new(),
             groups: Vec::new(),
             trashed: Vec::new(),
@@ -51,6 +66,11 @@ impl MemoStore {
 
     pub fn repository(&self) -> &FileMemoRepository {
         &self.repo
+    }
+
+    /// 시험 · 시나리오 전용: 새 암호 메모와 암호 바꾸기의 반복 횟수를 고정한다.
+    pub fn set_iteration_source(&mut self, source: IterationSource) {
+        self.calibrate = source;
     }
 
     pub fn reload_summaries(&mut self) {
@@ -103,18 +123,22 @@ impl MemoStore {
     pub fn save_body(&mut self, id: &MemoID, body: &str) -> bool {
         let Ok(mut document) = self.repo.load(id) else { return false };
         if document.meta.is_locked {
-            // 잠긴 메모는 열쇠 세션이 있어야 한다 (P4).
-            return false;
+            // 잠긴 메모는 열쇠 세션이 있어야 하고, 본문은 암호문으로만 쓴다. 같은 내용이어도 건너뛰지 않는다.
+            let Some(session) = self.sessions.get(id) else { return false };
+            let Ok(encrypted) = session.seal(body.as_bytes(), None) else { return false };
+            document.body = super::b64::encode(&encrypted);
+        } else {
+            if document.body == body {
+                return true;
+            }
+            document.body = body.into();
         }
-        if document.body == body {
-            return true;
-        }
-        document.body = body.into();
         document.meta.modified = self.clock.now();
         if self.repo.save(&document).is_err() {
             return false;
         }
-        self.update_summary(document.meta, prefix_characters(body, PREVIEW_CHARACTER_LIMIT));
+        let preview = if document.meta.is_locked { String::new() } else { prefix_characters(body, PREVIEW_CHARACTER_LIMIT) };
+        self.update_summary(document.meta, preview);
         true
     }
 
@@ -138,7 +162,7 @@ impl MemoStore {
         self.update_summary(document.meta, preview);
     }
 
-    fn update_summary(&mut self, meta: MemoMeta, preview: String) {
+    pub(super) fn update_summary(&mut self, meta: MemoMeta, preview: String) {
         let summary = MemoSummary::new(meta, preview);
         match self.summaries.iter().position(|s| s.meta.id == summary.meta.id) {
             Some(index) => self.summaries[index] = summary,
@@ -153,7 +177,7 @@ impl MemoStore {
         self.normalize_manual_order();
     }
 
-    fn normalize_manual_order(&mut self) {
+    pub(super) fn normalize_manual_order(&mut self) {
         let ids: Vec<MemoID> = self.summaries.iter().map(|s| s.meta.id.clone()).collect();
         let order = self.board_layout.normalized_order(&ids);
         if order == self.board_layout.manual_order {
@@ -198,6 +222,7 @@ impl MemoStore {
             return;
         }
         for id in ids {
+            self.relock(id);
             let _ = self.repo.move_to_trash(id);
         }
         let removed: HashSet<&MemoID> = ids.iter().collect();
@@ -217,15 +242,22 @@ impl MemoStore {
         self.reload_trash();
     }
 
-    /// 휴지통 메모를 영구 삭제한다. 잠긴 메모는 P4 전까지 지우지 못하고 건너뛴다.
+    /// 휴지통 메모를 영구 삭제한다. 잠긴 메모는 파기(열쇠 삭제 · 장부 · 안전 삭제)로 지운다.
+    /// 끝날 때(일찍 돌아와도) 개인정보 변경 알림을 부른다.
     pub fn permanently_delete(&mut self, ids: &[MemoID]) {
+        self.permanently_delete_inner(ids);
+        self.fire_privacy_change();
+    }
+
+    fn permanently_delete_inner(&mut self, ids: &[MemoID]) {
         if ids.is_empty() {
             return;
         }
         let mut removed: HashSet<MemoID> = HashSet::new();
         for id in ids {
             let locked = self.trashed.iter().any(|t| t.meta.id == *id && t.meta.is_locked);
-            if locked || self.repo.permanently_delete(id).is_err() {
+            let result = if locked { self.destroy_memo(id) } else { self.repo.permanently_delete(id) };
+            if result.is_err() {
                 // 지우지 못한 메모의 연결은 복원을 위해 남긴다 (TRS-04).
                 continue;
             }
@@ -244,21 +276,33 @@ impl MemoStore {
         self.reload_trash();
     }
 
-    /// 휴지통을 전부 비운다.
+    /// 휴지통을 전부 비운다. 잠긴 항목은 먼저 파기한다(오류는 무시).
     pub fn empty_trash(&mut self) {
+        for memo in self.repo.load_trash_summaries().unwrap_or_default() {
+            if memo.meta.is_locked {
+                let _ = self.destroy_memo(&memo.meta.id);
+            }
+        }
         let _ = self.repo.empty_trash(None);
         self.reload_summaries();
         self.reload_trash();
+        self.fire_privacy_change();
     }
 
     /// 보관 기간(`days`일)이 지난 항목을 비운다 (TRS-03). `days`가 0 이하면 아무것도 하지 않는다.
     pub fn empty_trash_older_than(&mut self, days: i64, now: MemoDate) {
-        if days <= 0 {
-            return;
+        if days > 0 {
+            let cutoff = MemoDate(now.0 - days as f64 * DAY);
+            // 버린 시각을 읽지 못한 잠긴 항목은 파기하지 않는다 (Swift `distantFuture`).
+            for memo in self.repo.load_trash_summaries().unwrap_or_default() {
+                if memo.meta.is_locked && memo.deleted_at.is_some_and(|d| d < cutoff) {
+                    let _ = self.destroy_memo(&memo.meta.id);
+                }
+            }
+            let _ = self.repo.empty_trash(Some(cutoff));
+            self.reload_summaries();
+            self.reload_trash();
         }
-        let cutoff = MemoDate(now.0 - days as f64 * DAY);
-        let _ = self.repo.empty_trash(Some(cutoff));
-        self.reload_summaries();
-        self.reload_trash();
+        self.fire_privacy_change();
     }
 }

@@ -29,6 +29,8 @@ public final class MemoStore {
     /// 시험 · 시나리오 전용 주입 지점. 앱은 기본값(실제 시각 · 새 ULID)을 그대로 쓴다.
     @ObservationIgnored public var clock: @Sendable () -> Date = { MemoMeta.now() }
     @ObservationIgnored public var generateID: @Sendable () -> MemoID = { MemoID.generate() }
+    /// 시험 · 시나리오 전용: 새 암호 메모와 암호 바꾸기의 PBKDF2 반복 횟수. 앱은 기본값(기기 보정값)을 그대로 쓴다.
+    @ObservationIgnored public var calibrateIterations: @Sendable () -> Int = { LockCrypto.calibratedIterations() }
 
     public init(repository: any MemoRepository, keychain: any MemoKeychain = DeviceMemoKeychain()) {
         self.keychain = keychain
@@ -575,20 +577,20 @@ public final class MemoStore {
         let original = try source.map { try repository.load(id: $0) }
         guard original?.meta.isLocked != true else { throw MemoLockError.locked }
         var document = original ?? MemoDocument(meta: MemoMeta(id: .generate()), body: "")
-        document.meta.id = .generate()
+        document.meta.id = generateID()
         let id = document.meta.id
         // 직접 붙인 제목만 가져온다. 제목이 없는 메모의 "보이는 제목"은 본문 첫 줄이라,
         // 그것을 평문 제목으로 적으면 본문 일부가 암호 밖으로 새어 나간다.
         document.meta.title = original.flatMap { $0.meta.title?.trimmingCharacters(in: .whitespaces).isEmpty == false ? $0.meta.title : nil }
-        document.meta.created = MemoMeta.now()
-        document.meta.modified = MemoMeta.now()
+        document.meta.created = clock()
+        document.meta.modified = clock()
         document.meta.links = []
         document.meta.conflictOf = nil
         document.unknownLinkTokens = []
         document.meta.isLocked = true
         document.meta.isOpen = true
         document.meta.lockSalt = try LockCrypto.random(count: 16).base64EncodedString()
-        document.meta.lockIterations = LockCrypto.calibratedIterations()
+        document.meta.lockIterations = calibrateIterations()
         document.meta.lockVersion = 1
         document.meta.lockFailures = 0
         let salt = Data(base64Encoded: document.meta.lockSalt!)!
@@ -673,7 +675,7 @@ public final class MemoStore {
         guard let session = lockSessions[id] else { throw MemoLockError.locked }
         guard let previous = try keychain.read(id: id) else { throw MemoLockError.missingKey }
         let salt = try LockCrypto.random(count: 16)
-        let iterations = LockCrypto.calibratedIterations()
+        let iterations = calibrateIterations()
         let wrapped = try await Task.detached(priority: .userInitiated) { try session.wrapped(password: password, salt: salt, iterations: iterations) }.value
         var document = try repository.load(id: id)
         try keychain.write(wrapped, id: id)
@@ -691,13 +693,13 @@ public final class MemoStore {
     public func moveToPlainMemo(id: MemoID) throws -> MemoID {
         var document = try decryptedDocument(id: id)
         guard document.meta.isLocked, let session = lockSessions[id] else { throw MemoLockError.locked }
-        let newID = MemoID.generate()
+        let newID = generateID()
         document.meta.id = newID
         document.meta.isLocked = false
         document.meta.lockSalt = nil; document.meta.lockIterations = nil
         document.meta.lockVersion = nil; document.meta.lockFailures = nil
         document.meta.links = []
-        document.meta.created = MemoMeta.now(); document.meta.modified = MemoMeta.now()
+        document.meta.created = clock(); document.meta.modified = clock()
         do {
             try repository.save(document)
             let to = repository.attachmentsDirectory(for: newID)

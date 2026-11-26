@@ -1,4 +1,5 @@
 use mdemo_core::{board_layout::BoardLayout, device_state, frontmatter, groups, json, ledger};
+mod lock_scenario;
 mod scenario;
 mod search_cases;
 use std::{env, error::Error, fs, path::Path};
@@ -52,8 +53,24 @@ fn main() {
         }
         return;
     }
+    // lock <시나리오.json> <데이터 폴더> [--phase N]: 암호 메모 시나리오 (P4)
+    if args.len() >= 4 && args[1] == "lock" {
+        let phase = match args.len() {
+            4 => None,
+            6 if args[4] == "--phase" => args[5].parse::<i64>().ok(),
+            _ => {
+                eprintln!("사용법: mdemo-golden lock <시나리오.json> <데이터 폴더> [--phase N]");
+                std::process::exit(2)
+            }
+        };
+        if let Err(e) = lock_scenario::run(Path::new(&args[2]), Path::new(&args[3]), phase) {
+            eprintln!("시나리오 실패: {e}");
+            std::process::exit(1)
+        }
+        return;
+    }
     if args.len() != 3 {
-        eprintln!("사용법: mdemo-golden <입력> <출력> | mdemo-golden scenario <시나리오.json> <데이터 폴더>");
+        eprintln!("사용법: mdemo-golden <입력> <출력> | mdemo-golden scenario <시나리오.json> <데이터 폴더> | mdemo-golden lock <시나리오.json> <데이터 폴더> [--phase N]");
         std::process::exit(2)
     }
     if let Err(e) = run(Path::new(&args[1]), Path::new(&args[2])) {

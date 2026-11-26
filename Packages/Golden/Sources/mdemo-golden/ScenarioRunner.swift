@@ -15,7 +15,7 @@ struct ScenarioError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-private func parseTime(_ text: String) throws -> Date {
+func parseTime(_ text: String) throws -> Date {
     for options: ISO8601DateFormatter.Options in [[.withInternetDateTime, .withFractionalSeconds], [.withInternetDateTime]] {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = options
@@ -24,22 +24,28 @@ private func parseTime(_ text: String) throws -> Date {
     throw ScenarioError("시각을 읽을 수 없음: \(text)")
 }
 
+/// 저장소 · MemoStore · 주입 시계를 묶은 실행 환경. `lock` 시나리오도 같은 연산을 재사용한다.
 @MainActor
-func runScenario(file: URL, dataDir: URL) throws {
-    guard let root = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any],
-          let ops = root["ops"] as? [[String: Any]]
-    else { throw ScenarioError("시나리오 형식 오류") }
-
+final class ScenarioContext {
     let clock = ScenarioClock()
-    let keychain = EmptyKeychain()
-    var repo = try FileMemoRepository(rootDirectory: dataDir, keychain: keychain)
-    repo.clock = { clock.now }
-    let store = MemoStore(repository: repo, keychain: keychain)
-    store.clock = { clock.now }
-    store.generateID = { clock.nextID }
-    let fm = FileManager.default
+    var repo: FileMemoRepository
+    let store: MemoStore
+    let dataDir: URL
 
-    for (index, op) in ops.enumerated() {
+    init(dataDir: URL, keychain: any MemoKeychain) throws {
+        self.dataDir = dataDir
+        let clock = self.clock
+        var repo = try FileMemoRepository(rootDirectory: dataDir, keychain: keychain)
+        repo.clock = { clock.now }
+        self.repo = repo
+        store = MemoStore(repository: repo, keychain: keychain)
+        store.clock = { clock.now }
+        store.generateID = { clock.nextID }
+    }
+
+    /// 공통 연산 하나를 수행한다. 모르는 연산이면 false.
+    func apply(_ op: [String: Any], index: Int) throws -> Bool {
+        let fm = FileManager.default
         func string(_ key: String) throws -> String {
             guard let value = op[key] as? String else { throw ScenarioError("\(index + 1)번 연산에 \(key)가 없음") }
             return value
@@ -48,7 +54,6 @@ func runScenario(file: URL, dataDir: URL) throws {
         func time(_ key: String) throws -> Date { try parseTime(string(key)) }
         let name = try string("op")
         if op["time"] is String { clock.now = try time("time") }
-
         switch name {
         case "create":
             clock.nextID = try id()
@@ -104,7 +109,21 @@ func runScenario(file: URL, dataDir: URL) throws {
         case "touch":
             try fm.setAttributes([.modificationDate: try time("time")], ofItemAtPath: dataDir.appendingPathComponent(try string("path")).path)
         default:
-            throw ScenarioError("알 수 없는 연산: \(name)")
+            return false
+        }
+        return true
+    }
+}
+
+@MainActor
+func runScenario(file: URL, dataDir: URL) throws {
+    guard let root = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any],
+          let ops = root["ops"] as? [[String: Any]]
+    else { throw ScenarioError("시나리오 형식 오류") }
+    let context = try ScenarioContext(dataDir: dataDir, keychain: EmptyKeychain())
+    for (index, op) in ops.enumerated() {
+        guard try context.apply(op, index: index) else {
+            throw ScenarioError("알 수 없는 연산: \(op["op"] as? String ?? "")")
         }
     }
 }

@@ -1,0 +1,131 @@
+{
+  "description": "3. 본문 손상(태그 불일치)은 열 때 damaged이고 횟수를 올리지 않는다. 첨부 손상은 첨부를 읽을 때 authentication(Swift에서 CryptoKit 오류가 그대로 올라옴)이며 일반 메모로 옮기기가 중단되고 새 폴더가 지워진다",
+  "ops": [
+    {
+      "op": "create",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:00:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "saveBody",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:01:00.000Z",
+      "body": "손상 시험",
+      "phase": 1
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "a.png",
+      "bytes": "AQID",
+      "phase": 1
+    },
+    {
+      "op": "createLocked",
+      "id": "01SC0000000000000000000002",
+      "source": "01SC0000000000000000000001",
+      "password": "Ab12",
+      "time": "2026-03-01T00:05:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "relock",
+      "id": "01SC0000000000000000000002",
+      "phase": 1
+    },
+    {
+      "op": "setFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 2,
+      "header": 2,
+      "phase": 1
+    },
+    {
+      "op": "corruptBody",
+      "id": "01SC0000000000000000000002",
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Ab12",
+      "expect": "damaged",
+      "phase": 2
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 2,
+      "header": 2,
+      "phase": 2
+    },
+    {
+      "op": "create",
+      "id": "01SC0000000000000000000003",
+      "time": "2026-03-01T00:20:00.000Z",
+      "phase": 2
+    },
+    {
+      "op": "saveBody",
+      "id": "01SC0000000000000000000003",
+      "time": "2026-03-01T00:21:00.000Z",
+      "body": "첨부 손상",
+      "phase": 2
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000003",
+      "name": "p.png",
+      "bytes": "AQID",
+      "phase": 2
+    },
+    {
+      "op": "createLocked",
+      "id": "01SC0000000000000000000004",
+      "source": "01SC0000000000000000000003",
+      "password": "Cd34",
+      "time": "2026-03-01T00:25:00.000Z",
+      "phase": 2
+    },
+    {
+      "op": "flipByte",
+      "path": "memos/01SC0000000000000000000004/attachments/p.png.enc",
+      "offset": 12,
+      "phase": 2
+    },
+    {
+      "op": "assertAttachment",
+      "id": "01SC0000000000000000000004",
+      "name": "p.png",
+      "bytes": "AQID",
+      "expect": "authentication",
+      "phase": 2
+    },
+    {
+      "op": "moveToPlain",
+      "id": "01SC0000000000000000000004",
+      "newId": "01SC0000000000000000000005",
+      "expect": "authentication",
+      "phase": 2
+    },
+    {
+      "op": "assertExists",
+      "path": "memos/01SC0000000000000000000005",
+      "exists": false,
+      "phase": 2
+    },
+    {
+      "op": "assertExists",
+      "path": "memos/01SC0000000000000000000004/memo.md",
+      "phase": 2
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000004",
+      "keychain": 0,
+      "header": 0,
+      "phase": 2
+    }
+  ]
+}

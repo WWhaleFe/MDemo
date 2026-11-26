@@ -47,6 +47,11 @@ if ! "$ROOT/Scripts/scenario-check.sh"; then
     FAILED=1
 fi
 
+# 암호 메모 교차 검사(빠른 시나리오). 전체는 make lock-full.
+if ! "$ROOT/Scripts/lock-check.sh" quick; then
+    FAILED=1
+fi
+
 if [ $FAILED -eq 0 ]; then
     echo "✓ 전체 테스트 통과"
 else

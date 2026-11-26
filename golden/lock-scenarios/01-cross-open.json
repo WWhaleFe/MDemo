@@ -1,0 +1,129 @@
+{
+  "description": "1. 일반 메모(본문 + 첨부 2개)를 잠그고, 다른 구현이 같은 암호로 열어 본문 · 첨부를 읽는다. 원본은 파기된다",
+  "ops": [
+    {
+      "op": "create",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:00:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "saveBody",
+      "id": "01SC0000000000000000000001",
+      "time": "2026-03-01T00:01:00.000Z",
+      "body": "비밀 본문\n둘째 줄",
+      "phase": 1
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "a.png",
+      "bytes": "AQID",
+      "phase": 1
+    },
+    {
+      "op": "addAttachment",
+      "id": "01SC0000000000000000000001",
+      "name": "b.jpg",
+      "bytes": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/",
+      "phase": 1
+    },
+    {
+      "op": "createLocked",
+      "id": "01SC0000000000000000000002",
+      "source": "01SC0000000000000000000001",
+      "password": "Ab12",
+      "time": "2026-03-01T00:05:00.000Z",
+      "phase": 1
+    },
+    {
+      "op": "assertBody",
+      "id": "01SC0000000000000000000002",
+      "body": "비밀 본문\n둘째 줄",
+      "phase": 1
+    },
+    {
+      "op": "relock",
+      "id": "01SC0000000000000000000002",
+      "phase": 1
+    },
+    {
+      "op": "assertBody",
+      "id": "01SC0000000000000000000002",
+      "body": "x",
+      "expect": "locked",
+      "phase": 1
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Ab12",
+      "time": "2026-03-01T00:06:00.000Z",
+      "phase": 2
+    },
+    {
+      "op": "assertBody",
+      "id": "01SC0000000000000000000002",
+      "body": "비밀 본문\n둘째 줄",
+      "phase": 2
+    },
+    {
+      "op": "assertAttachment",
+      "id": "01SC0000000000000000000002",
+      "name": "a.png",
+      "bytes": "AQID",
+      "phase": 2
+    },
+    {
+      "op": "assertAttachment",
+      "id": "01SC0000000000000000000002",
+      "name": "b.jpg",
+      "bytes": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/",
+      "phase": 2
+    },
+    {
+      "op": "saveLockedBody",
+      "id": "01SC0000000000000000000002",
+      "time": "2026-03-01T00:07:00.000Z",
+      "body": "고친 본문",
+      "phase": 2
+    },
+    {
+      "op": "relock",
+      "id": "01SC0000000000000000000002",
+      "phase": 2
+    },
+    {
+      "op": "saveLockedBody",
+      "id": "01SC0000000000000000000002",
+      "body": "열쇠 없음",
+      "expect": "refused",
+      "phase": 2
+    },
+    {
+      "op": "unlock",
+      "id": "01SC0000000000000000000002",
+      "password": "Ab12",
+      "phase": 3
+    },
+    {
+      "op": "assertBody",
+      "id": "01SC0000000000000000000002",
+      "body": "고친 본문",
+      "phase": 3
+    },
+    {
+      "op": "assertFailures",
+      "id": "01SC0000000000000000000002",
+      "keychain": 0,
+      "header": 0,
+      "phase": 3
+    },
+    {
+      "op": "assertExists",
+      "path": "memos/01SC0000000000000000000001",
+      "exists": false,
+      "phase": 3
+    }
+  ]
+}
