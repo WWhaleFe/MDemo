@@ -1,6 +1,6 @@
 # Swift와 Rust 비교 규약
 
-`make golden`은 `inputs/`의 고정 입력을 Swift 구현으로 처리해 `expected/`를 갱신한다. 갱신한 결과는 반드시 검토한다. `make test`는 기준을 갱신하지 않고 Swift 결과와 바이트 비교한다.
+`make golden`은 `inputs/`의 고정 입력을 Swift 구현으로 처리해 `expected/`를 갱신한다. 갱신한 결과는 반드시 검토한다. `make test`는 기준을 갱신하지 않고 Swift와 Rust 결과를 바이트 비교한다.
 
 ```sh
 make golden
@@ -8,7 +8,7 @@ Scripts/golden-check.sh swift
 Scripts/golden-check.sh rust
 ```
 
-Rust는 P1 이후에 구현한다. 현재 `rust`는 "아직 없음"을 출력하고 종료 코드 0으로 건너뛴다. 알 수 없는 구현과 잘못된 인자는 종료 코드 2로 실패한다.
+Rust 비교는 `mdemo-golden`을 오프라인 빌드한 뒤 실행한다. 메모와 보드, 그룹, 기기 상태, 두 장부는 바이트가 같아야 통과한다. 아직 옮기지 않은 보드 계산, 관계 계산, 동기화 상태 두 파일, 드라이브 상태는 `미이전: 파일명`으로 표시한다. 목록은 `Scripts/golden-check.sh`의 `RUST_PENDING` 한 곳에 둔다. 알 수 없는 구현과 잘못된 인자는 종료 코드 2로 실패한다.
 
 ## CLI 계약
 
@@ -18,7 +18,7 @@ Rust는 P1 이후에 구현한다. 현재 `rust`는 "아직 없음"을 출력하
 mdemo-golden <입력 폴더 절대 경로> <출력 폴더 절대 경로>
 ```
 
-현재 Swift 실행은 `Scripts/golden-run-swift.sh <입력> <출력>`으로 한다. 별도 최상위 패키지 `Packages/Golden`이 MemoCore, Services, Features, StickyWindow를 조합한다. 기존 내부 계산과 상태 저장기에 접근하므로 디버그 빌드의 `@testable`을 사용한다. 앱, 창, 실제 키체인, API는 실행하지 않는다. Rust CLI도 같은 입력과 출력 파일 목록을 처리하도록 연결한다.
+현재 Swift 실행은 `Scripts/golden-run-swift.sh <입력> <출력>`으로 한다. 별도 최상위 패키지 `Packages/Golden`이 MemoCore, Services, Features, StickyWindow를 조합한다. 기존 내부 계산과 상태 저장기에 접근하므로 디버그 빌드의 `@testable`을 사용한다. 앱, 창, 실제 키체인, API는 실행하지 않는다. Rust CLI는 이번에 이관한 파일만 출력하며 Swift 앱은 계속 Swift 구현을 사용한다.
 
 ## 고정 입력과 출력
 
@@ -43,4 +43,16 @@ mdemo-golden <입력 폴더 절대 경로> <출력 폴더 절대 경로>
 
 비교기는 누락 파일과 추가 파일도 실패로 처리하고, 내용 차이는 파일명과 첫 차이 행의 원시 바이트를 표시한다. 마지막 줄바꿈 차이도 검출한다. 입력을 추가하면 생성기도 해당 입력을 처리하도록 함께 수정한다.
 
-환경에서 기본 캐시 폴더를 쓸 수 없으면 `MDEMO_SCRATCH_PATH=/tmp/mdemo-build make test`처럼 빌드 폴더만 지정할 수 있다. `make build`와 `make golden`도 같은 변수를 받는다. 제한된 환경에서 중첩 샌드박스와 Swift Build 서비스 오류를 피하도록 SwiftPM native 빌드와 저장소 내부 모듈 캐시를 사용한다.
+## 차분 퍼즈
+
+```sh
+make fuzz                       # 메모 2000개, 기본 시드 20261126
+make fuzz N=100000 SEED=42
+Scripts/fuzz-diff.sh 2000 42
+```
+
+`mdemo-fuzzgen`은 고정 가능한 SplitMix64 시드로 메모와 보드, 그룹을 만든다. 500개씩 한 폴더에 넣어 두 CLI를 호출한다. 선 10종, 잘못된 퍼센트와 UTF-8 라벨, 모르는 꼬리, 결합 문자와 이모지, 따옴표와 역슬래시, LF와 CRLF, 날짜 경계, 큰 Double과 음수 0을 포함한다. 생성기는 원문을 직접 만들며 Rust 파서의 결과를 입력으로 재사용하지 않는다. 나머지 입력은 고정 골든을 복사한다.
+
+차이가 나거나 CLI가 실패하면 `golden/fuzz-failures/`에 입력, 두 출력과 로그를 남기고 실패한다. 출력에는 건수, 경과 초, 차이 파일 수와 시드를 표시한다. 기본 시드도 명시하므로 그대로 재현할 수 있다. 보관한 최소 재현 입력은 해당 폴더 README를 참고한다.
+
+Rust는 캐시에 있는 크레이트만 사용한다. 라벨 경계는 `unicode-segmentation`, Swift의 문자열 동등 비교는 Unicode 17.0 정규 분해 표를 사용한다. `unicode-normalization`은 캐시에 없어 별도 크레이트 없이 정규 분해를 구현했다. 표 재생성은 Unicode 17.0 데이터를 가진 Python에서 `python3 Scripts/generate-unicode-tables.py`로 한다.

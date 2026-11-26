@@ -1,0 +1,9 @@
+[package]
+name = "mdemo-golden"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+mdemo-core = { path = "../mdemo-core" }
+serde_json = { version = "1", features = ["float_roundtrip"] }

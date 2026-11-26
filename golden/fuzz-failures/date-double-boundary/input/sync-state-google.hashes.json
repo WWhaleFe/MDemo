@@ -1,0 +1,15 @@
+{
+  "01ARZ3NDEKTSV4RRFFQ69G5F00": {
+    "date": 123.25,
+    "hashes": [
+      "abc",
+      "def"
+    ]
+  },
+  "01ARZ3NDEKTSV4RRFFQ69G5F01": {
+    "date": -1.4996,
+    "hashes": [
+      "不採用"
+    ]
+  }
+}

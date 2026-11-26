@@ -1,0 +1,18 @@
+---
+schemaVersion: 3
+id: 01ARZ3NDEKTSV4RRFFQ69G5F00
+title: "a\\\"b"
+group: "a\\\"b"
+color: "#FFF3B0"
+bgAlpha: 0.15
+textAlpha: 0.3
+open: true
+pinned: true
+created: 2000-01-01T03:29:59.000Z
+modified: 2000-01-01T03:29:59.000Z
+links: line:01ARZ3NDEKTSV4RRFFQ69G5F00~a%2Cb%3Ac%7Eda%2Cb%3Ac%7Eda%2Cb%3Ac%7E~~x,flow:01ARZ3NDEKTSV4RRFFQ69G5F00~e%CC%81e%CC%81e%CC%81~~x,both:01ARZ3NDEKTSV4RRFFQ69G5F00~%~~x,related:01ARZ3NDEKTSV4RRFFQ69G5F00~~future,dashto:01ARZ3NDEKTSV4RRFFQ69G5F00~a%2Cb%3Ac%7Eda%2Cb%3Ac%7Ed,dashboth:01ARZ3NDEKTSV4RRFFQ69G5F00,contain:01ARZ3NDEKTSV4RRFFQ69G5F00~e%CC%81~future,block:01ARZ3NDEKTSV4RRFFQ69G5F00~%,oppose:01ARZ3NDEKTSV4RRFFQ69G5F00~e%CC%81e%CC%81~%ZZ,same:01ARZ3NDEKTSV4RRFFQ69G5F00~%,unknown:fake~tail
+# 주석 : 보존
+콜론 없는 줄
+future: "a\\\"b"
+---
+본문 😀 é단독 CR

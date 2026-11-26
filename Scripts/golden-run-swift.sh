@@ -3,7 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/Scripts/toolchain.sh"
-SCRATCH="$ROOT/.build-shared"
+# 외장 볼륨의 Foundation 원자적 쓰기는 볼륨 루트 권한을 요구하므로 빌드만 임시 경로에 둔다.
+BUILD_KEY="$(printf '%s' "$ROOT" | shasum -a 256 | cut -c 1-12)"
+SCRATCH="${TMPDIR:-/tmp}/mdemo-swift-$BUILD_KEY"
 if [ "$#" -ne 2 ]; then
     echo "사용법: $0 <입력 폴더> <출력 폴더>" >&2
     exit 2
@@ -12,5 +14,7 @@ fi
 RUN_HOME="$(mktemp -d "${TMPDIR:-/tmp}/mdemo-golden-home.XXXXXX")"
 trap 'rm -rf "$RUN_HOME"' EXIT
 export CFFIXED_USER_HOME="$RUN_HOME"
-swift run --package-path "$ROOT/Packages/Golden" --scratch-path "$SCRATCH" \
+export CLANG_MODULE_CACHE_PATH="$SCRATCH/ModuleCache"
+export SWIFTPM_MODULECACHE_OVERRIDE="$CLANG_MODULE_CACHE_PATH"
+swift run --disable-sandbox --build-system native --package-path "$ROOT/Packages/Golden" --scratch-path "$SCRATCH" \
     -c debug mdemo-golden "$1" "$2"

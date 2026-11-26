@@ -5,3 +5,9 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+unicode-segmentation = "1.13.3"
+getrandom = "0.2.17"
+serde-value = "0.7.0"

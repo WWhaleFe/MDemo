@@ -44,7 +44,7 @@
 
 ## 골든과 실행
 
-[골든 규약](../golden/README.md)에 입력 목록, 키 순서 정규화 예외, 두 구현의 CLI 계약을 기록했다. `make golden`은 기준을 갱신하고 `make test`는 기존 TestKit 러너와 `Scripts/golden-check.sh swift`를 실행한다. Rust는 아직 구현하지 않았다.
+[골든 규약](../golden/README.md)에 입력 목록, 키 순서 정규화 예외, 두 구현의 CLI 계약을 기록했다. `make golden`은 기준을 갱신하고 `make test`는 기존 TestKit 러너와 `Scripts/golden-check.sh swift`를 실행한다. P2에서는 Rust 데이터 모델과 CLI가 이관한 10개 파일도 바이트 비교한다. 미이전 파일과 차분 퍼즈 사용법은 골든 규약을 따른다.
 
 기존 테스트에서 기본 키체인을 사용하던 동기화와 백업 호출은 메모리 키체인 주입으로 보강했다. 테스트 실행기는 `CFFIXED_USER_HOME`을 임시 폴더로 지정해 Foundation 설정 저장이 실제 홈을 쓰지 않게 한다. 새 골든은 입력 폴더를 읽기만 하고, 기존 저장기 작업은 임시 폴더에서 수행한다.
 
