@@ -12,3 +12,4 @@ mod tests {
         assert!(!super::core_version().is_empty());
     }
 }
+pub mod board;
