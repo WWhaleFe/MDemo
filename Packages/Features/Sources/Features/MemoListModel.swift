@@ -608,12 +608,11 @@ public final class MemoListModel {
 
     /// 보드 재정렬: 파이프(흐름 · 관련)로 이어진 메모끼리 한 무리로 모은다.
     ///
-    /// - 무리 안에서 흐름은 한 줄씩 왼쪽에서 오른쪽으로(파이프 방향 그대로), 흐름에 들지 않고 관련으로만 이어진 메모는
-    ///   그 아래 줄에 이어진 차례대로 놓는다.
+    /// - 무리 안에서는 선 방향의 단계별 열을 만들고 이웃의 평균 자리에 맞춰 열 안 순서를 정한다.
     /// - 무리들은 큰 것부터 왼쪽 위에서 오른쪽으로 채우고, 폭이 넘치면 아래 줄로 내려간다(무리 사이 80pt).
     /// - 어디에도 이어지지 않은 메모는 맨 아래에 다섯 개씩 격자로 모은다.
     public func autoArrangedPlacements(for memos: [MemoSummary]) -> [MemoID: BoardLayout.Placement] {
-        let columnStep = 280.0, rowStep = 180.0, cardWidth = 200.0, cardHeight = 120.0
+        let columnStep = 280.0, rowStep = 200.0, cardWidth = 200.0, cardHeight = 120.0
         let groupGap = 80.0, maxRowWidth = 1400.0, origin = (x: 40.0, y: 100.0)
         let order = memos.map(\.id)
         let included = Set(order)
@@ -644,44 +643,58 @@ public final class MemoListModel {
         struct Block { var places: [MemoID: (Double, Double)]; var width: Double; var height: Double }
         func layout(_ members: [MemoID]) -> Block {
             let memberSet = Set(members)
-            var places: [MemoID: (Double, Double)] = [:]
-            var row = 0
-            var widest = 1
-            for flow in linkIndex.flows {
-                let ids = flow.memoIDs.filter { memberSet.contains($0) && places[$0] == nil }
-                guard !ids.isEmpty else { continue }
-                for (column, id) in ids.enumerated() { places[id] = (Double(column) * columnStep, Double(row) * rowStep) }
-                widest = max(widest, ids.count)
-                row += 1
+            let connections = edges.filter { memberSet.contains($0.from) && memberSet.contains($0.to) }
+            let ranks = Dictionary(uniqueKeysWithValues: members.enumerated().map { ($0.element, $0.offset) })
+            var levels = Dictionary(uniqueKeysWithValues: members.map { ($0, 0) })
+            // 순환이 있어도 무리 크기만큼만 단계를 갱신한다.
+            for _ in members {
+                for edge in connections { levels[edge.to] = max(levels[edge.to]!, levels[edge.from]! + 1) }
             }
-            // 흐름에 들지 않은 메모: 관련으로 이어진 차례(너비 우선)로 아래 줄에 놓는다.
-            var rest: [MemoID] = []
-            var seen = Set(places.keys)
-            for start in members where !seen.contains(start) {
-                var queue = [start]
-                seen.insert(start)
-                while !queue.isEmpty {
-                    let id = queue.removeFirst()
-                    rest.append(id)
-                    for edge in edges where edge.from == id || edge.to == id {
-                        let other = edge.from == id ? edge.to : edge.from
-                        if memberSet.contains(other), !seen.contains(other) { seen.insert(other); queue.append(other) }
-                    }
+            let incoming = Set(connections.map(\.to))
+            for id in members where !incoming.contains(id) {
+                if let next = connections.filter({ $0.from == id }).map({ levels[$0.to]! }).min() {
+                    levels[id] = max(0, next - 1)
                 }
             }
-            let perRow = max(widest, min(4, rest.count))
-            for (offset, id) in rest.enumerated() {
-                places[id] = (Double(offset % perRow) * columnStep, Double(row + offset / perRow) * rowStep)
+            var layers = Dictionary(grouping: members, by: { levels[$0]! })
+            let columns = layers.keys.sorted()
+            var neighbors = Dictionary(uniqueKeysWithValues: members.map { ($0, [MemoID]()) })
+            for edge in connections {
+                neighbors[edge.from]!.append(edge.to)
+                neighbors[edge.to]!.append(edge.from)
             }
-            let rows = row + (rest.isEmpty ? 0 : (rest.count + perRow - 1) / perRow)
-            let columns = max(widest, rest.isEmpty ? 1 : min(perRow, rest.count))
+            var slots: [MemoID: Double] = [:]
+            for column in columns {
+                let ids = layers[column]!
+                for (index, id) in ids.enumerated() { slots[id] = Double(index) - Double(ids.count - 1) / 2 }
+            }
+            // 자바스크립트의 반올림처럼 음수의 정확한 중간값도 위쪽으로 맞춘다.
+            func half(_ value: Double) -> Double { floor(value * 2 + 0.5) / 2 }
+            for iteration in 0..<12 {
+                for column in iteration % 2 == 0 ? columns : Array(columns.reversed()) {
+                    var ids = layers[column]!
+                    var wanted: [MemoID: Double] = [:]
+                    for id in ids {
+                        let others = neighbors[id]!.filter { levels[$0] != levels[id] }
+                        wanted[id] = half(others.isEmpty ? slots[id]! : others.reduce(0) { $0 + slots[$1]! } / Double(others.count))
+                    }
+                    ids.sort { wanted[$0] == wanted[$1] ? ranks[$0]! < ranks[$1]! : wanted[$0]! < wanted[$1]! }
+                    var values = ids.map { wanted[$0]! }
+                    for i in values.indices.dropFirst() { values[i] = max(values[i], values[i - 1] + 1) }
+                    let shift = half((ids.reduce(0) { $0 + wanted[$1]! } - values.reduce(0, +)) / Double(ids.count))
+                    for (i, id) in ids.enumerated() { slots[id] = values[i] + shift }
+                    layers[column] = ids
+                }
+            }
+            let minimum = slots.values.min() ?? 0
+            let places = Dictionary(uniqueKeysWithValues: members.map { ($0, (Double(levels[$0]!) * columnStep, (slots[$0]! - minimum) * rowStep)) })
             return Block(places: places,
-                         width: Double(columns - 1) * columnStep + cardWidth,
-                         height: Double(max(rows, 1) - 1) * rowStep + cardHeight)
+                         width: (places.values.map { $0.0 }.max() ?? 0) + cardWidth,
+                         height: (places.values.map { $0.1 }.max() ?? 0) + cardHeight)
         }
 
         let linked = groupOrder.compactMap { groups[$0] }.filter { $0.count > 1 }
-            .sorted { $0.count == $1.count ? false : $0.count > $1.count }
+            .sorted { $0.count == $1.count ? order.firstIndex(of: $0[0])! < order.firstIndex(of: $1[0])! : $0.count > $1.count }
         let singles = groupOrder.compactMap { groups[$0] }.filter { $0.count == 1 }.map { $0[0] }
 
         var result: [MemoID: BoardLayout.Placement] = [:]
@@ -757,10 +770,12 @@ public final class MemoListModel {
     }
     public func setBentoSpan(_ span: BoardLayout.BentoSpan?, for id: MemoID) { store.setBentoSpan(span, for: id) }
     public func moveCard(_ id: MemoID, to placement: BoardLayout.Placement) { moveCards([id: placement]) }
-    public func moveCards(_ placements: [MemoID: BoardLayout.Placement], undoManager: UndoManager? = nil) {
+    public func moveCards(_ placements: [MemoID: BoardLayout.Placement], freezing memos: [MemoSummary] = [], undoManager: UndoManager? = nil) {
         guard !placements.isEmpty else { return }
         let previous = store.boardLayout.placements
-        store.setBoardPlacements(placements.mapValues {
+        // 옮기기 전 보이던 미저장 자리도 같은 저장 작업에 포함한다.
+        let frozen = boardPlacements(for: memos).filter { store.boardLayout.placements[$0.key.rawValue] == nil }
+        store.setBoardPlacements(frozen.merging(placements) { _, moved in moved }.mapValues {
             .init(x: ($0.x / 20).rounded() * 20, y: ($0.y / 20).rounded() * 20)
         })
         registerPlacementUndo(previous, name: "카드 옮기기", manager: undoManager)

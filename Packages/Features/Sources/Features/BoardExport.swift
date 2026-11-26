@@ -93,8 +93,9 @@ private struct BoardExportImage: View {
                 }
                 context.translateBy(x: 40 - content.bounds.minX, y: 40 - content.bounds.minY)
                 if options.pipes {
-                    for pipe in PipeGeometry.make(edges: content.edges, positions: content.positions) {
-                        pipe.draw(in: &context)
+                    let pipes = PipeGeometry.make(edges: content.edges, positions: content.positions)
+                    PipeGeometry.drawAll(pipes, in: &context, background: ListTheme.boardBg, highlighted: nil, dimOthers: false)
+                    for pipe in pipes {
                         if options.labels { pipe.drawLabel(in: &context, avoiding: content.positions.values.map { CGRect(x: $0.x, y: $0.y, width: 200, height: 120) }) }
                     }
                 }
