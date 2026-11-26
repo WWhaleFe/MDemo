@@ -57,3 +57,6 @@ pub fn input_rule_first_match(line: String, caret_offset: u32) -> Option<InputRu
 
 mod shadow;
 pub use shadow::*;
+
+mod repository;
+pub use repository::*;

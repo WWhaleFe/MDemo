@@ -14,3 +14,4 @@ mdemo-markdown = { path = "../mdemo-markdown" }
 uniffi = { workspace = true }
 sha2 = "0.10"
 serde_json = "1"
+mdemo-crypto = { path = "../mdemo-crypto" }

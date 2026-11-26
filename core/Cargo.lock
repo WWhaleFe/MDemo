@@ -641,6 +641,7 @@ name = "mdemo-ffi"
 version = "0.16.0"
 dependencies = [
  "mdemo-core",
+ "mdemo-crypto",
  "mdemo-markdown",
  "serde_json",
  "sha2",

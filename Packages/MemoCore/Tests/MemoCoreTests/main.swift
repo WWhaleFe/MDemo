@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 import MemoCore
 import TestKit
 
-let runner = TestRunner("MemoCore")
+let rustStorage = CommandLine.arguments.contains("--rust-storage")
+let runner = TestRunner("MemoCore [\(rustStorage ? "Rust" : "Swift")]")
 
 /// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
 final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
@@ -20,6 +21,28 @@ final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
     func delete(id: MemoID) throws { mutex.lock(); defer { mutex.unlock() }; values[id] = nil; failures[id] = nil }
 }
 let testKeychain = TestMemoKeychain()
+
+if CommandLine.arguments.contains("--measure-storage") {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("MDemoMeasure-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let swift = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let rust = try RustMemoRepository(rootDirectory: root, keychain: testKeychain)
+    for i in 0..<300 { try swift.save(MemoDocument(meta: MemoMeta(id: .generate(), title: "측정 \(i)"), body: String(repeating: "한글 본문 🙂\n", count: 500))) }
+    for repository in [swift as any MemoRepository, rust] { _ = try repository.loadSummaries() }
+    var samples = [[Double](), [Double]()]
+    for round in 0..<30 {
+        for index in (round % 2 == 0 ? [0, 1] : [1, 0]) {
+            let repository: any MemoRepository = index == 0 ? swift : rust
+            let start = Date()
+            let summaries = try repository.loadSummaries()
+            precondition(summaries.count == 300)
+            samples[index].append(Date().timeIntervalSince(start) * 1000)
+        }
+    }
+    let medians = samples.map { $0.sorted()[$0.count / 2] }
+    print("300개, 30회 중앙값 ms: Swift \(medians[0]), Rust \(medians[1]), 증감 \((medians[1] / medians[0] - 1) * 100)%")
+    exit(0)
+}
 
 if CommandLine.arguments.contains("--shadow-tests-only") {
     registerShadowTests(runner)
@@ -247,10 +270,20 @@ runner.test("구분자가 없는 파일은 오류로 거부한다") { t in
 
 // MARK: - 파일 저장소 (DAT-08, IMG-07, TRS-01)
 
-func makeTemporaryRepository() throws -> (FileMemoRepository, URL) {
+func makeRepository(root: URL, keychain: any MemoKeychain) throws -> any MemoRepository {
+    if rustStorage { return try RustMemoRepository(rootDirectory: root, keychain: keychain) }
+    return try FileMemoRepository(rootDirectory: root, keychain: keychain)
+}
+
+func makeTemporarySwiftRepository() throws -> (FileMemoRepository, URL) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("MDemoTests-\(UUID().uuidString)")
+    return (try FileMemoRepository(rootDirectory: root, keychain: testKeychain), root)
+}
+
+func makeTemporaryRepository() throws -> (any MemoRepository, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MDemoTests-\(UUID().uuidString)", isDirectory: true)
-    return (try FileMemoRepository(rootDirectory: root, keychain: testKeychain), root)
+    return (try makeRepository(root: root, keychain: testKeychain), root)
 }
 
 runner.test("저장한 메모를 그대로 다시 읽는다") { t in
@@ -1497,8 +1530,9 @@ await runner.testAsync("암호 메모 이동은 새 ID·첨부 암호화·원본
     t.expectEqual(try Data(contentsOf: store.attachmentsDirectory(for: plainID).appendingPathComponent("test.png")), photo)
 }
 
-await runner.testAsync("암호 메모 쓰기를 가로채도 평문이 없고 쓰기 실패 시 원본을 보존한다") { t in
-    let (base, root) = try makeTemporaryRepository()
+if !rustStorage {
+await runner.testAsync("[Swift 전용] 암호 메모 쓰기를 가로채도 평문이 없고 쓰기 실패 시 원본을 보존한다") { t in
+    let (base, root) = try makeTemporarySwiftRepository()
     defer { try? FileManager.default.removeItem(at: root) }
     let source = MemoMeta(id: .generate())
     let original = MemoDocument(meta: source, body: "저장실패에도남아야하는원본")
@@ -1523,6 +1557,7 @@ await runner.testAsync("암호 메모 쓰기를 가로채도 평문이 없고 �
     t.expectEqual(try base.loadSummaries().count, 1)
     t.expect(!(try MemoPrivacyLedger.read("destroyed", root: root)).contains(source.id.rawValue))
 }
+}
 
 runner.test("구버전의 모르는 잠금 키 보존 규칙으로 암호문과 열쇠 메타데이터가 유지된다") { t in
     let id = MemoID.generate()
@@ -1540,8 +1575,9 @@ runner.test("구버전의 모르는 잠금 키 보존 규칙으로 암호문과 
     t.expect(decoded.unknownFrontmatterLines.contains("futureLockField: 그대로"))
 }
 
-runner.test("본문 저장 실패는 실패 결과를 돌려주고 원본을 보존한다") { t in
-    let (base, root) = try makeTemporaryRepository()
+if !rustStorage {
+runner.test("[Swift 전용] 본문 저장 실패는 실패 결과를 돌려주고 원본을 보존한다") { t in
+    let (base, root) = try makeTemporarySwiftRepository()
     defer { try? FileManager.default.removeItem(at: root) }
     let id = MemoID.generate()
     try base.save(MemoDocument(meta: MemoMeta(id: id), body: "원본"))
@@ -1551,6 +1587,7 @@ runner.test("본문 저장 실패는 실패 결과를 돌려주고 원본을 보
     t.expect(!store.saveBody(id: id, body: "편집 내용"))
     t.expectEqual(try base.load(id: id).body, "원본")
     t.expect(!(try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+}
 }
 
 runner.test("영구 삭제와 휴지통 비우기는 본문 대신 잠금 메타데이터로 경로를 고른다") { t in
@@ -1588,7 +1625,7 @@ runner.test("손상된 암호 메모도 영구 삭제하면 열쇠와 폴더를 
     let (_, root) = try makeTemporaryRepository()
     defer { try? FileManager.default.removeItem(at: root) }
     let keys = MemoryLockKeychain()
-    let repository = try FileMemoRepository(rootDirectory: root, keychain: keys)
+    let repository = try makeRepository(root: root, keychain: keys)
     let id = MemoID.generate()
     try keys.write(Data([1, 2, 3]), id: id)
     let folder = root.appendingPathComponent("trash").appendingPathComponent(id.rawValue)
@@ -1671,7 +1708,7 @@ runner.test("MemoID는 대문자만 유효하다") { t in
 runner.test("JSON 저장 서식의 현재 동작: 보드는 키 정렬하고 그룹 배열 순서는 보존한다") { t in
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let repo = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    let repo = try makeRepository(root: root, keychain: testKeychain)
     try repo.saveBoardLayout(.init(placements: ["Z/": .init(x: 2, y: 3), "A": .init(x: 1, y: 4)]))
     let board = try String(contentsOf: root.appendingPathComponent("board.json"), encoding: .utf8)
     t.expect(board.hasPrefix("{\n  \"bentoSpans\" : {"))
@@ -1690,5 +1727,44 @@ runner.test("JSON 저장 서식의 현재 동작: 보드는 키 정렬하고 그
     t.expect(String(decoding: data, as: UTF8.self).contains("\"Z\\/\" : {"))
 }
 
-registerShadowTests(runner)
+runner.test("저장소 레코드는 모든 메타데이터와 모르는 줄 및 선 꼬리를 보존한다") { t in
+    let (repo, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let target = MemoID.generate()
+    var meta = MemoMeta(schemaVersion: 7, id: .generate(), title: "제목 🙂", group: "업무", colorHex: "#123456", backgroundAlpha: 0.45, textAlpha: 0.65, isOpen: false, isPinned: false, created: Date(timeIntervalSinceReferenceDate: 1234), modified: Date(timeIntervalSinceReferenceDate: 5678), conflictOf: target, links: [MemoLink(to: target, kind: .flow, label: "한글 🙂", unknownSuffix: "~future")])
+    meta.lockSalt = "c2FsdA=="
+    meta.lockIterations = 2_000_000
+    meta.lockVersion = 1
+    meta.lockFailures = 3
+    let doc = MemoDocument(meta: meta, body: "본문\n유지", unknownFrontmatterLines: ["# 주석", "future: 값", "콜론 없는 줄"], unknownLinkTokens: ["future:알수없음"])
+    try repo.save(doc)
+    t.expectEqual(try repo.load(id: meta.id), doc)
+    t.expectEqual(try Data(contentsOf: root.appendingPathComponent("memos/\(meta.id.rawValue)/memo.md")), Data(FrontmatterCodec.encode(doc).utf8))
+    let text = FrontmatterCodec.encode(doc).components(separatedBy: "\n").map {
+        $0.hasPrefix("links:") ? "links: flow:\(target.rawValue)~%ZZ~future,future:알수없음" : $0
+    }.joined(separator: "\n")
+    let malformedLabel = try FrontmatterCodec.decode(fileContents: text)
+    try repo.save(malformedLabel)
+    t.expectEqual(try repo.load(id: meta.id), malformedLabel)
+    t.expectEqual(try String(contentsOf: root.appendingPathComponent("memos/\(meta.id.rawValue)/memo.md"), encoding: .utf8), text)
+
+}
+
+runner.test("저장소의 없는 파일은 Cocoa 파일 없음으로 구분된다") { t in
+    let (repo, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    do { _ = try repo.load(id: .generate()); t.expect(false) }
+    catch { t.expectEqual((error as NSError).domain, NSCocoaErrorDomain); t.expectEqual((error as NSError).code, NSFileReadNoSuchFileError) }
+}
+
+runner.test("저장소 조립은 실행 플래그에 따라 구현을 선택한다") { t in
+    let (_, root) = try makeTemporaryRepository()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = try CoreStorage.make(root: root, keychain: testKeychain)
+    t.expect(rustStorage ? repo is RustMemoRepository : repo is FileMemoRepository)
+}
+
+// 정방향 그림자 장식자 자체의 계약 8개는 Swift 기반으로만 실행한다.
+if !rustStorage { registerShadowTests(runner) }
+
 runner.finish()

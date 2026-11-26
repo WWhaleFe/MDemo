@@ -7,7 +7,7 @@ private func shadowMeta(_ id: MemoID) -> MemoMeta {
 }
 
 func registerShadowTests(_ runner: TestRunner) {
-    runner.test("그림자는 복제본에서 전 연산을 재생하고 읽기 해시와 개인정보를 검사한다") { t in
+    runner.test("[Swift 전용] 그림자는 복제본에서 전 연산을 재생하고 읽기 해시와 개인정보를 검사한다") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let root = base.appendingPathComponent("Data")
@@ -55,7 +55,7 @@ func registerShadowTests(_ runner: TestRunner) {
         let files = try FileManager.default.contentsOfDirectory(atPath: shadow.shadowDirectory.path)
         t.expectEqual(Set(files), Set(["shadow-log.jsonl", "shadow-summary.json"]))
     }
-    runner.test("그림자 손상은 diff이며 Swift 데이터와 오류는 보존한다") { t in
+    runner.test("[Swift 전용] 그림자 손상은 diff이며 Swift 데이터와 오류는 보존한다") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let root = base.appendingPathComponent("Data")
@@ -77,7 +77,7 @@ func registerShadowTests(_ runner: TestRunner) {
         t.expect(text.contains("swift-error"))
         t.expect(!text.contains("정상표지") && !text.contains("손상표지"))
     }
-    runner.test("잠긴 메모는 복제 훅에 도달하지 않고 ID 해시만 기록한다") { t in
+    runner.test("[Swift 전용] 잠긴 메모는 복제 훅에 도달하지 않고 ID 해시만 기록한다") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let root = base.appendingPathComponent("Data")
@@ -99,7 +99,7 @@ func registerShadowTests(_ runner: TestRunner) {
         t.expect(!text.contains(id.rawValue) && !text.contains(document.body))
         t.expectEqual(try FileManager.default.contentsOfDirectory(atPath: shadow.shadowDirectory.path).count, 2)
     }
-    runner.test("그림자는 읽기 경쟁을 재검사하고 요약은 한 시간 동안 한 번만 비교한다") { t in
+    runner.test("[Swift 전용] 그림자는 읽기 경쟁을 재검사하고 요약은 한 시간 동안 한 번만 비교한다") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let actual = try FileMemoRepository(rootDirectory: base.appendingPathComponent("Data"), keychain: TestMemoKeychain())
@@ -123,7 +123,7 @@ func registerShadowTests(_ runner: TestRunner) {
         t.expect(rows.contains { $0["op"] as? String == "load" && $0["result"] as? String == "same" })
         t.expectEqual(rows.filter { $0["op"] as? String == "loadSummaries" }.count, 1)
     }
-    runner.test("500MB 복제 용량과 200건 대기 상한은 Swift 저장을 막지 않는다") { t in
+    runner.test("[Swift 전용] 500MB 복제 용량과 200건 대기 상한은 Swift 저장을 막지 않는다") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let actual = try FileMemoRepository(rootDirectory: base.appendingPathComponent("Data"), keychain: TestMemoKeychain())
@@ -151,7 +151,7 @@ func registerShadowTests(_ runner: TestRunner) {
         t.expectEqual(try actual.loadGroups(), ["대기시험"])
         t.expectEqual(try actual.load(id: doc.meta.id).body, doc.body)
     }
-    runner.test("그림자 mtime 비교는 휴지통 폴더만, 1마이크로초 이하만 허용한다") { t in
+    runner.test("[Swift 전용] 그림자 mtime 비교는 휴지통 폴더만, 1마이크로초 이하만 허용한다") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let actual = try FileMemoRepository(rootDirectory: base.appendingPathComponent("Data"), keychain: TestMemoKeychain())
@@ -182,7 +182,7 @@ func registerShadowTests(_ runner: TestRunner) {
         let rows = try text.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
         t.expectEqual(rows.map { $0["result"] as? String }, ["same", "same", "diff"])
     }
-    runner.test("그림자 꺼짐은 FileMemoRepository 값을 그대로 돌려준다") { t in
+    runner.test("[Swift 전용] 그림자 꺼짐은 FileMemoRepository 값을 그대로 돌려준다") { t in
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var actual = try FileMemoRepository(rootDirectory: root, keychain: TestMemoKeychain())
@@ -193,7 +193,7 @@ func registerShadowTests(_ runner: TestRunner) {
         do { try wrapped.save(MemoDocument(meta: shadowMeta(.generate()), body: "")); t.expect(false) }
         catch { t.expectEqual((error as NSError).code, 7) }
     }
-    runner.test("그림자 저장 한 건의 추가 동기 시간 측정") { t in
+    runner.test("[Swift 전용] 그림자 저장 한 건의 추가 동기 시간 측정") { t in
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let actual = try FileMemoRepository(rootDirectory: base.appendingPathComponent("Data"), keychain: TestMemoKeychain())

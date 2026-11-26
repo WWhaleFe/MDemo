@@ -27,10 +27,16 @@ if ! (cd "$ROOT/core" && cargo test --locked --workspace); then
     FAILED=1
 fi
 for package in CoreBridge MemoCore MarkdownEngine EditorKit StickyWindow Services Features; do
-    if ! (cd "$ROOT/Packages/$package" && swift run -c debug --scratch-path "$SCRATCH" "${package}Tests" 2>&1 \
-        | grep -vE "^\[|Compiling|Emitting|Build |Planning|Write |Linking|Building for"); then
-        FAILED=1
-    fi
+    STORAGE_MODES=(swift)
+    if [ "$package" = MemoCore ]; then STORAGE_MODES=(swift rust); fi
+    for storage in "${STORAGE_MODES[@]}"; do
+        STORAGE_ARGS=()
+        if [ "$storage" = rust ]; then STORAGE_ARGS=(--rust-storage); fi
+        if ! (cd "$ROOT/Packages/$package" && swift run -c debug --scratch-path "$SCRATCH" "${package}Tests" ${STORAGE_ARGS[@]+"${STORAGE_ARGS[@]}"} 2>&1 \
+            | grep -vE "^\[|Compiling|Emitting|Build |Planning|Write |Linking|Building for"); then
+            FAILED=1
+        fi
+    done
 done
 
 # 한 패키지가 실패해도 골든 비교까지 실행해 차이를 함께 보고한다.

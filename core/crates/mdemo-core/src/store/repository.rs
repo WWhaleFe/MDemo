@@ -160,6 +160,25 @@ impl FileMemoRepository {
         Ok(())
     }
 
+    /// 폴더를 복제하고 새 문서를 저장한다. 저장 실패 시 사본을 지운다.
+    pub fn duplicate(&self, id: &MemoID, document: &MemoDocument) -> StoreResult<()> {
+        if self.load(id)?.meta.is_locked || document.meta.is_locked { return Err(StoreError::Locked); }
+        let destination = self.memo_directory(&document.meta.id);
+        fn copy(source: &Path, destination: &Path) -> std::io::Result<()> {
+            fs::create_dir(destination)?;
+            for entry in fs::read_dir(source)? {
+                let entry = entry?;
+                let target = destination.join(entry.file_name());
+                if entry.file_type()?.is_dir() { copy(&entry.path(), &target)?; }
+                else { fs::copy(entry.path(), target)?; }
+            }
+            Ok(())
+        }
+        copy(&self.memo_directory(id), &destination)?;
+        if let Err(error) = self.save(document) { let _ = fs::remove_dir_all(destination); return Err(error); }
+        Ok(())
+    }
+
     // MARK: - 삭제
 
     /// 휴지통으로 옮긴다 (TRS-01). 첨부 폴더까지 통째로 따라가고 버린 시각을 폴더 수정 시각으로 남긴다 (TRS-03).

@@ -411,3 +411,23 @@ fn search_bodies_reads_body_only_and_includes_trash() {
     assert!(repo.search_bodies("FFD1DC", &all).is_empty());
     assert!(repo.search_bodies("   ", &all).is_empty());
 }
+
+#[test]
+fn duplicate_copies_attachments_and_cleans_up_failed_save() {
+    let temp = Temp::new();
+    let (repo, _) = repo(&temp);
+    let original = document(&id(1), "원본", "2026-01-02T00:00:00.000Z");
+    repo.save(&original).unwrap();
+    repo.save_attachment(&id(1), "한글.png", b"image").unwrap();
+    let copied = document(&id(2), "사본", "2026-01-02T00:00:00.000Z");
+    repo.duplicate(&id(1), &copied).unwrap();
+    assert_eq!(repo.load(&id(2)).unwrap(), copied);
+    assert_eq!(fs::read(repo.attachments_directory(&id(2)).join("한글.png")).unwrap(), b"image");
+    assert!(repo.duplicate(&id(1), &copied).is_err());
+    assert_eq!(repo.load(&id(2)).unwrap(), copied);
+    repo.ledger_insert(&id(3), "destroyed").unwrap();
+    let rejected = document(&id(3), "거부", "2026-01-02T00:00:00.000Z");
+    assert!(matches!(repo.duplicate(&id(1), &rejected), Err(StoreError::Destroyed)));
+    assert!(!repo.memo_directory(&id(3)).exists());
+    assert_eq!(repo.load(&id(1)).unwrap(), original);
+}

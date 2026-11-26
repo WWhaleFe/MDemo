@@ -16,14 +16,15 @@ struct SeededRandom: RandomNumberGenerator {
 }
 
 @MainActor
-func runShadowExercise(dataDir: URL, shadowDir: URL, steps: Int, seed: UInt64) throws {
+func runShadowExercise(dataDir: URL, shadowDir: URL, steps: Int, seed: UInt64, rust: Bool = false) throws {
     let real = FileMemoRepository.defaultRootDirectory().standardizedFileURL.resolvingSymlinksInPath().path
     guard dataDir.standardizedFileURL.resolvingSymlinksInPath().path != real else {
         throw NSError(domain: "그림자 검사", code: 1, userInfo: [NSLocalizedDescriptionKey: "실제 데이터 폴더에는 실행하지 않습니다. 복제본을 주세요."])
     }
     let keychain = EmptyKeychain()
-    let actual = try FileMemoRepository(rootDirectory: dataDir, keychain: keychain)
-    let shadow = try ShadowMemoRepository(actual, shadowDirectory: shadowDir)
+    let shadow: ShadowMemoRepository
+    if rust { shadow = try ShadowMemoRepository(RustMemoRepository(rootDirectory: dataDir, keychain: keychain), shadowDirectory: shadowDir) }
+    else { shadow = try ShadowMemoRepository(FileMemoRepository(rootDirectory: dataDir, keychain: keychain), shadowDirectory: shadowDir) }
     let store = MemoStore(repository: shadow, keychain: keychain)
     // 진단용: MDEMO_SHADOW_KEEP=<폴더>이면 앞 회차 몇 개의 before(=Rust 결과) · after(=Swift 결과)를 남긴다.
     if let keep = ProcessInfo.processInfo.environment["MDEMO_SHADOW_KEEP"] {
@@ -33,8 +34,8 @@ func runShadowExercise(dataDir: URL, shadowDir: URL, steps: Int, seed: UInt64) t
             guard n < 5000 else { return }
             let target = URL(fileURLWithPath: keep).appendingPathComponent("\(n)")
             try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
-            try? FileManager.default.copyItem(at: before, to: target.appendingPathComponent("rust"))
-            try? FileManager.default.copyItem(at: before.deletingLastPathComponent().appendingPathComponent("after"), to: target.appendingPathComponent("swift"))
+            try? FileManager.default.copyItem(at: before, to: target.appendingPathComponent(rust ? "swift" : "rust"))
+            try? FileManager.default.copyItem(at: before.deletingLastPathComponent().appendingPathComponent("after"), to: target.appendingPathComponent(rust ? "rust" : "swift"))
         }
     }
     var rng = SeededRandom(state: seed)

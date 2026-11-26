@@ -315,9 +315,12 @@ fn restamp(repo: &FileMemoRepository, stamps: &[ShadowStamp]) -> Result<()> {
 mod tests {
     use super::*;
     fn temp() -> std::path::PathBuf {
+        // 병렬로 도는 시험끼리 같은 나노초를 받을 수 있어 순번을 붙인다.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "mdemo-shadow-{}-{}",
+            "mdemo-shadow-{}-{}-{}",
             std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

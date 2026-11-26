@@ -2,9 +2,11 @@ import CoreBridge
 import CryptoKit
 import Foundation
 
-/// 실제 저장소의 결과와 오류를 그대로 돌려주고 별도 복제본만 Rust에 쓴다.
+/// 실제 저장소의 결과와 오류를 그대로 돌려주고 별도 복제본에서 다른 구현을 재생한다.
 public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
-    private let actual: FileMemoRepository
+    private let actual: any MemoRepository
+    private let dataRoot: URL
+    private let reverse: Bool
     public let shadowDirectory: URL
     private let queue = DispatchQueue(label: "MDemo.shadow", qos: .utility)
     private let gate = NSRecursiveLock()
@@ -26,14 +28,22 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
     private let fm = FileManager.default
     private static let limit: UInt64 = 500 * 1024 * 1024
 
-    public init(_ actual: FileMemoRepository, shadowDirectory: URL) throws {
+    public convenience init(_ actual: FileMemoRepository, shadowDirectory: URL) throws {
+        try self.init(actual, root: actual.rootDirectory, shadowDirectory: shadowDirectory, reverse: false)
+    }
+    public convenience init(_ actual: RustMemoRepository, shadowDirectory: URL) throws {
+        try self.init(actual, root: actual.rootDirectory, shadowDirectory: shadowDirectory, reverse: true)
+    }
+    private init(_ actual: any MemoRepository, root: URL, shadowDirectory: URL, reverse: Bool) throws {
+        self.dataRoot = root
+        self.reverse = reverse
         self.actual = actual
         self.shadowDirectory = shadowDirectory.standardizedFileURL.resolvingSymlinksInPath()
-        let root = actual.rootDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+        let root = dataRoot.standardizedFileURL.resolvingSymlinksInPath().path
         guard self.shadowDirectory.path != root,
               !self.shadowDirectory.path.hasPrefix(root + "/") else { throw ShadowFailure.invalidRoot }
         for folder in ["memos", "trash"] {
-            let attrs = try fm.attributesOfItem(atPath: actual.rootDirectory.appendingPathComponent(folder).path)
+            let attrs = try fm.attributesOfItem(atPath: dataRoot.appendingPathComponent(folder).path)
             guard attrs[.type] as? FileAttributeType != .typeSymbolicLink else { throw ShadowFailure.link }
         }
         try fm.createDirectory(at: self.shadowDirectory, withIntermediateDirectories: true)
@@ -115,7 +125,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         var unreadable = false
         if let incoming, incoming.meta.isLocked { ids.insert(incoming.meta.id) }
         for path in paths {
-            let url = actual.rootDirectory.appendingPathComponent(path)
+            let url = dataRoot.appendingPathComponent(path)
             var candidates: [URL] = []
             if ["memos", "trash"].contains(path) {
                 candidates = ((try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [])
@@ -150,7 +160,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
     private func snapshot(_ paths: [String], to root: URL) throws {
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         for path in paths {
-            let source = actual.rootDirectory.appendingPathComponent(path)
+            let source = dataRoot.appendingPathComponent(path)
             guard fm.fileExists(atPath: source.path) else { continue }
             // 호출자가 용량과 링크를 검사한 경로만 복제한다.
             let destination = root.appendingPathComponent(path)
@@ -163,7 +173,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         }
         // 복제 자체가 바꾼 부모 폴더 시각을 원본 시각으로 복원한다.
         for path in ["memos", "trash", ""] {
-            let attrs = try fm.attributesOfItem(atPath: actual.rootDirectory.appendingPathComponent(path).path)
+            let attrs = try fm.attributesOfItem(atPath: dataRoot.appendingPathComponent(path).path)
             if let date = attrs[.modificationDate] { try fm.setAttributes([.modificationDate: date], ofItemAtPath: root.appendingPathComponent(path).path) }
         }
     }
@@ -182,7 +192,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         if !locked && !inspection.unreadable {
             do {
                 let size = try paths.reduce(UInt64(0)) { total, path in
-                    let url = actual.rootDirectory.appendingPathComponent(path)
+                    let url = dataRoot.appendingPathComponent(path)
                     return try total + (fm.fileExists(atPath: url.path) ? Self.bytes(at: url) : 0)
                 }
                 beforeSize = size
@@ -208,7 +218,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         }
         do {
             let afterSize = try paths.reduce(UInt64(0)) { total, path in
-                let url = actual.rootDirectory.appendingPathComponent(path)
+                let url = dataRoot.appendingPathComponent(path)
                 return try total + (fm.fileExists(atPath: url.path) ? Self.bytes(at: url) : 0)
             }
             let needed = beforeSize + afterSize
@@ -232,7 +242,8 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                 do {
                     let before = round.appendingPathComponent("before")
                     let op = try operation(round.appendingPathComponent("after"))
-                    try ShadowBridge.apply(before, operation: op)
+                    if self.reverse { try self.applySwift(before, operation: op) }
+                    else { try ShadowBridge.apply(before, operation: op) }
                     try hook?(before)
                     let rust = try ShadowBridge.tree(before)
                     let swift = try ShadowBridge.tree(round.appendingPathComponent("after"))
@@ -250,7 +261,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                             guard let e else { return NSNull() }
                             return ["sha256": e.sha256, "size": e.size, "mtime": e.mtime] as [String: Any]
                         }
-                        details.append(["path": Self.safePath(path), "swift": fields(a), "rust": fields(b)])
+                        details.append(["path": Self.safePath(path), (self.reverse ? "rust" : "swift"): fields(a), (self.reverse ? "swift" : "rust"): fields(b)])
                     }
                     self.log(name, id: id, result: details.isEmpty ? "same" : "diff", details: details)
                 } catch { self.log(name, id: id, result: "error") }
@@ -267,7 +278,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         let targets = Set(ids)
         var result = Set(paths(ids))
         for folder in ["memos", "trash"] {
-            let root = actual.rootDirectory.appendingPathComponent(folder)
+            let root = dataRoot.appendingPathComponent(folder)
             for entry in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
                 guard let doc = header(entry.appendingPathComponent("memo.md")),
                       doc.meta.links.contains(where: { targets.contains($0.to) }) else { continue }
@@ -277,7 +288,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         return result.sorted()
     }
     private func trashIDs(before date: Date?) -> [MemoID] {
-        let root = actual.rootDirectory.appendingPathComponent("trash")
+        let root = dataRoot.appendingPathComponent("trash")
         return ((try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []).compactMap {
             let id = MemoID(rawValue: $0.lastPathComponent)
             guard id.isValid else { return nil }
@@ -292,6 +303,46 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         let attrs = try fm.attributesOfItem(atPath: root.appendingPathComponent("trash/\(id.rawValue)").path)
         return (attrs[.modificationDate] as! Date).timeIntervalSinceReferenceDate
     }
+    /// 역방향 그림자는 같은 복제 범위와 기록 규칙으로 Swift를 재생한다.
+    private func applySwift(_ root: URL, operation: ShadowBridge.Operation) throws {
+        var repo = try FileMemoRepository(rootDirectory: root, keychain: ShadowEmptyKeychain())
+        var stamps: [ShadowStamp] = []
+        func document(_ text: String, _ body: String, _ created: Double, _ modified: Double) throws -> MemoDocument {
+            var d = try FrontmatterCodec.decode(fileContents: text)
+            d.body = body
+            d.meta.created = Date(timeIntervalSinceReferenceDate: created)
+            d.meta.modified = Date(timeIntervalSinceReferenceDate: modified)
+            return d
+        }
+        switch operation {
+        case let .save(text, body, created, modified): try repo.save(document(text, body, created, modified))
+        case let .duplicate(id, text, body, created, modified): try repo.duplicate(id: MemoID(rawValue: id), as: document(text, body, created, modified))
+        case let .moveToTrash(id, at):
+            repo.clock = { Date(timeIntervalSinceReferenceDate: at) }
+            try repo.moveToTrash(id: MemoID(rawValue: id))
+        case let .restore(id): try repo.restoreFromTrash(id: MemoID(rawValue: id))
+        case let .permanentlyDelete(id, at, values):
+            repo.clock = { Date(timeIntervalSinceReferenceDate: at) }
+            try repo.permanentlyDelete(id: MemoID(rawValue: id)); stamps = values
+        case let .emptyTrash(before, at, values):
+            repo.clock = { Date(timeIntervalSinceReferenceDate: at) }
+            try repo.emptyTrash(deletedBefore: before.map { Date(timeIntervalSinceReferenceDate: $0) }); stamps = values
+        case let .saveGroups(json): try repo.saveGroups(JSONDecoder().decode([String].self, from: Data(json.utf8)))
+        case let .saveBoard(json): try repo.saveBoardLayout(JSONDecoder().decode(BoardLayout.self, from: Data(json.utf8)))
+        }
+        for stamp in stamps {
+            for folder in ["memos", "trash"] {
+                let directory = root.appendingPathComponent("\(folder)/\(stamp.id)")
+                let file = directory.appendingPathComponent("memo.md")
+                guard let text = try? String(contentsOf: file, encoding: .utf8), var d = try? FrontmatterCodec.decode(fileContents: text) else { continue }
+                let deleted = try? directory.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                d.meta.modified = Date(timeIntervalSinceReferenceDate: stamp.modified)
+                try Data(FrontmatterCodec.encode(d).utf8).write(to: file, options: .atomic)
+                if folder == "trash", let deleted { try fm.setAttributes([.modificationDate: deleted], ofItemAtPath: directory.path) }
+            }
+        }
+    }
+
     public func save(_ document: MemoDocument) throws {
         try write("save", id: document.meta.id, paths: paths([document.meta.id]), incoming: document,
                   operation: { root in .save(memoText: try self.memoText(document.meta.id, root: root), body: document.body,
@@ -411,7 +462,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                     }
                     let folder = name == "loadTrashSummaries" ? "trash" : "memos"
                     let suffix = name == "load" ? "memo.md" : "summary"
-                    return ["path": "\(folder)/\(Self.short(key))/\(suffix)", "swift": fields(s[key]), "rust": fields(r[key])]
+                    return ["path": "\(folder)/\(Self.short(key))/\(suffix)", (self.reverse ? "rust" : "swift"): fields(s[key]), (self.reverse ? "swift" : "rust"): fields(r[key])]
                 }
                 self.log(name, id: id, result: keys.isEmpty ? "same" : "diff", details: details)
             } catch ShadowFailure.locked(let lockedID) {
@@ -427,7 +478,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                 if let keep = ProcessInfo.processInfo.environment["MDEMO_SHADOW_ERROR_KEEP"], let id {
                     let target = URL(fileURLWithPath: keep).appendingPathComponent(UUID().uuidString)
                     try? self.fm.createDirectory(at: target, withIntermediateDirectories: true)
-                    try? self.fm.copyItem(at: self.actual.rootDirectory.appendingPathComponent("memos/\(id.rawValue)"), to: target.appendingPathComponent("memo"))
+                    try? self.fm.copyItem(at: self.dataRoot.appendingPathComponent("memos/\(id.rawValue)"), to: target.appendingPathComponent("memo"))
                     try? "\(error)".write(to: target.appendingPathComponent("error.txt"), atomically: true, encoding: .utf8)
                 }
             }
@@ -443,7 +494,13 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                  guard !doc.meta.isLocked else { throw ShadowFailure.locked(id) }
                  return [id.rawValue: Self.hash(FrontmatterCodec.encode(doc))]
              },
-             rust: { [id.rawValue: try ShadowBridge.load(self.actual.rootDirectory, id: id.rawValue)] })
+             rust: {
+                 if self.reverse {
+                     let repo = try FileMemoRepository(rootDirectory: self.dataRoot, keychain: ShadowEmptyKeychain())
+                     return [id.rawValue: Self.hash(FrontmatterCodec.encode(try repo.load(id: id)))]
+                 }
+                 return [id.rawValue: try ShadowBridge.load(self.dataRoot, id: id.rawValue)]
+             })
         return doc
     }
     private func summaries(trash: Bool) throws -> [MemoSummary] {
@@ -462,7 +519,13 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                  if let locked = values.first(where: { $0.meta.isLocked }) { throw ShadowFailure.locked(locked.id) }
                  return Self.summaryHashes(values)
              },
-             rust: { try ShadowBridge.summaries(self.actual.rootDirectory, trash: trash) }, throttle: true)
+             rust: {
+                 if self.reverse {
+                     let repo = try FileMemoRepository(rootDirectory: self.dataRoot, keychain: ShadowEmptyKeychain())
+                     return Self.summaryHashes(try trash ? repo.loadTrashSummaries() : repo.loadSummaries())
+                 }
+                 return try ShadowBridge.summaries(self.dataRoot, trash: trash)
+             }, throttle: true)
         return values
     }
     public func loadSummaries() throws -> [MemoSummary] { try summaries(trash: false) }

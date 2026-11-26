@@ -1,9 +1,11 @@
 #!/bin/bash
 # 빠른 그림자 검사 (P7). 실제 데이터 폴더를 임시 폴더로 복제한 뒤 그 복제본에서만
 # MemoStore 연산을 무작위로 돌리고 Swift · Rust 결과를 비교한다. 실제 폴더는 읽기만 한다.
-# 사용법: Scripts/shadow-exercise.sh [시드 수=10] [시드당 연산 수=3000] [원본 데이터 폴더]
+# 사용법: Scripts/shadow-exercise.sh [--rust] [시드 수=10] [시드당 연산 수=3000] [원본 데이터 폴더]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUST_ARGS=()
+if [ "${1:-}" = --rust ]; then RUST_ARGS=(--rust); shift; fi
 SEEDS="${1:-10}"
 STEPS="${2:-3000}"
 SOURCE="${3:-$HOME/Library/Application Support/MDemo/Data}"
@@ -12,7 +14,7 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/mdemo-shadow-exercise.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 for seed in $(seq 1 "$SEEDS"); do
     ditto "$SOURCE" "$WORK/data-$seed"
-    "$BIN" shadow-exercise "$WORK/data-$seed" "$WORK/shadow-$seed" "$STEPS" "$seed"
+    "$BIN" shadow-exercise "$WORK/data-$seed" "$WORK/shadow-$seed" "$STEPS" "$seed" ${RUST_ARGS[@]+"${RUST_ARGS[@]}"}
     rm -rf "$WORK/data-$seed"
 done
 python3 - "$WORK" <<'PY'

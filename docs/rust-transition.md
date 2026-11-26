@@ -121,3 +121,42 @@ FFI의 `ShadowBridge`, MemoCore의 `ShadowMemoRepository`, `Scripts/shadow-repor
 - `docs/hidden-behaviors.md`, `docs/measurements.md`, 이 문서: 정규 문자열 계약, 측정과 남은 차이 기록.
 
 검증은 `make test`(Swift 370개, Rust 161개 통과와 기존 장시간 시험 1개 생략, 양쪽 골든 17개, 저장소·암호·동기화·백업 교차 검사), `make check`(계층과 Windows MSVC release), 앱의 macOS 빌드까지 통과했다. 후속 잠금 판별·용량 예약 보강 후에는 그림자 시험 8개를 다시 통과했다. 보고서 스크립트는 차이 없음·차이 있음·기록 누락의 종료 코드 0·1·2를 확인했다. 실제 앱은 실행하지 않았다. 측정값과 목표를 넘긴 회차는 [측정 기록](measurements.md)의 P7 절에 함께 기록했다. 자동 mtime 차이를 숨기지 않으므로 이 결과를 쓰기 연산의 차이 0 승인으로 해석하면 안 된다.
+
+## P7 2-a 실제 저장소 선택
+
+기본 저장소는 아직 Swift다. `MDemoRustStorage` Bool 또는 `--rust-storage`를 켜면 `CoreStorage.make(root:keychain:)`가 `RustMemoRepository`를 만든다. 이 경로에는 그림자를 붙이지 않는다. 꺼져 있으면 기존 `CoreShadow.wrap(FileMemoRepository)`를 쓴다. AppContainer는 MemoCore의 조립 함수만 호출하며 화면과 MemoStore는 바꾸지 않았다.
+
+### 변경 파일과 이유
+
+- `core/crates/mdemo-ffi/src/repository.rs`, `src/lib.rs`, `Cargo.toml`, `core/Cargo.lock`: CoreRepository 객체, 메타데이터 · 문서 · 요약 · 보드 레코드, 구분 가능한 오류, Swift 열쇠 저장소 콜백을 추가했다. 새 외부 크레이트 없이 기존 내부 mdemo-crypto를 연결했다.
+- `core/crates/mdemo-core/src/store/{repository,tests}.rs`: 첨부를 포함한 폴더 복제와 저장 실패 시 사본 정리, 기존 사본 보존 시험을 추가했다.
+- `Packages/MemoCore/Sources/MemoCore/Storage/{RustMemoRepository,CoreStorage}.swift`: 레코드 변환과 키체인 어댑터, Foundation 검색 판정, 목록 동률 순서 복원, 플래그 선택을 구현했다. 생성 CoreBridge 코드는 직접 고치지 않았다.
+- `App/Sources/MDemo/AppContainer.swift`, `App/Resources/Info.plist`: 조립 함수를 연결하고 MDemoRustStorage 기본값 false를 선언했다.
+- `Packages/MemoCore/Tests/MemoCoreTests/{main,ShadowTests}.swift`, `Scripts/test.sh`: 공통 저장소 팩토리로 기존 저장소 · MemoStore 시험을 두 번 실행한다. 레코드 모든 필드와 모르는 라벨 꼬리, Cocoa 파일 없음, 플래그 선택 시험도 공통으로 실행한다.
+- `Packages/MemoCore/Sources/MemoCore/Storage/ShadowMemoRepository.swift`, `Packages/Golden/Sources/mdemo-golden/{main,ShadowExercise}.swift`, `Scripts/shadow-exercise.sh`: `--rust`에서는 Rust를 실제 구현으로 쓰고 Swift를 복제본 비교 구현으로 쓴다. 기존 용량 · 대기열 · 잠긴 메모 생략 · 개인정보 없는 기록 규칙을 공유한다.
+
+### 시험 범위
+
+MemoCore 공통 90개를 Swift와 Rust 각각 실행한다. Swift 전용은 10개다.
+
+| 개수 | 사례와 이유 |
+|---:|---|
+| 2 | 암호 메모 쓰기 가로채기와 본문 저장 실패 주입. Swift `beforeMemoWrite`의 임의 Swift 오류와 실제 직전 바이트 검사를 Rust 원자적 쓰기에 주입하는 콜백은 이번 FFI에 추가하지 않았다. |
+| 8 | 기존 정방향 그림자 장식자의 복제 · 손상 · 잠김 생략 · 경쟁 · 용량 · 시각 · 꺼짐 타입 · 동기 시간 검사. Swift 원본과 시험 훅의 계약 자체를 검증하므로 Swift에서만 실행한다. 역방향은 별도 장시간 검사로 검증한다. |
+
+시각 시험은 필요할 때 Rust `setClockForTesting`을 쓸 수 있다. 앱은 호출하지 않으며 기본은 시스템 시계다. 암호 생성 · 해제 · 암호 변경 · 파기는 Swift LockCrypto와 MemoStore를 그대로 쓰면서 저장소 경계만 바꿔 검사한다. 시험 데이터와 열쇠는 임시 폴더와 메모리 키체인뿐이다.
+
+### 다음 단계에 남긴 직접 생성
+
+| 파일 | 위치와 용도 |
+|---|---|
+| `Packages/Services/Sources/Services/SyncService.swift` | applyPrivacy의 privacyRepository. 잠긴 메모 요약을 읽어 로컬 전용 집합에 합친다. |
+| `Packages/Services/Sources/Services/BackupService.swift` | replaceExisting 가져오기에서 기존 잠긴 메모의 목록을 읽어 암호문 폴더를 보존한다. |
+
+두 Services 경로는 이번에 바꾸지 않았다. Swift 제목 정렬과 Foundation 검색 판정도 그대로다. 네트워크 금지 조건에 따라 노션에 접근하지 않았으며 요청에 제공된 1장 · 3장 2번 규칙과 저장소 문서를 기준으로 작업했다. 앱 실행 검수와 실제 데이터 검수는 지휘자 범위다. 커밋 · 푸시 · 브랜치 변경은 하지 않는다.
+
+### 검증 결과
+
+최종 전체 러너에서 MemoCore `[Swift]` 100개, `[Rust]` 90개가 통과했다. Swift 전용 10개는 위 표의 이유로 별도 표시했다. 전체 Swift 러너는 두 MemoCore 실행을 포함해 463개, Rust 작업공간은 163개 통과와 기존 장시간 시험 1개 생략이다. 골든은 양쪽 각각 17개 바이트 일치, 저장소 시나리오 6개와 암호 시나리오 7개의 교차 검사, 동기화 · 백업 교차 검사도 통과했다. `make check`의 계층 검사와 Windows x86_64 MSVC 교차 release 빌드, macOS arm64 · x86_64 FFI 빌드도 통과했다.
+
+일반 실행은 이 환경의 중첩 sandbox 제한과 홈 cargo-xwin 캐시 쓰기 금지로 막혔다. 최종 `make test`는 호출 프로세스에만 SwiftPM sandbox 해제와 native 빌드 선택 함수를 전달했고, `make check`는 기존 `build/p6-xwin-cache`를 `XWIN_CACHE_DIR`로 지정했다. 제품 스크립트에는 이 우회 옵션을 추가하지 않았다. 중간 EditorKit 엔터 시험의 일시 실패는 코드 변경 없이 단독 80개와 최종 전체 실행 80개에서 모두 재통과했다. 실제 홈 데이터 · 키체인 · 네트워크와 앱 실행은 검증에 사용하지 않았다.
