@@ -159,6 +159,11 @@ func generate(input: URL, output: URL) throws {
 }
 
 do {
+    if CommandLine.arguments.count == 6, CommandLine.arguments[1] == "shadow-exercise" {
+        try await runShadowExercise(dataDir: URL(fileURLWithPath: CommandLine.arguments[2]), shadowDir: URL(fileURLWithPath: CommandLine.arguments[3]),
+                              steps: Int(CommandLine.arguments[4]) ?? 500, seed: UInt64(CommandLine.arguments[5]) ?? 1)
+        exit(0)
+    }
     if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "sync-step" {
         try await runSyncStep(file: URL(fileURLWithPath: CommandLine.arguments[2]), root: URL(fileURLWithPath: CommandLine.arguments[3]))
         exit(0)

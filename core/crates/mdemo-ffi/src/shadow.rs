@@ -58,14 +58,29 @@ pub struct ShadowSummary {
     pub id: String,
     pub digest: String,
 }
+/// 연결 정리로 다시 쓰인 메모 하나의 실제 modified(Swift 결과에서 읽은 값).
+#[derive(Clone, uniffi::Record)]
+pub struct ShadowStamp {
+    pub id: String,
+    pub modified: f64,
+}
 #[derive(uniffi::Enum)]
 pub enum ShadowOp {
+    /// `created` · `modified`는 Swift 문서가 가진 실제 값(2001 기준 초)이다. 파일 글자는 밀리초까지라
+    /// 다시 읽으면 마지막 자리가 내려갈 수 있어(P2 기록) 정확한 값으로 덮어 같은 입력을 만든다.
+    /// `body`도 Swift 문서의 본문 그대로다(파일을 다시 읽으면 줄바꿈 정리 등으로 달라질 수 있다).
     Save {
         memo_text: String,
+        body: String,
+        created: f64,
+        modified: f64,
     },
     Duplicate {
         source_id: String,
         memo_text: String,
+        body: String,
+        created: f64,
+        modified: f64,
     },
     MoveToTrash {
         id: String,
@@ -74,13 +89,17 @@ pub enum ShadowOp {
     Restore {
         id: String,
     },
+    /// `stamps`: Swift는 연결을 지울 메모마다 그때 시계를 찍어 밀리초가 서로 다를 수 있다.
+    /// 시계 하나로는 재현할 수 없어, Rust 연산 뒤 해당 메모의 modified만 Swift 값으로 맞춘다(나머지 바이트는 그대로 비교).
     PermanentlyDelete {
         id: String,
         at: f64,
+        stamps: Vec<ShadowStamp>,
     },
     EmptyTrash {
         before: Option<f64>,
         at: f64,
+        stamps: Vec<ShadowStamp>,
     },
     SaveGroups {
         json: String,
@@ -222,8 +241,11 @@ pub fn shadow_apply(work_root: String, op: ShadowOp) -> Result<()> {
         Arc::new(ManualClock::new(MemoDate(at))),
     ))?;
     match op {
-        ShadowOp::Save { memo_text } => {
-            let d = safe(frontmatter::decode(&memo_text))?;
+        ShadowOp::Save { memo_text, body, created, modified } => {
+            let mut d = safe(frontmatter::decode(&memo_text))?;
+            d.body = body;
+            d.meta.created = MemoDate(created);
+            d.meta.modified = MemoDate(modified);
             if d.meta.is_locked {
                 return Err(ShadowError::Failed);
             }
@@ -232,8 +254,14 @@ pub fn shadow_apply(work_root: String, op: ShadowOp) -> Result<()> {
         ShadowOp::Duplicate {
             source_id,
             memo_text,
+            body,
+            created,
+            modified,
         } => {
-            let d = safe(frontmatter::decode(&memo_text))?;
+            let mut d = safe(frontmatter::decode(&memo_text))?;
+            d.body = body;
+            d.meta.created = MemoDate(created);
+            d.meta.modified = MemoDate(modified);
             let source = MemoID::new(source_id);
             if d.meta.is_locked || safe(repo.load(&source))?.meta.is_locked {
                 return Err(ShadowError::Failed);
@@ -244,8 +272,14 @@ pub fn shadow_apply(work_root: String, op: ShadowOp) -> Result<()> {
         }
         ShadowOp::MoveToTrash { id, .. } => safe(repo.move_to_trash(&MemoID::new(id))),
         ShadowOp::Restore { id } => safe(repo.restore_from_trash(&MemoID::new(id))),
-        ShadowOp::PermanentlyDelete { id, .. } => safe(repo.permanently_delete(&MemoID::new(id))),
-        ShadowOp::EmptyTrash { before, .. } => safe(repo.empty_trash(before.map(MemoDate))),
+        ShadowOp::PermanentlyDelete { id, stamps, .. } => {
+            safe(repo.permanently_delete(&MemoID::new(id)))?;
+            restamp(&repo, &stamps)
+        }
+        ShadowOp::EmptyTrash { before, stamps, .. } => {
+            safe(repo.empty_trash(before.map(MemoDate)))?;
+            restamp(&repo, &stamps)
+        }
         ShadowOp::SaveGroups { json } => {
             safe(repo.save_groups(&safe(serde_json::from_str::<Vec<String>>(&json))?))
         }
@@ -253,6 +287,28 @@ pub fn shadow_apply(work_root: String, op: ShadowOp) -> Result<()> {
             safe(repo.save_board_layout(&safe(serde_json::from_str(&json))?))
         }
     }
+}
+
+fn restamp(repo: &FileMemoRepository, stamps: &[ShadowStamp]) -> Result<()> {
+    for stamp in stamps {
+        valid_id(&stamp.id)?;
+        let id = MemoID::new(stamp.id.clone());
+        for folder in ["memos", "trash"] {
+            let dir = repo.root().join(folder).join(&stamp.id);
+            let file = dir.join("memo.md");
+            let Ok(text) = fs::read_to_string(&file) else { continue };
+            let mut d = safe(frontmatter::decode(&text))?;
+            if d.meta.id != id || d.meta.is_locked {
+                return Err(ShadowError::Failed);
+            }
+            d.meta.modified = MemoDate(stamp.modified);
+            // 원자적 쓰기는 폴더 항목을 바꿔 폴더 mtime이 움직인다. 휴지통 폴더 시각(삭제 시각)은 되돌린다.
+            let kept = mdemo_core::store::modified_time(&dir).map_err(|_| ShadowError::Failed)?;
+            mdemo_core::store::atomic_write(&file, frontmatter::encode(&d).as_bytes()).map_err(|_| ShadowError::Failed)?;
+            mdemo_core::store::set_modified_time(&dir, kept).map_err(|_| ShadowError::Failed)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

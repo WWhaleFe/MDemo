@@ -10,6 +10,9 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
     private let gate = NSRecursiveLock()
     private let state = NSLock()
     private var pending = 0
+    /// 이 저장소를 거친 쓰기 횟수. 읽기 비교 도중 쓰기가 있었는지(경쟁) 가리는 데 쓴다.
+    private var generation = 0
+    private func currentGeneration() -> Int { state.lock(); defer { state.unlock() }; return generation }
     private var reserved: UInt64 = 0
     private var lastRead: [String: Date] = [:]
     private var counts: [String: [String: Int]] = [:]
@@ -168,6 +171,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                        operation: @escaping @Sendable (URL) throws -> ShadowBridge.Operation,
                        swift: () throws -> Void) throws {
         gate.lock(); defer { gate.unlock() }
+        state.lock(); generation += 1; state.unlock()
         let inspection = lockedMemoIDs(paths, incoming: incoming)
         let lockedIDs = inspection.ids
         let locked = !lockedIDs.isEmpty
@@ -290,11 +294,15 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
     }
     public func save(_ document: MemoDocument) throws {
         try write("save", id: document.meta.id, paths: paths([document.meta.id]), incoming: document,
-                  operation: { root in .save(memoText: try self.memoText(document.meta.id, root: root)) }) { try actual.save(document) }
+                  operation: { root in .save(memoText: try self.memoText(document.meta.id, root: root), body: document.body,
+                                              created: document.meta.created.timeIntervalSinceReferenceDate,
+                                              modified: document.meta.modified.timeIntervalSinceReferenceDate) }) { try actual.save(document) }
     }
     public func duplicate(id: MemoID, as document: MemoDocument) throws {
         try write("duplicate", id: document.meta.id, paths: paths([id, document.meta.id]), incoming: document,
-                  operation: { root in .duplicate(sourceId: id.rawValue, memoText: try self.memoText(document.meta.id, root: root)) }) { try actual.duplicate(id: id, as: document) }
+                  operation: { root in .duplicate(sourceId: id.rawValue, memoText: try self.memoText(document.meta.id, root: root), body: document.body,
+                                                   created: document.meta.created.timeIntervalSinceReferenceDate,
+                                                   modified: document.meta.modified.timeIntervalSinceReferenceDate) }) { try actual.duplicate(id: id, as: document) }
     }
     public func moveToTrash(id: MemoID) throws {
         try write("moveToTrash", id: id, paths: paths([id]), operation: { root in
@@ -306,24 +314,28 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
     }
     public func permanentlyDelete(id: MemoID) throws {
         try write("permanentlyDelete", id: id, paths: deletionPaths([id]), operation: { root in
-            .permanentlyDelete(id: id.rawValue, at: try self.linkChangeTime(root: root))
+            let stamps = try self.linkChangeStamps(root: root)
+            return .permanentlyDelete(id: id.rawValue, at: stamps.map(\.modified).max() ?? 0, stamps: stamps)
         }) { try actual.permanentlyDelete(id: id) }
     }
-    private func linkChangeTime(root: URL) throws -> Double {
-        // 실제 연결 정리 결과의 modified를 시계에 전달한다.
+    /// 연결 정리로 다시 쓰인 메모마다 실제 modified를 모은다.
+    private func linkChangeStamps(root: URL) throws -> [ShadowStamp] {
         let repo = try FileMemoRepository(rootDirectory: root, keychain: ShadowEmptyKeychain())
         let docs = try repo.loadSummaries() + repo.loadTrashSummaries()
         let before = root.deletingLastPathComponent().appendingPathComponent("before")
-        return docs.compactMap { doc -> Double? in
+        return docs.compactMap { doc -> ShadowStamp? in
             let folder = doc.deletedAt == nil ? "memos" : "trash"
             let old = header(before.appendingPathComponent("\(folder)/\(doc.id.rawValue)/memo.md"))
             guard let old, old.meta.links != doc.meta.links else { return nil }
-            return doc.meta.modified.timeIntervalSinceReferenceDate
-        }.max() ?? 0
+            // 파일에서 다시 읽은 시각은 밀리초 아래가 깎여 같은 밀리초로 다시 쓰이지 않을 수 있다.
+            // 0.4ms를 더하면 밀리초 내림 직렬화가 원래 글자를 그대로 낸다(밀리초 아래 실제 값은 파일에 없다).
+            return ShadowStamp(id: doc.id.rawValue, modified: doc.meta.modified.timeIntervalSinceReferenceDate + 0.0004)
+        }
     }
     public func emptyTrash(deletedBefore date: Date?) throws {
         try write("emptyTrash", paths: deletionPaths(trashIDs(before: date)), operation: { root in
-            .emptyTrash(before: date?.timeIntervalSinceReferenceDate, at: try self.linkChangeTime(root: root))
+            let stamps = try self.linkChangeStamps(root: root)
+            return .emptyTrash(before: date?.timeIntervalSinceReferenceDate, at: stamps.map(\.modified).max() ?? 0, stamps: stamps)
         }) { try actual.emptyTrash(deletedBefore: date) }
     }
     public func saveGroups(_ groups: [String]) throws {
@@ -351,6 +363,7 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
         if throttle { lastRead[name] = Date() }
         state.unlock()
         guard reserve(0) else { record(name, id: id, result: "skipped", reason: "backlog"); return }
+        let startGeneration = currentGeneration()
         queue.async {
             defer { self.release(0) }
             do {
@@ -366,7 +379,14 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                         self.log(name, id: id, result: "skipped", reason: "changed")
                         return
                     }
-                    r = try rust()
+                    do { r = try rust() }
+                    catch {
+                        // 다시 읽는 사이에도 폴더가 옮겨질 수 있다(휴지통 이동 · 복원). Swift 결과가 또 바뀌었으면 경쟁으로 본다.
+                        if self.currentGeneration() != startGeneration || (try? fresh()) != s {
+                            self.log(name, id: id, result: "skipped", reason: "changed"); return
+                        }
+                        throw error
+                    }
                 }
                 if s != r {
                     do { s = try fresh() }
@@ -396,7 +416,21 @@ public final class ShadowMemoRepository: MemoRepository, @unchecked Sendable {
                 self.log(name, id: id, result: keys.isEmpty ? "same" : "diff", details: details)
             } catch ShadowFailure.locked(let lockedID) {
                 self.log(name, id: lockedID, result: "skipped", reason: "locked")
-            } catch { self.log(name, id: id, result: "error") }
+            } catch {
+                // 비교 도중 이 저장소로 쓰기가 있었으면(휴지통 이동 등) 오류가 아니라 경쟁이다.
+                if self.currentGeneration() != startGeneration {
+                    self.log(name, id: id, result: "skipped", reason: "changed")
+                    return
+                }
+                self.log(name, id: id, result: "error")
+                // 진단 전용(시험 도구가 환경 변수로만 켠다): 실패한 메모 파일과 Rust 오류 종류를 남긴다.
+                if let keep = ProcessInfo.processInfo.environment["MDEMO_SHADOW_ERROR_KEEP"], let id {
+                    let target = URL(fileURLWithPath: keep).appendingPathComponent(UUID().uuidString)
+                    try? self.fm.createDirectory(at: target, withIntermediateDirectories: true)
+                    try? self.fm.copyItem(at: self.actual.rootDirectory.appendingPathComponent("memos/\(id.rawValue)"), to: target.appendingPathComponent("memo"))
+                    try? "\(error)".write(to: target.appendingPathComponent("error.txt"), atomically: true, encoding: .utf8)
+                }
+            }
         }
     }
     public func load(id: MemoID) throws -> MemoDocument {
