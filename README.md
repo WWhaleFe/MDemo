@@ -181,7 +181,7 @@ Homebrew 6 이상에서 `untrusted tap` 오류가 나면 먼저 `brew trust --ca
 - 아키텍처 · 개발 프로세스: [memo-app-architecture.md](memo-app-architecture.md)
 - 마일스톤 측정 기록: [docs/measurements.md](docs/measurements.md)
 
-현재 상태: **v0.15.1**
+현재 상태: **v0.16.0** (핵심 Rust + 화면 Swift)
 
 동작하는 것: 메뉴바 상주, 플로팅 스티키 창(크기 조절·투명도·배경색·접기·제목), 마크다운 자동 저장,
 입력 중 서식 변환과 서식 막대(제목·목록·체크박스·인용·코드 박스·표·굵게·기울임·취소선·글자 색·형광펜),
