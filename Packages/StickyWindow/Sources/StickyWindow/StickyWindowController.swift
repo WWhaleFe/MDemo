@@ -17,6 +17,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     let panel: StickyPanel
     let flowStrip = FlowStripView(frame: .zero)
     private(set) var hasFlow = false
+    private var hasStripRelations = false
     let rootView: StickyRootView
     let textView: MemoTextView
     private var lockView: MemoLockView?
@@ -697,16 +698,19 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     // MARK: - 서식 막대 자리 (FMT-01, FMT-02)
 
-    func updateFlowStrip(flow: MemoFlow?, summaries: [MemoID: MemoSummary], onOpen: @escaping (MemoID) -> Void) {
-        let changed = hasFlow != (flow != nil)
-        hasFlow = flow != nil
-        flowStrip.update(flow: flow, current: memoID, summaries: summaries)
+    func updateFlowStrip(relations: MemoStripRelations, settings: MemoStripSettings, summaries: [MemoID: MemoSummary], onOpen: @escaping (MemoID) -> Void) {
+        let visible = relations.isVisible(showRelations: settings.showRelations)
+        let changed = hasStripRelations != visible
+        hasFlow = relations.flow != nil
+        hasStripRelations = visible
+        flowStrip.update(relations: relations, settings: settings, current: memoID, summaries: summaries)
         flowStrip.onOpen = onOpen
+        flowStrip.topInset = Self.headerHeight
         if changed { layoutSections() }
     }
 
     var flowStripState: (isVisible: Bool, previous: MemoID?, next: MemoID?) {
-        (!flowStrip.isHidden && hasFlow, flowStrip.previous, flowStrip.next)
+        (!flowStrip.isHidden && hasFlow, hasFlow ? flowStrip.previous : nil, hasFlow ? flowStrip.next : nil)
     }
 
     /// 머리 영역·서식 막대·본문의 세로 배치를 다시 잡는다.
@@ -720,7 +724,8 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
         // 접혀 있는 동안에는 막대도 배치에서 빼야 한다.
         // 감추기만 하면 제약이 그대로 남아, 창이 제목 줄 높이까지 줄어들지 않는다 (WIN-08).
-        let showFlow = hasFlow && !isCollapsed
+        let showFlow = hasStripRelations && !isCollapsed
+        if !showFlow { flowStrip.collapse() }
         if flowStrip.superview == nil {
             flowStrip.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(flowStrip, positioned: .below, relativeTo: resizeOverlay)
@@ -1346,6 +1351,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
 
     /// 창을 닫는다. 메모 파일은 남는다 (WIN-10).
     public func close() {
+        flowStrip.collapse()
         tearDownAirDropAndSheets()
         formatController?.dismissPopups()
         titleChanged()
@@ -1365,6 +1371,7 @@ public final class StickyWindowController: NSObject, NSWindowDelegate, NSTextVie
     /// 파일에는 이미 "닫힘"으로 적혀 있으므로, 그 값을 다시 쓰지 않는다.
     /// 그렇지 않으면 수정 시각이 갱신돼 다음 동기화에서 헛된 충돌이 생긴다.
     public func closeWithoutMarkingClosed() {
+        flowStrip.collapse()
         tearDownAirDropAndSheets()
         formatController?.dismissPopups()
         saveFrameNow()

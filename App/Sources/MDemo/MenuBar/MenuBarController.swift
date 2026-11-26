@@ -20,6 +20,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let listWindow: MemoListWindowController
 
     private let memoryItem = NSMenuItem.info(NSAttributedString(string: ""))
+    private var memoStripItems: [NSMenuItem] = []
     private var pipeLabelsItem: NSMenuItem?
     private var lineStyleItems: [NSMenuItem] = []
     private var hoverOpaqueItem: NSMenuItem?
@@ -222,6 +223,26 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let labelsItem = item(title: "보드 선 이름표 보이기", action: #selector(togglePipeLabels), key: "")
         pipeLabelsItem = labelsItem
         viewSettings.addItem(labelsItem)
+        let stripItem = NSMenuItem(title: "메모 창 아래 줄", action: nil, keyEquivalent: "")
+        let stripMenu = NSMenu(title: stripItem.title)
+        stripMenu.delegate = self
+        stripItem.submenu = stripMenu
+        viewSettings.addItem(stripItem)
+        for (title, key, value) in [
+            ("흐름 외 관계도 보이기", "memoStrip.showRelations", "toggle"),
+            ("", "", ""),
+            ("관계별 목록 (기본)", "memoStrip.expandedStyle", "list"),
+            ("작은 지도", "memoStrip.expandedStyle", "map"),
+            ("", "", ""),
+            ("바로 이어진 메모만 (기본)", "memoStrip.depth", "1"),
+            ("이웃 메모까지", "memoStrip.depth", "2")
+        ] {
+            if title.isEmpty { stripMenu.addItem(.separator()); continue }
+            let entry = item(title: title, action: #selector(selectMemoStripSetting(_:)), key: "")
+            entry.representedObject = [key, value]
+            stripMenu.addItem(entry)
+            memoStripItems.append(entry)
+        }
         let styleItem = NSMenuItem(title: "단추 모양", action: nil, keyEquivalent: "")
         let styles = NSMenu(title: "단추 모양")
         styleItem.submenu = styles
@@ -787,12 +808,26 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return menuItem
     }
 
+    @objc private func selectMemoStripSetting(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String] else { return }
+        if pair[1] == "toggle" { UserDefaults.standard.set(!MemoStripSettings().showRelations, forKey: pair[0]) }
+        else if pair[0] == "memoStrip.depth" { UserDefaults.standard.set(Int(pair[1]) ?? 1, forKey: pair[0]) }
+        else { UserDefaults.standard.set(pair[1], forKey: pair[0]) }
+        windowRegistry.refreshFlowStrips()
+    }
+
     /// 메뉴를 열 때마다 현재 상태를 갱신한다.
     func menuWillOpen(_ menu: NSMenu) {
         guard menu !== fontMenu else { return }
         setInfoTitle(memoryItem, "메모리 \(MemoryReporter.formattedFootprint())"
             + "  ·  열린 창 \(windowRegistry.openCount)개"
             + "  ·  전체 \(store.summaries.count)개")
+        let stripSettings = MemoStripSettings()
+        for entry in memoStripItems {
+            guard let pair = entry.representedObject as? [String] else { continue }
+            let selected = pair[1] == "toggle" ? stripSettings.showRelations : (pair[0] == "memoStrip.depth" ? String(stripSettings.depth) == pair[1] : stripSettings.expandedStyle == pair[1])
+            entry.state = selected ? .on : .off
+        }
         pipeLabelsItem?.state = (UserDefaults.standard.object(forKey: "board.showPipeLabels") as? Bool ?? true) ? .on : .off
         for entry in lineStyleItems { entry.state = (entry.representedObject as? String) == (UserDefaults.standard.string(forKey: "board.lineButtonStyle") ?? "A") ? .on : .off }
         refreshFontSizeMenuState()

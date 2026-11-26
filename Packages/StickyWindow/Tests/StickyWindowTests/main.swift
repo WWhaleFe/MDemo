@@ -3,7 +3,7 @@ import EditorKit
 import MarkdownEngine
 import MemoCore
 import Services
-import StickyWindow
+@testable import StickyWindow
 import TestKit
 
 // 창 동작은 눈으로만 확인하기 쉬운데, 그러면 고칠 때마다 놓치는 곳이 생긴다.
@@ -444,6 +444,147 @@ runner.test("흐름 줄은 이웃 메모와 연결 해제를 반영한다") { t 
         store.unlink(middle, last)
         registry.refreshFlowStrips()
         t.expectEqual(registry.flowStripState(of: middle)?.isVisible, false)
+    }
+}
+
+runner.test("관계 줄 기본값은 관계 표시, 목록, 한 단계다") { t in
+    let name = "MemoStripDefaults-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    let settings = MemoStripSettings(defaults: defaults)
+    t.expect(settings.showRelations)
+    t.expectEqual(settings.expandedStyle, "list")
+    t.expectEqual(settings.depth, 1)
+    defaults.set("알 수 없음", forKey: "memoStrip.expandedStyle")
+    defaults.set(9, forKey: "memoStrip.depth")
+    t.expectEqual(MemoStripSettings(defaults: defaults).expandedStyle, "list")
+    t.expectEqual(MemoStripSettings(defaults: defaults).depth, 1)
+}
+
+runner.test("관계 계산은 방향을 보존하고 자기, 직접 이웃, 중복 경로를 제외한다") { t in
+    let a = MemoID.generate(), b = MemoID.generate(), c = MemoID.generate(), d = MemoID.generate()
+    let edges: [MemoEdge] = [
+        .init(from: a, to: a, kind: .related),
+        .init(from: a, to: b, kind: .related),
+        .init(from: a, to: b, kind: .related),
+        .init(from: c, to: a, kind: .dashto),
+        .init(from: b, to: c, kind: .both),
+        .init(from: b, to: d, kind: .contain),
+        .init(from: c, to: d, kind: .related)
+    ]
+    let one = MemoStripRelations.calculate(current: a, flow: nil, edges: edges, depth: 1)
+    t.expectEqual(one.direct.count, 2)
+    t.expectEqual(one.direct.first?.other, b)
+    t.expectEqual(one.direct.first?.outgoing, true)
+    t.expectEqual(one.direct.last?.outgoing, false)
+    t.expect(one.indirect.isEmpty)
+    let two = MemoStripRelations.calculate(current: a, flow: nil, edges: edges, depth: 2)
+    t.expectEqual(two.indirect.count, 1)
+    t.expectEqual(two.indirect.first?.via, b)
+    t.expectEqual(two.indirect.first?.other, d)
+    t.expectEqual(two.indirect.first?.kind, .contain)
+    t.expect(two.isVisible(showRelations: true))
+    t.expect(!two.isVisible(showRelations: false))
+    let onlyFlow = MemoStripRelations.calculate(current: a, flow: nil, edges: edges, depth: 2, showRelations: false)
+    t.expect(onlyFlow.direct.isEmpty && onlyFlow.indirect.isEmpty)
+}
+
+runner.test("두 단계 이웃은 최대 열두 개이고 흐름만 표시할 때 다른 종류를 따라가지 않는다") { t in
+    let a = MemoID.generate(), b = MemoID.generate()
+    let flow = MemoFlow(id: a, memoIDs: [a, b])
+    let edges = [MemoEdge(from: a, to: b, kind: .flow)] + (0..<20).map { _ in MemoEdge(from: b, to: .generate(), kind: .related) }
+    let all = MemoStripRelations.calculate(current: a, flow: flow, edges: edges, depth: 2)
+    t.expectEqual(all.indirect.count, 12)
+    let filtered = MemoStripRelations.calculate(current: a, flow: flow, edges: edges, depth: 2, showRelations: false)
+    t.expectEqual(filtered.direct.count, 1)
+    t.expect(filtered.indirect.isEmpty)
+    t.expect(filtered.isVisible(showRelations: false))
+}
+
+runner.test("관련만 있는 메모도 줄을 보이고 설정과 창 접기를 반영한다") { t in
+    try MainActor.assumeIsolated {
+        let key = "memoStrip.showRelations"
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let saved { UserDefaults.standard.set(saved, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        UserDefaults.standard.set(true, forKey: key)
+        let (registry, store, root) = try makeRegistry()
+        defer { registry.closeAll(); try? FileManager.default.removeItem(at: root) }
+        let a = registry.createMemo(), b = registry.createMemo()
+        store.link(from: a, to: b, kind: .related)
+        registry.refreshFlowStrips()
+        t.expect(registry.relationStripIsVisible(of: a))
+        t.expectEqual(registry.flowStripState(of: a)?.isVisible, false)
+        t.expectEqual(registry.flowStripState(of: a)?.previous, nil)
+        registry.toggleCollapsed(id: a)
+        t.expect(!registry.relationStripIsVisible(of: a))
+        registry.toggleCollapsed(id: a)
+        t.expect(registry.relationStripIsVisible(of: a))
+        UserDefaults.standard.set(false, forKey: key)
+        registry.refreshFlowStrips()
+        t.expect(!registry.relationStripIsVisible(of: a))
+    }
+}
+
+runner.test("펼친 관계 패널은 본문을 덮고 메모를 열거나 바꾸면 접힌다") { t in
+    MainActor.assumeIsolated {
+        let a = MemoID.generate(), b = MemoID.generate()
+        let root = StickyRootView(frame: NSRect(x: 0, y: 0, width: 424, height: 410))
+        let strip = FlowStripView(frame: NSRect(x: 0, y: 0, width: 424, height: 36))
+        root.addSubview(strip)
+        let relations = MemoStripRelations.calculate(current: a, flow: nil, edges: [.init(from: b, to: a, kind: .dashto)], depth: 1)
+        strip.update(relations: relations, settings: MemoStripSettings(), current: a, summaries: [:])
+        strip.layoutSubtreeIfNeeded()
+        let toggle = strip.subviews.compactMap { $0 as? NSButton }.first { $0.toolTip == "이어진 메모 펼치기" }!
+        toggle.performClick(nil)
+        let panel = root.subviews.compactMap { $0 as? RelationPanelView }.first
+        t.expectNotNil(panel)
+        t.expectEqual(root.frame.height, 410)
+        t.expectEqual(panel?.frame.minY, 36)
+        t.expect((panel?.frame.height ?? 0) <= 326)
+        var opened: MemoID?
+        strip.onOpen = { opened = $0 }
+        func buttons(in view: NSView) -> [NSButton] {
+            view.subviews.flatMap { child in (child as? NSButton).map { [$0] } ?? buttons(in: child) }
+        }
+        let chips = panel.map { buttons(in: $0).filter { $0.isEnabled && !$0.title.isEmpty } } ?? []
+        t.expect(!chips.isEmpty)
+        chips.first?.performClick(nil)
+        t.expectEqual(opened, b)
+        t.expect(root.subviews.compactMap { $0 as? RelationPanelView }.isEmpty)
+        toggle.performClick(nil)
+        strip.update(relations: relations, settings: MemoStripSettings(), current: b, summaries: [:])
+        t.expect(root.subviews.compactMap { $0 as? RelationPanelView }.isEmpty)
+    }
+}
+
+runner.test("작은 지도는 좁은 폭에서 목록으로 바뀌고 패널 배경은 불투명하다") { t in
+    MainActor.assumeIsolated {
+        let a = MemoID.generate(), b = MemoID.generate(), c = MemoID.generate()
+        let relations = MemoStripRelations.calculate(current: a, flow: MemoFlow(id: a, memoIDs: [a, b]), edges: [
+            .init(from: a, to: b, kind: .flow), .init(from: b, to: c, kind: .related)
+        ], depth: 2)
+        let root = StickyRootView(frame: NSRect(x: 0, y: 0, width: 424, height: 410))
+        root.apply(colorHex: "#F6E7A8", backgroundAlpha: 0.5)
+        let panel = RelationPanelView(relations: relations, current: a, summaries: [:], map: true)
+        root.addSubview(panel)
+        panel.configure(width: 424)
+        let mapHeight = panel.contentHeight
+        panel.frame = NSRect(x: 0, y: 36, width: 424, height: min(326, mapHeight))
+        panel.layoutSubtreeIfNeeded()
+        if let bitmap = panel.bitmapImageRepForCachingDisplay(in: panel.bounds) {
+            panel.cacheDisplay(in: panel.bounds, to: bitmap)
+            let alpha = bitmap.colorAt(x: 1, y: 1)?.alphaComponent ?? 0
+            t.expect(alpha > 0.99, "패널 배경이 본문을 가릴 만큼 불투명하지 않다")
+        } else { t.expect(false, "패널을 그리지 못했다") }
+        panel.configure(width: 220)
+        t.expect(panel.contentHeight != mapHeight)
+        let scroll = panel.subviews.compactMap { $0 as? NSScrollView }.first
+        let labels = scroll?.documentView?.subviews.compactMap { $0 as? NSTextField }.map(\.stringValue) ?? []
+        t.expect(labels.contains("건너 이어진 메모"))
+        t.expect(labels.contains("흐름"))
     }
 }
 

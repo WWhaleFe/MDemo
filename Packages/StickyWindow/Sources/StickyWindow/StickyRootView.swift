@@ -3,6 +3,7 @@ import MemoCore
 
 /// 스티키 창의 배경 레이어. 둥근 모서리와 배경 알파를 담당한다 (WIN-02, OPA-01).
 public final class StickyRootView: NSView {
+    var stripBaseColor: NSColor { baseColor }
     private var baseColor: NSColor = .white
     private var backgroundAlpha: Double = 0.95
 
@@ -17,6 +18,11 @@ public final class StickyRootView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("스토리보드를 사용하지 않는다")
+    }
+
+    public override func layout() {
+        super.layout()
+        for strip in subviews.compactMap({ $0 as? FlowStripView }) { strip.layoutPanel() }
     }
 
     /// 마우스가 들어오고 나갈 때 알린다 (OPA-04).
@@ -47,6 +53,7 @@ public final class StickyRootView: NSView {
         }
         backgroundAlpha = MemoMeta.clampBackgroundAlpha(alpha)
         applyBackground()
+        subviews.compactMap { $0 as? RelationPanelView }.forEach { $0.needsDisplay = true }
     }
 
     private func applyBackground() {
