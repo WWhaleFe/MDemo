@@ -1,0 +1,19 @@
+name: Rust 핵심 테스트
+on:
+  push:
+    paths: ['core/**', '.github/workflows/core.yml']
+  pull_request:
+    paths: ['core/**', '.github/workflows/core.yml']
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --workspace

@@ -8,7 +8,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STATUS=0
 
-for package in MemoCore MarkdownEngine Services; do
+for package in CoreBridge MemoCore MarkdownEngine Services; do
     HITS="$(grep -rn --include='*.swift' -E '^\s*import (AppKit|SwiftUI|UIKit|Cocoa)' \
         "$ROOT/Packages/$package/Sources" 2>/dev/null || true)"
     if [ -n "$HITS" ]; then
@@ -34,6 +34,17 @@ if [ -n "$NET_HITS" ]; then
     STATUS=1
 else
     echo "✓ 네트워크 통신 코드 없음 (NFR-07, 업데이트 확인 · 구글 드라이브 · 노션 통신 제외)"
+fi
+
+# C 모듈은 CoreBridge만, CoreBridge는 화면 아래 계층만 참조한다.
+FFI_HITS="$(rg -n --glob '*.swift' '^\s*(@[A-Za-z]+\s+)*(public\s+|internal\s+|private\s+|fileprivate\s+|package\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(MDemoCoreFFI)(\b|\.)' "$ROOT/Packages" "$ROOT/App" | grep -v '/Packages/CoreBridge/' || true)"
+BRIDGE_HITS="$(rg -n --glob '*.swift' '^\s*(@[A-Za-z]+\s+)*(public\s+|internal\s+|private\s+|fileprivate\s+|package\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?CoreBridge(\b|\.)' "$ROOT/Packages/Features" "$ROOT/Packages/StickyWindow" "$ROOT/Packages/EditorKit" "$ROOT/App" || true)"
+if [ -n "$FFI_HITS$BRIDGE_HITS" ]; then
+    echo "✗ Rust 경계 계층 규칙 위반:"
+    echo "$FFI_HITS$BRIDGE_HITS"
+    STATUS=1
+else
+    echo "✓ Rust 경계 계층 규칙 통과"
 fi
 
 exit $STATUS

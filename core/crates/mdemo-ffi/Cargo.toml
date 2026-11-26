@@ -1,0 +1,13 @@
+[package]
+name = "mdemo-ffi"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "mdemo_ffi"
+
+[dependencies]
+mdemo-core = { path = "../mdemo-core" }
+uniffi = { workspace = true }

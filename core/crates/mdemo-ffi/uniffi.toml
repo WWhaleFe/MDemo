@@ -1,0 +1,4 @@
+[bindings.swift]
+module_name = "MDemoBindings"
+ffi_module_name = "MDemoCoreFFI"
+generate_module_map = true

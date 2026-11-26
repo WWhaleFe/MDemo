@@ -25,3 +25,8 @@ App/Resources/GoogleOAuth.plist
 
 # 노션 로그인 값 (저장소에는 빈 예시 NotionOAuth.example.plist만 둔다)
 App/Resources/NotionOAuth.plist
+
+# Rust 핵심과 자동 생성된 Swift 바인딩
+core/target/
+build/core/
+Packages/CoreBridge/Sources/CoreBridge/Generated/

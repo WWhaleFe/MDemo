@@ -48,3 +48,12 @@
 - Windows판 OAuth는 같은 구글 클라우드 프로젝트에 데스크톱 클라이언트를 하나 더 만든다(`drive.file`은 프로젝트 단위).
 - 커밋 · 푸시 · 릴리스는 요청받았을 때만. 릴리스는 `make dist` → GitHub 릴리스 → `wwhalefe/tap`의 `Casks/mdemo.rb` 버전 · 해시 → `brew uninstall`(--zap 없이) 후 `brew install --cask mdemo`, 설치 전후 메모 수 · 지문 비교.
 - `make build` · `make test` · `make check`(계층 · 네트워크 예외 점검)가 모두 통과해야 한다.
+
+## P1 연결 빌드
+
+- 계층은 Rust 핵심 → MDemoCoreFFI → CoreBridge → MemoCore → 화면 순서다. 화면에서 CoreBridge를 직접 가져오지 않는다.
+- 최초 Swift 빌드 전에는 `Scripts/build-core.sh debug`가 필요하다. `make build`와 `make test`는 이를 자동 실행하며, `make release`와 `make dist`는 release 프로필을 사용한다.
+- 맥 두 아키텍처의 staticlib를 유니버설 XCFramework로 묶고 앱에는 정적으로 링크한다. cdylib는 UniFFI 메타데이터 추출에만 사용한다.
+- 바인딩과 XCFramework는 생성 산출물이다. Rust 소스, Cargo 설정과 잠금 파일, UniFFI 설정, 생성 스크립트, 도구 버전과 프로필이 같으면 재사용한다.
+- UniFFI 0.28 생성 코드의 동시성 규칙에 맞춰 CoreBridge만 Swift 5 언어 모드를 사용한다.
+- `make test`는 Rust 작업공간과 CoreBridgeTests도 실행한다. `make check`는 Windows MSVC 교차 release 빌드 실패를 그대로 실패로 처리한다.

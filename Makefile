@@ -13,6 +13,7 @@ help:
 	@echo "make clean    - 빌드 산출물 삭제"
 
 build:
+	@Scripts/build-core.sh debug
 	@Scripts/bundle.sh debug
 
 run: build
@@ -21,14 +22,17 @@ run: build
 	@echo "▸ 실행됨. 메뉴바의 메모 아이콘을 확인하세요."
 
 release:
+	@Scripts/build-core.sh release
 	@Scripts/bundle.sh release
 
 # 다른 Mac에 옮겨 설치해 볼 테스트용 앱. 빌드 번호(커밋 수)를 넣고 dmg·zip으로 묶는다.
 dist:
+	@Scripts/build-core.sh release
 	@Scripts/package.sh
 
 # Xcode 없이도 돌아가도록 swift test 대신 러너를 실행한다 (Packages/TestKit 참고)
 test:
+	@Scripts/build-core.sh debug
 	@Scripts/test.sh
 
 golden:
@@ -36,6 +40,7 @@ golden:
 
 check:
 	@Scripts/check-layering.sh
+	@Scripts/check-core-windows.sh
 
 # 메모리 게이트 확인용 (NFR-02 / NFR-09)
 mem:

@@ -11,3 +11,6 @@ if ! swift --version >/dev/null 2>&1; then
     echo "  Xcode 툴체인을 쓰려면 터미널에서 한 번만 실행하세요:"
     echo "    sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch"
 fi
+
+# Rust 도구가 PATH에 없는 환경에서도 설치된 툴체인을 사용한다.
+export PATH="$(dirname "$(rustup which cargo)"):$HOME/.cargo/bin:$PATH"
