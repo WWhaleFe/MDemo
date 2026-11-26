@@ -1,0 +1,14 @@
+[package]
+name = "mdemo-crypto"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+pbkdf2 = { version = "=0.12.2", default-features = false, features = ["hmac"] }
+hmac = "0.12"
+sha2 = "0.10"
+zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
+getrandom = "0.2"
+subtle = "2"
