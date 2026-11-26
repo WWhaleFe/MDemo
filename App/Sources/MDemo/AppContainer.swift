@@ -37,8 +37,8 @@ final class AppContainer {
         let migration = LegacyMigration.run(
             applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
             iCloudDrive: SyncService.iCloudDriveRoot(),
-            legacyDefaults: UserDefaults.standard.persistentDomain(forName: LegacyMigration.legacyBundleIdentifier),
-            defaults: .standard
+            legacyDefaults: AppSettings.defaults.persistentDomain(forName: LegacyMigration.legacyBundleIdentifier),
+            defaults: AppSettings.defaults
         )
         if !migration.errors.isEmpty {
             NSLog("MDemo: 예전 데이터를 옮기지 못한 항목이 있습니다, %@", migration.errors.joined(separator: "; "))

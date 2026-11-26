@@ -6,7 +6,7 @@ public struct MemoStripSettings: Equatable, Sendable {
     public var showRelations: Bool
     public var expandedStyle: String
     public var depth: Int
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = AppSettings.defaults) {
         showRelations = defaults.object(forKey: "memoStrip.showRelations") as? Bool ?? true
         expandedStyle = defaults.string(forKey: "memoStrip.expandedStyle") == "map" ? "map" : "list"
         depth = defaults.integer(forKey: "memoStrip.depth") == 2 ? 2 : 1

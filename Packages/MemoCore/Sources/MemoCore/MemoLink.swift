@@ -74,15 +74,18 @@ public struct MemoLink: Hashable, Sendable, Codable {
     }
     /// 알 수 없는 꼬리는 해석하지 않고 원문 그대로 보존한다.
     public var unknownSuffix: String
+    /// 해석에 실패한 라벨이 꼬리에 포함됐는지 기록해 빈 라벨 구분자를 중복하지 않는다.
+    var preservesRawLabel: Bool?
     public static func normalizedLabel(_ value: String) -> String { String(value.prefix(20)) }
 
-    private enum CodingKeys: String, CodingKey { case to, kind, label, unknownSuffix }
+    private enum CodingKeys: String, CodingKey { case to, kind, label, unknownSuffix, preservesRawLabel }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(to: try values.decode(MemoID.self, forKey: .to),
                   kind: try values.decode(MemoLinkKind.self, forKey: .kind),
                   label: try values.decodeIfPresent(String.self, forKey: .label) ?? "",
                   unknownSuffix: try values.decodeIfPresent(String.self, forKey: .unknownSuffix) ?? "")
+        preservesRawLabel = try values.decodeIfPresent(Bool.self, forKey: .preservesRawLabel)
     }
 
     /// 모양은 기존 종류 토큰 하나로 보관해 서로 어긋나는 조합이 생기지 않게 한다.

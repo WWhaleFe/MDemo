@@ -256,7 +256,7 @@ public struct FileMemoRepository: MemoRepository {
         let text = try? String(contentsOf: target.appendingPathComponent(Self.memoFileName), encoding: .utf8)
         let document = text.flatMap { try? FrontmatterCodec.decode(fileContents: $0) }
         let hasKey = try keychain.read(id: id) != nil
-        if hasKey || document == nil || document?.meta.isLocked == true || text?.contains("locked: true") == true {
+        if hasKey || document == nil || document?.meta.isLocked == true {
             try keychain.delete(id: id)
             try MemoPrivacyLedger.insert(id, name: "destroyed", root: rootDirectory)
             try SecureMemoDeletion.removeCopies(id: id, root: rootDirectory)

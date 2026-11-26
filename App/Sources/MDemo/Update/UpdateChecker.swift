@@ -1,4 +1,5 @@
 import AppKit
+import MemoCore
 import Services
 import UserNotifications
 
@@ -220,7 +221,7 @@ final class UpdateChecker: NSObject {
 
     /// 같은 버전은 한 번만 알린다. 매일 확인할 때마다 같은 알림이 뜨면 성가시다.
     private func notifyOnce(version: String) {
-        let defaults = UserDefaults.standard
+        let defaults = AppSettings.defaults
         guard defaults.string(forKey: Self.lastNotifiedKey) != version else { return }
 
         let center = UNUserNotificationCenter.current()

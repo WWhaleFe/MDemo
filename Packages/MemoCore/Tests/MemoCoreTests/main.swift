@@ -83,6 +83,62 @@ runner.test("프론트매터는 왕복해도 값이 보존된다") { t in
     t.expectEqual(decoded.body, original.body, "본문이 변형되면 안 된다")
 }
 
+runner.test("따옴표와 역슬래시 및 줄바꿈을 한 번만 해석한다") { t in
+    for value in ["역슬래시 뒤 따옴표 \\\"", "줄\n바꿈\r복귀\r\n끝", #"문자 그대로 \n \r \x \\"#, "끝\\", "한글 👩‍💻"] {
+        let document = MemoDocument(meta: MemoMeta(id: .generate(), title: value, group: value, created: Date(timeIntervalSince1970: 1_000), modified: Date(timeIntervalSince1970: 1_000)), body: "본문\n유지")
+        let encoded = FrontmatterCodec.encode(document)
+        let decoded = try FrontmatterCodec.decode(fileContents: encoded)
+        t.expectEqual(decoded.meta.title, value)
+        t.expectEqual(decoded.meta.group, value)
+        t.expectEqual(decoded.body, document.body)
+        t.expectEqual(Data(FrontmatterCodec.encode(decoded).utf8), Data(encoded.utf8))
+    }
+    let document = MemoDocument(meta: MemoMeta(id: .generate(), title: "자리"), body: "")
+    let unknownEscape = FrontmatterCodec.encode(document).replacingOccurrences(of: "title: \"자리\"", with: #"title: "알 수 없는 \x""#)
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: unknownEscape).meta.title, #"알 수 없는 \x"#)
+}
+
+runner.test("기존 작성기가 쓴 줄바꿈 없는 파일은 바이트 그대로 왕복한다") { t in
+    for value in ["일반 제목", #"따옴표 "와 역슬래시 \"#, #"C:\notes\new \"인용\" \\"#, #"\n과 \r은 글자"#] {
+        let document = MemoDocument(meta: MemoMeta(id: .generate(), title: "자리", group: "자리", created: Date(timeIntervalSince1970: 1_000), modified: Date(timeIntervalSince1970: 1_000)), body: "본문")
+        // 기존 작성기의 치환 순서로 만든 값을 골든 파일에 넣는다.
+        let legacyQuoted = "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        let legacy = FrontmatterCodec.encode(document).replacingOccurrences(of: "\"자리\"", with: legacyQuoted)
+        let decoded = try FrontmatterCodec.decode(fileContents: legacy)
+        t.expectEqual(decoded.meta.title, value)
+        t.expectEqual(decoded.meta.group, value)
+        t.expectEqual(Data(FrontmatterCodec.encode(decoded).utf8), Data(legacy.utf8))
+    }
+}
+
+runner.test("해석하지 못한 라벨 꼬리도 세 번 저장한 뒤 원문과 같다") { t in
+    let id = MemoID.generate()
+    for tail in ["~%ZZ", "~%ZZ~future", "~~future", "~~%ZZ", "~label~future"] {
+        let document = MemoDocument(meta: MemoMeta(id: .generate(), created: Date(timeIntervalSince1970: 1_000), modified: Date(timeIntervalSince1970: 1_000)), body: "본문")
+        let original = FrontmatterCodec.encode(document).replacingOccurrences(of: "\n---\n", with: "\nlinks: flow:\(id.rawValue)\(tail)\n---\n")
+        var text = original
+        for _ in 0..<3 {
+            let decoded = try FrontmatterCodec.decode(fileContents: text)
+            t.expectEqual(decoded.meta.links.count, 1)
+            text = FrontmatterCodec.encode(decoded)
+        }
+        t.expectEqual(Data(text.utf8), Data(original.utf8))
+    }
+}
+
+runner.test("시험 실행의 설정 접근자는 standard와 분리되고 실행 인자를 읽는다") { t in
+    let defaults = AppSettings.defaults(arguments: ["MDemo", "--data-dir=/tmp/mdemo-settings-test"])
+    t.expect(defaults !== UserDefaults.standard)
+    t.expect(AppSettings.defaults(arguments: ["MDemo"]) === UserDefaults.standard)
+    let key = "mdemo.test.argument." + UUID().uuidString
+    var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+    let saved = arguments
+    defer { defaults.setVolatileDomain(saved, forName: UserDefaults.argumentDomain) }
+    arguments[key] = "인자 값"
+    defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+    t.expectEqual(defaults.string(forKey: key), "인자 값")
+}
+
 runner.test("제목은 프론트매터에 남고 왕복해도 그대로다 (TXT-06)") { t in
     let meta = MemoMeta(id: .generate(), title: "장보기 목록")
     let encoded = FrontmatterCodec.encode(MemoDocument(meta: meta, body: "우유"))
@@ -1212,6 +1268,8 @@ runner.test("선의 모르는 꼬리와 이전 JSON 형식은 보존한다") { t
     let decoded = try FrontmatterCodec.decode(fileContents: text)
     t.expectEqual(decoded.meta.links.first?.label, "")
     t.expectEqual(decoded.meta.links.first?.unknownSuffix, "~%ZZ~future:tail")
+    let restoredLinks = try JSONDecoder().decode([MemoLink].self, from: JSONEncoder().encode(decoded.meta.links))
+    t.expectEqual(restoredLinks, decoded.meta.links)
     t.expectEqual(try FrontmatterCodec.decode(fileContents: FrontmatterCodec.encode(decoded)).meta.links, decoded.meta.links)
     let data = try JSONEncoder().encode(MemoLink(to: target, kind: .flow))
     var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -1468,6 +1526,37 @@ runner.test("본문 저장 실패는 실패 결과를 돌려주고 원본을 보
     t.expect(!store.saveBody(id: id, body: "편집 내용"))
     t.expectEqual(try base.load(id: id).body, "원본")
     t.expect(!(try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+}
+
+runner.test("영구 삭제와 휴지통 비우기는 본문 대신 잠금 메타데이터로 경로를 고른다") { t in
+    for emptyTrash in [false, true] {
+        let (repository, root) = try makeTemporaryRepository()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var ids: [MemoID] = []
+        for isLocked in [false, true] {
+            let id = MemoID.generate()
+            ids.append(id)
+            var meta = MemoMeta(id: id, isLocked: isLocked)
+            if isLocked {
+                meta.lockVersion = 1
+                meta.lockSalt = Data(repeating: 1, count: 16).base64EncodedString()
+            }
+            let body = isLocked ? Data(repeating: 2, count: 48).base64EncodedString() : "본문\nlocked: true\n일반 텍스트"
+            try repository.save(MemoDocument(meta: meta, body: body))
+            try repository.moveToTrash(id: id)
+        }
+        if emptyTrash {
+            try repository.emptyTrash(deletedBefore: nil)
+        } else {
+            for id in ids { try repository.permanentlyDelete(id: id) }
+        }
+        let destroyed = try MemoPrivacyLedger.read("destroyed", root: root)
+        t.expect(!destroyed.contains(ids[0].rawValue), "일반 메모에 파기 묘비가 생겼다")
+        t.expect(destroyed.contains(ids[1].rawValue), "잠긴 메모가 안전 삭제를 건너뛰었다")
+        for id in ids {
+            t.expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("trash").appendingPathComponent(id.rawValue).path))
+        }
+    }
 }
 
 runner.test("손상된 암호 메모도 영구 삭제하면 열쇠와 폴더를 지운다") { t in

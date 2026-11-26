@@ -1,4 +1,5 @@
 import Foundation
+import MemoCore
 import Observation
 
 /// 서식 막대를 붙일 자리 (FMT-02, SET-08).
@@ -181,7 +182,7 @@ public final class AppPreferences {
         static let lastMemoHeight = "memo.lastHeight"
     }
 
-    public init(store: UserDefaults = .standard) {
+    public init(store: UserDefaults = AppSettings.defaults) {
         self.store = store
         self.fontFamily = store.string(forKey: Key.fontFamily)
 

@@ -24,7 +24,7 @@ struct BoardLineTools: View {
     let choose: (MemoLinkKind) -> Void
     @AppStorage("board.lineButtonStyle") private var style = "A"
     @AppStorage("board.showPipeLabels") private var labels = true
-    @State private var visibleNames = UserDefaults.standard.stringArray(forKey: "board.visibleLineKinds") ?? MemoLinkKind.basic.map(\.rawValue)
+    @State private var visibleNames = AppSettings.defaults.stringArray(forKey: "board.visibleLineKinds") ?? MemoLinkKind.basic.map(\.rawValue)
     @State private var legend = false
     @State private var visibility = false
     private var visible: [MemoLinkKind] {
@@ -117,7 +117,7 @@ struct BoardLineTools: View {
     private func save(_ values: [MemoLinkKind]) {
         guard !values.isEmpty else { return }
         visibleNames = MemoLinkKind.allCases.filter { values.contains($0) }.map(\.rawValue)
-        UserDefaults.standard.set(visibleNames, forKey: "board.visibleLineKinds")
+        AppSettings.defaults.set(visibleNames, forKey: "board.visibleLineKinds")
     }
 }
 

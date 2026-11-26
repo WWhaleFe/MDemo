@@ -29,8 +29,8 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
 
     /// 저장된 값이 없으면 끈다. 다른 앱이나 파일을 고를 때 목록 창이 가리지 않게 한다.
     public static var isAlwaysOnTop: Bool {
-        get { UserDefaults.standard.bool(forKey: alwaysOnTopKey) }
-        set { UserDefaults.standard.set(newValue, forKey: alwaysOnTopKey) }
+        get { AppSettings.defaults.bool(forKey: alwaysOnTopKey) }
+        set { AppSettings.defaults.set(newValue, forKey: alwaysOnTopKey) }
     }
 
     public init(
@@ -78,7 +78,7 @@ public final class MemoListWindowController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 820, height: 520)
-        window.contentView = NSHostingView(rootView: view)
+        window.contentView = NSHostingView(rootView: view.defaultAppStorage(AppSettings.defaults))
         window.delegate = self
         window.isReleasedWhenClosed = false
         window.center()
