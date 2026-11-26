@@ -652,6 +652,7 @@ dependencies = [
  "mdemo-core",
  "mdemo-crypto",
  "mdemo-markdown",
+ "mdemo-sync",
  "serde_json",
 ]
 
@@ -668,6 +669,9 @@ name = "mdemo-sync"
 version = "0.16.0"
 dependencies = [
  "mdemo-core",
+ "mdemo-crypto",
+ "serde",
+ "serde_json",
  "zip",
 ]
 

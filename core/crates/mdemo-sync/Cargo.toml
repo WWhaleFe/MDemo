@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 mdemo-core = { path = "../mdemo-core" }
 zip = { version = "=2.2.0", default-features = false, features = ["deflate"] }
+mdemo-crypto = { path = "../mdemo-crypto" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }

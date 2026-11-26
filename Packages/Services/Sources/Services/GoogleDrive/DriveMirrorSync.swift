@@ -21,7 +21,7 @@ public enum DriveSyncError: Error, LocalizedError {
 ///
 /// 한 번의 동기화: (1) 드라이브 -> 거울 내려받기 (2) `SyncService` 양방향 (3) 거울 -> 드라이브 올리기.
 public struct DriveMirrorSync: Sendable {
-    public let service: SyncService
+    public var service: SyncService
     private let mirrorRoot: URL
     private let stateURL: URL
     private let api: any DriveAPI

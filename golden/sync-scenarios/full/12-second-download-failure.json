@@ -1,0 +1,62 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "create",
+      "device": "A",
+      "id": 1
+    },
+    {
+      "action": "create",
+      "device": "A",
+      "id": 2
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "edit",
+      "device": "A",
+      "id": 1,
+      "body": "수정1",
+      "modified": "2023-11-14T22:13:30.000Z"
+    },
+    {
+      "action": "edit",
+      "device": "A",
+      "id": 2,
+      "body": "수정2",
+      "modified": "2023-11-14T22:13:30.000Z"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "driveRemove",
+      "id": 0,
+      "path": "memos/{id}/memo.md"
+    },
+    {
+      "action": "sync",
+      "device": "B",
+      "failures": [
+        "download:2"
+      ],
+      "expectError": true
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    }
+  ]
+}

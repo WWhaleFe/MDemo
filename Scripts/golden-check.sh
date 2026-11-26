@@ -6,7 +6,7 @@ if [ "$#" -ne 1 ]; then
     echo "사용법: $0 swift|rust" >&2
     exit 2
 fi
-RUST_PENDING=(sync-state-google.json sync-state-google.hashes.json drive-state.json)
+RUST_PENDING=()
 case "$1" in
     swift) CLI="$ROOT/Scripts/golden-run-swift.sh" ;;
     rust)
@@ -20,7 +20,7 @@ trap 'rm -rf "$WORK"' EXIT
 export CFFIXED_USER_HOME="$WORK/home"
 mkdir -p "$CFFIXED_USER_HOME"
 "$CLI" "$ROOT/golden/inputs" "$WORK/output"
-python3 - "$ROOT/golden/expected" "$WORK/output" "$1" "${RUST_PENDING[@]}" <<'PY'
+python3 - "$ROOT/golden/expected" "$WORK/output" "$1" ${RUST_PENDING[@]+"${RUST_PENDING[@]}"} <<'PY'
 import pathlib, sys, itertools
 expected, actual = map(pathlib.Path, sys.argv[1:3])
 implementation = sys.argv[3]

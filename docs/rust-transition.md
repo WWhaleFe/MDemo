@@ -57,3 +57,46 @@
 - 바인딩과 XCFramework는 생성 산출물이다. Rust 소스, Cargo 설정과 잠금 파일, UniFFI 설정, 생성 스크립트, 도구 버전과 프로필이 같으면 재사용한다.
 - UniFFI 0.28 생성 코드의 동시성 규칙에 맞춰 CoreBridge만 Swift 5 언어 모드를 사용한다.
 - `make test`는 Rust 작업공간과 CoreBridgeTests도 실행한다. `make check`는 Windows MSVC 교차 release 빌드 실패를 그대로 실패로 처리한다.
+
+## P6 구현과 검증 (rust-p6)
+
+앱의 실행 경로는 P7 전까지 Swift 그대로다. Rust `mdemo-sync`에 폴더 동기화, 드라이브 거울 비교, ZIP 백업을 추가했다. DriveApi는 list · download · upload · update · create_folder · delete만 정의하며 HTTP · OAuth · 토큰은 구현하지 않는다. 기존에 사용 중인 serde · serde_json · mdemo-crypto를 재사용했고 새 외부 크레이트는 추가하지 않았다.
+
+### 변경 파일과 이유
+
+- `core/crates/mdemo-sync/src/{engine,state,drive,backup,files,md5,fake,tests,lib}.rs`, 해당 Cargo.toml: Swift 규칙의 Rust 구현, 주입 가능한 시계 · ID · 열쇠 저장소, 네트워크 없는 가짜 드라이브, 폴더 교체와 재시도 시험.
+- `core/crates/mdemo-core/src/store/repository.rs`: 잠긴 메모 폴더의 백업 제외 표시 함수를 공개해 백업 복원에서도 재사용.
+- `core/crates/mdemo-golden/{Cargo.toml,src/main.rs,src/sync_step.rs}`, `core/Cargo.lock`: 상태 세 파일 생성과 시험 연산 실행, 기존 작업공간 크레이트 연결.
+- `Packages/Golden/Sources/mdemo-golden/{main,SyncStep,FakeDrive}.swift`: Swift 시험 명령과 ServicesTests 가짜 드라이브 소스 공유. FakeDrive.swift는 공유 소스로 향하는 상대 심볼릭 링크다.
+- `Packages/Services/Tests/ServicesTests/{main,FakeDrive}.swift`: 기존 가짜 드라이브를 별도 파일로 옮기고 고정 시각 · 상태 직렬화 · 요청별 실패 주입 추가.
+- `Packages/Services/Sources/Services/SyncService.swift`, `GoogleDrive/DriveMirrorSync.swift`: 시험에서 충돌 ID 생성기를 주입하도록 열었다. 앱의 기본 ID 생성기와 동작은 같다.
+- `Packages/MemoCore/Tests/MemoCoreTests/main.swift`: macOS 27의 Foundation 조회 불일치 때문에 백업 제외의 실제 디스크 속성 목록을 검증한다. 앱의 저장 코드는 유지했다.
+- `Scripts/{sync-check,backup-check}.{sh,py}`, `golden-build-swift.sh`, `golden-run-swift.sh`, `golden/sync-scenarios/`: 두 기기 교차 검사, 상태 쌍 왕복, 백업 ZIP 교차 검사와 Swift 시험 도구의 한 번 빌드.
+- `Scripts/{golden-check,test,check-core-windows}.sh`, `Makefile`: 골든 미이전 목록 제거, 기본 검사와 전체 검사 연결, Windows 빌드에 mdemo-sync 포함.
+- `golden/README.md`, `docs/hidden-behaviors.md`, 이 문서: 검사 계약, 새로 확인한 규칙, 구현 결과 기록.
+
+### 시나리오 결과
+
+모든 행에서 SS · RR · SR · RS가 각 단계의 두 데이터 · 거울 폴더, 드라이브 파일 · 요청 기록, 상태 파일과 보고서까지 일치했다.
+
+| 번호 | 검사 | 결과 |
+|---|---|---|
+| 1 | 첫 동기화 합치기, 삭제 요청 0 | 4조합 통과 |
+| 2 | 한쪽 수정 후 다른 기기 받기 | 4조합 통과 |
+| 3 | 양쪽 수정, 충돌 사본의 같은 회차 드라이브 전파 | 4조합 통과 |
+| 4 | 휴지통, 파기 장부와 영구 삭제 요청 전파 | 4조합 통과 |
+| 5 | 목록 · 내려받기 실패, 삭제 예정 파일도 그대로 보존 | 4조합 통과 |
+| 6 | 잠김 · 로컬 전용 메모의 올리기 요청 없음 | 4조합 통과 |
+| 7 | 무변경 memo.md 수정 시각 보존, ±0.0004/0.0005/0.0006초 판단 | 4조합 통과 |
+| 8 | 첨부 이미지 256바이트와 한글 경로 보존 | 4조합 통과 |
+| 전체 9~12 | 실패한 올리기 · 삭제 재시도, push/pull, 외부 편집, 두 번째 내려받기 실패 | 각각 4조합 통과 |
+
+상태 쌍 S→R · R→S는 각각 20개 ID의 모든 날짜와 지문을 복원했다. 골든은 양쪽 17개 파일 바이트 일치, Rust 단위 시험은 11개 통과다. 백업 ZIP은 풀린 트리 · 내용 일치, SS · RR · SR · RS 가져오기, 파기 ID 거부, 교체 시 기존 암호문 · 백업 제외 표시 보존을 확인했다.
+
+`make test`, `make check`, `make sync-full`을 실행해 통과했다. macOS arm64 실행과 x86_64 빌드, Windows x86_64 MSVC 교차 release 빌드를 확인했다. 검증 환경의 제한 때문에 Swift의 sandbox 해제 · native 빌드 설정과 Cargo 오프라인 설정은 실행 프로세스에서만 주입했다. Windows SDK 캐시도 시험용 build 폴더의 복사본을 사용했다. 이 설정들을 빌드 스크립트에 고정하지 않았다.
+
+### Windows 폴더 교체와 남은 확인
+
+새 폴더를 같은 부모의 `.<id>.tmp`에 만든다. 기존 폴더를 `.<id>.old`로 옮기고 임시 폴더를 원래 자리에 옮긴 뒤 복구본을 지운다. 임시 폴더 이동이 실패하면 복구본을 원래 이름으로 되돌린다. 되돌리기도 실패하면 복구본을 남기고 두 오류를 함께 반환한다. 남은 복구본을 덮어쓰지 않는다. 이 공통 함수의 실패 복구 · 기존 복구본 보존은 macOS에서 실행 시험했다. macOS 실제 교체는 `renamex_np(RENAME_SWAP)`의 원자적 이름 교환이다.
+
+Windows 실기 실행과 플랫폼 HTTP 연결은 각각 P8 · P7 이후 범위다. 이번에는 노션 원문을 읽을 수 있는 연결 도구가 없어 저장소 문서와 Swift 원본, 요청에 적힌 계획 규칙을 기준으로 구현했다. Rust는 링크와 안전하지 않은 ZIP 경로를 거부하므로 그 입력까지 Swift ditto와 같은 동작이라고 주장하지 않는다. 단순 파일 소실 시 엔진이 다시 보내는 기존 동작을 포함한 세부 사항은 `docs/hidden-behaviors.md`에 기록했다. 커밋 · 푸시 · 브랜치 변경은 하지 않았다.

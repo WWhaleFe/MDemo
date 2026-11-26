@@ -312,7 +312,7 @@ impl FileMemoRepository {
 /// 맥: 폴더에 백업 제외 표시(`com.apple.metadata:com_apple_backup_excludeItem`)를 단다.
 /// Foundation의 `isExcludedFromBackup = true`가 쓰는 값(속성 목록 문자열 "com.apple.backupd")을 그대로 쓴다.
 #[cfg(target_os = "macos")]
-fn exclude_from_backup(directory: &Path) -> StoreResult<()> {
+pub fn exclude_from_backup(directory: &Path) -> StoreResult<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     extern "C" {
         fn setxattr(path: *const i8, name: *const i8, value: *const u8, size: usize, position: u32, options: i32) -> i32;
@@ -339,7 +339,7 @@ fn exclude_from_backup(directory: &Path) -> StoreResult<()> {
 
 /// 그 밖의 운영체제에는 이 표시가 없다. Windows 백업 제외는 P8에서 정한다.
 #[cfg(not(target_os = "macos"))]
-fn exclude_from_backup(_directory: &Path) -> StoreResult<()> {
+pub fn exclude_from_backup(_directory: &Path) -> StoreResult<()> {
     Ok(())
 }
 

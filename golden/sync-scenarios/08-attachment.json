@@ -1,0 +1,26 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "attachment",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "noRewrite": true
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "trash",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "remove",
+      "device": "A"
+    },
+    {
+      "action": "destroy",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "assert",
+      "absent": [
+        "A/Data/memos/{id}",
+        "B/Data/memos/{id}",
+        "B/Data/trash/{id}"
+      ]
+    }
+  ]
+}

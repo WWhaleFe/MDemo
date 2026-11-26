@@ -52,6 +52,14 @@ if ! "$ROOT/Scripts/lock-check.sh" quick; then
     FAILED=1
 fi
 
+# 동기화와 백업 교차 검사(P6).
+if ! "$ROOT/Scripts/sync-check.sh" quick; then
+    FAILED=1
+fi
+if ! "$ROOT/Scripts/backup-check.sh"; then
+    FAILED=1
+fi
+
 if [ $FAILED -eq 0 ]; then
     echo "✓ 전체 테스트 통과"
 else

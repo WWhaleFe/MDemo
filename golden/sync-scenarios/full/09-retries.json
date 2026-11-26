@@ -1,0 +1,45 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "failures": [
+        "upload"
+      ],
+      "expectError": true
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "destroy",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "failures": [
+        "delete"
+      ],
+      "expectError": true
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    }
+  ]
+}

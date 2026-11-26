@@ -6,7 +6,7 @@ source "$ROOT/Scripts/toolchain.sh"
 # 외장 볼륨의 Foundation 원자적 쓰기는 볼륨 루트 권한을 요구하므로 빌드만 임시 경로에 둔다.
 BUILD_KEY="$(printf '%s' "$ROOT" | shasum -a 256 | cut -c 1-12)"
 SCRATCH="${TMPDIR:-/tmp}/mdemo-swift-$BUILD_KEY"
-if [ "$#" -ne 2 ] && ! { [ "$#" -eq 3 ] && [ "$1" = scenario ]; } && ! { [ "$1" = lock ] && { [ "$#" -eq 3 ] || [ "$#" -eq 5 ]; }; }; then
+if [ "$#" -ne 2 ] && ! { [ "$#" -eq 3 ] && { [ "$1" = scenario ] || [ "$1" = sync-step ]; }; } && ! { [ "$1" = lock ] && { [ "$#" -eq 3 ] || [ "$#" -eq 5 ]; }; }; then
     echo "사용법: $0 <입력 폴더> <출력 폴더> | $0 scenario <시나리오.json> <데이터 폴더> | $0 lock <시나리오.json> <데이터 폴더> [--phase N]" >&2
     exit 2
 fi

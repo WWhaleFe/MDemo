@@ -1,0 +1,34 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "create",
+      "device": "B",
+      "id": 1
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "assert",
+      "exists": [
+        "A/Data/memos/{id}/memo.md",
+        "B/Data/memos/{id}/memo.md"
+      ],
+      "deletes": 0
+    }
+  ]
+}

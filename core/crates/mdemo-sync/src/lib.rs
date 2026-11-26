@@ -1,1 +1,13 @@
-//! 동기화 엔진 · 구글 드라이브 거울 · 백업 ZIP(P6). 네트워크 호출은 DriveApi 트레이트 뒤로 숨기고 플랫폼이 구현한다.
+//! 동기화와 백업. HTTP, OAuth와 토큰은 플랫폼 어댑터가 맡는다.
+pub mod backup;
+pub mod drive;
+pub mod engine;
+pub mod fake;
+mod files;
+mod md5;
+pub mod state;
+pub use drive::{DriveApi, DriveError, DriveFile, DriveMirrorSync};
+pub use engine::{SyncMode, SyncReport, SyncService};
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+#[cfg(test)]
+mod tests;

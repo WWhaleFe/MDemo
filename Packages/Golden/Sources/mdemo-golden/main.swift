@@ -159,6 +159,10 @@ func generate(input: URL, output: URL) throws {
 }
 
 do {
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "sync-step" {
+        try await runSyncStep(file: URL(fileURLWithPath: CommandLine.arguments[2]), root: URL(fileURLWithPath: CommandLine.arguments[3]))
+        exit(0)
+    }
     if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "scenario" {
         try await MainActor.run {
             try runScenario(file: URL(fileURLWithPath: CommandLine.arguments[2]), dataDir: URL(fileURLWithPath: CommandLine.arguments[3]))

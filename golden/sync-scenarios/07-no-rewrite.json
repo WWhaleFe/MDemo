@@ -1,0 +1,35 @@
+{
+  "operations": [
+    {
+      "action": "boundaries",
+      "device": "A"
+    },
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B",
+      "noRewrite": true
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "noRewrite": true
+    }
+  ]
+}

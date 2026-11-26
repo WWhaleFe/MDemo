@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -1354,7 +1355,18 @@ await runner.testAsync("새 암호 메모의 첫 저장·편집은 암호문이�
     t.expectEqual(try store.decryptedDocument(id: id).body, "")
     t.expectNotNil(Data(base64Encoded: first.body))
     t.expect((first.meta.lockIterations ?? 0) >= 2_000_000)
-    t.expectEqual((try folder.resourceValues(forKeys: [.isExcludedFromBackupKey])).isExcludedFromBackup, true)
+    // macOS 27에서는 Foundation 조회가 실제 표시와 달리 false를 반환한다.
+    // 디스크 속성 목록의 값을 직접 확인해 백업 제외가 실제 기록됐는지 검사한다.
+    let attribute = "com.apple.metadata:com_apple_backup_excludeItem"
+    let size = getxattr(folder.path, attribute, nil, 0, 0, XATTR_NOFOLLOW)
+    t.expect(size > 0, "백업 제외 속성이 있어야 한다")
+    if size > 0 {
+        var bytes = Data(count: size)
+        let count = bytes.withUnsafeMutableBytes { getxattr(folder.path, attribute, $0.baseAddress, size, 0, XATTR_NOFOLLOW) }
+        t.expectEqual(count, size)
+        let marker = try PropertyListSerialization.propertyList(from: bytes, options: [], format: nil) as? String
+        t.expectEqual(marker, "com.apple.backupd")
+    }
     store.saveBody(id: id, body: "절대디스크에평문으로남기지않을내용")
     t.expect(!(try String(contentsOf: folder.appendingPathComponent("memo.md"), encoding: .utf8)).contains("절대디스크"))
     t.expectEqual(try store.decryptedDocument(id: id).body, "절대디스크에평문으로남기지않을내용")

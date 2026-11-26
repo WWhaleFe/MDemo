@@ -1,5 +1,5 @@
 # 개발 명령 모음. Xcode 없이 Command Line Tools만으로 동작한다.
-.PHONY: build run release dist test check golden fuzz lock-full clean mem help
+.PHONY: build run release dist test check golden fuzz lock-full sync-full clean mem help
 
 help:
 	@echo "make build    - 디버그 빌드 + .app 번들 생성"
@@ -10,6 +10,7 @@ help:
 	@echo "make golden   - Swift 고정 입력의 기준 출력 생성"
 	@echo "make fuzz     - Swift/Rust 차분 퍼즈 (N=건수 SEED=시드)"
 	@echo "make lock-full - 암호 메모 교차 검사 전체(열 번 틀림 포함, 오래 걸림)"
+	@echo "make sync-full - 동기화 · 백업 교차 검사 전체"
 	@echo "make check    - 계층 규칙 · 네트워크 코드 검사"
 	@echo "make mem      - 실행 중인 앱의 메모리 사용량 측정"
 	@echo "make clean    - 빌드 산출물 삭제"
@@ -60,3 +61,8 @@ lock-full:
 # N과 SEED를 지정하면 같은 입력을 다시 검사할 수 있다.
 fuzz:
 	@Scripts/fuzz-diff.sh $(or $(N),2000) $(or $(SEED),20261126)
+
+# 동기화의 전체 교차 검사.
+sync-full:
+	@Scripts/sync-check.sh full
+	@Scripts/backup-check.sh

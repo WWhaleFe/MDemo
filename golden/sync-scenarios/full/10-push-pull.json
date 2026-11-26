@@ -1,0 +1,42 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "create",
+      "device": "B",
+      "id": 1
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "mode": "push"
+    },
+    {
+      "action": "sync",
+      "device": "B",
+      "mode": "pull"
+    },
+    {
+      "action": "sync",
+      "device": "B",
+      "mode": "push"
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "mode": "pull"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    }
+  ]
+}

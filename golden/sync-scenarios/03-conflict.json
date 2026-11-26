@@ -1,0 +1,48 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A",
+      "id": 0
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "edit",
+      "device": "A",
+      "body": "수정 A",
+      "modified": "2023-11-14T22:13:30.000Z"
+    },
+    {
+      "action": "edit",
+      "device": "B",
+      "body": "수정 B",
+      "modified": "2023-11-14T22:13:40.000Z"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "assert",
+      "id": 10,
+      "exists": [
+        "B/Mirror/memos/{id}/memo.md"
+      ]
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    }
+  ]
+}

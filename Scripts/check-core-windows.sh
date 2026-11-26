@@ -4,4 +4,4 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/Scripts/toolchain.sh"
 cd "$ROOT/core"
-cargo xwin build --locked --target x86_64-pc-windows-msvc -p mdemo-core -p mdemo-crypto -p mdemo-markdown -p mdemo-ffi --release
+cargo xwin build --locked --target x86_64-pc-windows-msvc -p mdemo-core -p mdemo-crypto -p mdemo-markdown -p mdemo-sync -p mdemo-ffi --release

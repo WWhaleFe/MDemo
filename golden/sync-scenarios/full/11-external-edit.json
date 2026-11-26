@@ -1,0 +1,48 @@
+{
+  "operations": [
+    {
+      "action": "create",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "edit",
+      "device": "A",
+      "body": "프론트매터 시각은 그대로인 바깥 편집"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "sync",
+      "device": "A",
+      "noRewrite": true
+    },
+    {
+      "action": "edit",
+      "device": "B",
+      "body": "다른 기기의 바깥 편집",
+      "modified": "2023-11-14T22:13:23.000Z"
+    },
+    {
+      "action": "sync",
+      "device": "B"
+    },
+    {
+      "action": "sync",
+      "device": "A"
+    }
+  ]
+}

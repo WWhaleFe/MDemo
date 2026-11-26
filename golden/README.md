@@ -8,7 +8,7 @@ Scripts/golden-check.sh swift
 Scripts/golden-check.sh rust
 ```
 
-Rust 비교는 `mdemo-golden`을 오프라인 빌드한 뒤 실행한다. 메모와 보드, 그룹, 기기 상태, 두 장부는 바이트가 같아야 통과한다. 아직 옮기지 않은 보드 계산, 관계 계산, 동기화 상태 두 파일, 드라이브 상태는 `미이전: 파일명`으로 표시한다. 목록은 `Scripts/golden-check.sh`의 `RUST_PENDING` 한 곳에 둔다. 알 수 없는 구현과 잘못된 인자는 종료 코드 2로 실패한다.
+Rust 비교는 `mdemo-golden`을 오프라인 빌드한 뒤 실행한다. 메모와 보드, 그룹, 기기 상태, 두 장부는 바이트가 같아야 통과한다. 동기화 상태 쌍과 드라이브 상태까지 모든 파일을 Rust에서도 생성한다. `Scripts/golden-check.sh`의 `RUST_PENDING`은 비어 있다. 알 수 없는 구현과 잘못된 인자는 종료 코드 2로 실패한다.
 
 ## CLI 계약
 
@@ -100,3 +100,15 @@ core/target/debug/mdemo-golden lock golden/lock-scenarios/01-cross-open.json <�
 `inputs/search-cases.json`(한글 자모 · 완성형, NFC/NFD, 대소문자 접기, 터키어 i, 결합 문자, 이모지 · ZWJ, 전각 · 반각, 숫자 모양, 빈 검색어, 공백, 줄바꿈 등 480여 쌍)은 두 구현이 같은 `search-results.json`을 내야 통과한다. 차분 퍼즈(`Scripts/fuzz-diff.sh`)는 무작위 쌍도 같은 방식으로 비교한다. Rust 규칙은 Swift의 `localizedCaseInsensitiveContains`를 관찰해 맞춘 근사이며, 규칙 목록은 `core/crates/mdemo-core/src/store/search.rs` 머리말에 있다.
 
 - 알려진 한계: 결합 기호 · 한글 자모 · ZWJ · 키캡이 겹치는 아주 드문 조합에서는 퍼즈가 수천 건에 한두 건 차이를 낸다(기본 시드 20261126의 5000건은 차이 0건). 로케일은 실행 환경의 것으로만 확인했다.
+
+## 동기화 · 백업 교차 검사 (P6)
+
+`Scripts/sync-check.sh`는 `sync-scenarios/*.json`의 기본 8개를 실행한다. `make sync-full`은 `full/`의 올리기 · 삭제 재시도, push/pull, 외부 편집, 두 번째 내려받기 실패도 검사하고 백업 검사까지 실행한다. `make test`에는 기본 동기화와 백업 검사가 포함된다.
+
+각 시나리오는 두 기기의 Data · Mirror 폴더와 메모리 FakeDrive 하나를 쓴다. SS · RR · SR · RS의 각 글자는 기기 A · B의 구현이다. 연산마다 CLI 프로세스를 새로 띄우고 가짜 드라이브를 JSON으로 이어받으므로 실제 상태 파일 읽기 · 쓰기도 함께 검증한다. Swift의 ServicesTests와 Golden은 같은 FakeDrive 소스 파일을 공유한다. 충돌 ID, 가짜 드라이브 ID · 시각, 새로 쓴 파일의 시각은 고정한다. 기존 파일의 수정 시각을 검사한 뒤에 새 파일의 시각을 고정한다. 앱의 기본 ID 생성 동작은 바꾸지 않았다.
+
+매 단계 두 기기의 데이터 · 거울 파일 내용, 세 상태 파일, 가짜 드라이브 파일 · 내용 · 요청 기록과 보고서를 비교한다. JSON은 키 순서와 정수/실수 표기 차이만 정규화한다. 올리기 · 삭제 경로 기록은 정렬하고 요청 종류의 순서는 그대로 비교한다. 기본 7번은 변경 없는 회차의 memo.md 수정 시각 보존과 ±0.0004/0.0005/0.0006초의 두 판단 함수를 Swift/Rust로 비교한다. 상태 쌍은 S→R · R→S 순으로 20개 ID의 모든 지문과 날짜를 복원하는지 별도 검사한다.
+
+`Scripts/backup-check.sh`는 Swift ditto와 Rust가 만든 ZIP을 풀었을 때 파일 경로 · 내용이 같은지 검사하고 SS · RR · SR · RS로 가져온다. 숨김 첨부와 빈 폴더, 이미지 256바이트, 잠김 · 로컬 전용 제외, 파기 ID 거부, 교체 시 기존 암호문과 백업 제외 표시 보존을 확인한다. `__MACOSX` 리소스 정보는 비교 대상에서 제외한다. ditto는 UTF-8 이름에도 ZIP 언어 비트를 생략하므로 원시 이름이 유효한 UTF-8이면 그 이름을 사용한다.
+
+Windows는 `cargo xwin` 교차 release 빌드에 mdemo-sync도 포함한다. 폴더 교체의 성공 · 실패 복구 경로는 같은 Rust 함수를 macOS에서 시험하지만 Windows 실기 실행은 P8에서 확인해야 한다. 네트워크, 실제 데이터 폴더와 키체인에는 닿지 않는다.

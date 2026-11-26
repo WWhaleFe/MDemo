@@ -62,6 +62,8 @@ public struct SyncService: Sendable {
     /// 마지막으로 맞춰 둔 시각을 메모별로 적어 둔다. 기기마다 따로 갖는다.
     private let keychain: any MemoKeychain
     private let stateURL: URL
+    /// 시험에서 충돌 사본 ID를 고정한다. 앱은 기존 생성기를 그대로 쓴다.
+    public var generateID: @Sendable () -> MemoID = { MemoID.generate() }
     /// 시험용: 폴더를 훑은 직후, 반영하기 직전에 불린다. 그 사이 다른 쪽이 바뀌는 경쟁 상황을 흉내 낸다.
     public var afterScan: (@Sendable () -> Void)?
 
@@ -399,7 +401,7 @@ public struct SyncService: Sendable {
         let source = memoDirectory(id: id, root: root, inTrash: entry.isInTrash)
         guard var document = try? readDocument(id: id, root: root, inTrash: entry.isInTrash) else { return }
 
-        let newID = MemoID.generate()
+        let newID = generateID()
         document.meta.conflictOf = id
         document.meta.id = newID
 
