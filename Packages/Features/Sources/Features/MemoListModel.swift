@@ -49,9 +49,9 @@ public final class MemoListModel {
 
     /// 찾는 범위. 다음 실행에도 이어진다.
     public var searchTarget: MemoSearchTarget = {
-        UserDefaults.standard.string(forKey: "memoList.searchTarget").flatMap(MemoSearchTarget.init(rawValue:)) ?? .titleAndBody
+        AppSettings.defaults.string(forKey: "memoList.searchTarget").flatMap(MemoSearchTarget.init(rawValue:)) ?? .titleAndBody
     }() {
-        didSet { UserDefaults.standard.set(searchTarget.rawValue, forKey: "memoList.searchTarget") }
+        didSet { AppSettings.defaults.set(searchTarget.rawValue, forKey: "memoList.searchTarget") }
     }
 
     /// 검색을 좁히는 그룹. 저장하지 않는다.

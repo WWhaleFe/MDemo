@@ -810,9 +810,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func selectMemoStripSetting(_ sender: NSMenuItem) {
         guard let pair = sender.representedObject as? [String] else { return }
-        if pair[1] == "toggle" { UserDefaults.standard.set(!MemoStripSettings().showRelations, forKey: pair[0]) }
-        else if pair[0] == "memoStrip.depth" { UserDefaults.standard.set(Int(pair[1]) ?? 1, forKey: pair[0]) }
-        else { UserDefaults.standard.set(pair[1], forKey: pair[0]) }
+        if pair[1] == "toggle" { AppSettings.defaults.set(!MemoStripSettings().showRelations, forKey: pair[0]) }
+        else if pair[0] == "memoStrip.depth" { AppSettings.defaults.set(Int(pair[1]) ?? 1, forKey: pair[0]) }
+        else { AppSettings.defaults.set(pair[1], forKey: pair[0]) }
         windowRegistry.refreshFlowStrips()
     }
 
@@ -828,8 +828,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             let selected = pair[1] == "toggle" ? stripSettings.showRelations : (pair[0] == "memoStrip.depth" ? String(stripSettings.depth) == pair[1] : stripSettings.expandedStyle == pair[1])
             entry.state = selected ? .on : .off
         }
-        pipeLabelsItem?.state = (UserDefaults.standard.object(forKey: "board.showPipeLabels") as? Bool ?? true) ? .on : .off
-        for entry in lineStyleItems { entry.state = (entry.representedObject as? String) == (UserDefaults.standard.string(forKey: "board.lineButtonStyle") ?? "A") ? .on : .off }
+        pipeLabelsItem?.state = (AppSettings.defaults.object(forKey: "board.showPipeLabels") as? Bool ?? true) ? .on : .off
+        for entry in lineStyleItems { entry.state = (entry.representedObject as? String) == (AppSettings.defaults.string(forKey: "board.lineButtonStyle") ?? "A") ? .on : .off }
         refreshFontSizeMenuState()
         refreshMemoSizeMenuState()
         refreshToolbarMenuState()
@@ -852,11 +852,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func togglePipeLabels() {
-        let value = UserDefaults.standard.object(forKey: "board.showPipeLabels") as? Bool ?? true
-        UserDefaults.standard.set(!value, forKey: "board.showPipeLabels")
+        let value = AppSettings.defaults.object(forKey: "board.showPipeLabels") as? Bool ?? true
+        AppSettings.defaults.set(!value, forKey: "board.showPipeLabels")
     }
     @objc private func selectLineButtonStyle(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.representedObject as? String ?? "A", forKey: "board.lineButtonStyle")
+        AppSettings.defaults.set(sender.representedObject as? String ?? "A", forKey: "board.lineButtonStyle")
     }
 
     @objc private func toggleLaunchAtLogin() {

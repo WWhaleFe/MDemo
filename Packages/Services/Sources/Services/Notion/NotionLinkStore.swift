@@ -74,7 +74,7 @@ public struct NotionTargetStore: @unchecked Sendable {
     private let key: String
 
     /// `key`는 개발용 시험 실행이 실제 설정과 섞이지 않게 바꿀 때만 쓴다.
-    public init(defaults: UserDefaults = .standard, key: String = Self.key) {
+    public init(defaults: UserDefaults = AppSettings.defaults, key: String = Self.key) {
         self.defaults = defaults
         self.key = key
     }

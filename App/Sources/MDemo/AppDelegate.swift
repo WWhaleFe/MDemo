@@ -1,4 +1,5 @@
 import AppKit
+import MemoCore
 import Services
 
 @MainActor
@@ -103,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 forName: Notification.Name("com.wwhalefe.MDemo.dev.setDefault"), object: nil, queue: .main
             ) { note in
                 guard let pair = note.object as? String, let eq = pair.firstIndex(of: "=") else { return }
-                UserDefaults.standard.set(String(pair[pair.index(after: eq)...]), forKey: String(pair[..<eq]))
+                AppSettings.defaults.set(String(pair[pair.index(after: eq)...]), forKey: String(pair[..<eq]))
             }
         }
 

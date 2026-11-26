@@ -158,7 +158,7 @@ public enum FrontmatterCodec {
         if !meta.links.isEmpty || !document.unknownLinkTokens.isEmpty {
             lines.append("\(Key.links.rawValue): " + (meta.links.map { link in
                 let encoded = link.label.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")) ?? ""
-                return "\(link.kind.rawValue):\(link.to.rawValue)" + (link.label.isEmpty && link.unknownSuffix.isEmpty ? "" : "~" + encoded) + link.unknownSuffix
+                return "\(link.kind.rawValue):\(link.to.rawValue)" + (link.label.isEmpty && (link.unknownSuffix.isEmpty || link.preservesRawLabel == true) ? "" : "~" + encoded) + link.unknownSuffix
             } + document.unknownLinkTokens).joined(separator: ","))
         }
 
@@ -202,8 +202,9 @@ public enum FrontmatterCodec {
             guard id.isValid else { return nil }
             let decoded = tails.count > 1 ? tails[1].removingPercentEncoding : nil
             let suffix = tails.count > 2 ? "~" + tails.dropFirst(2).joined(separator: "~") : ""
-            let link = MemoLink(to: id, kind: kind, label: decoded ?? "",
+            var link = MemoLink(to: id, kind: kind, label: decoded ?? "",
                                 unknownSuffix: decoded == nil && tails.count > 1 ? "~" + tails.dropFirst().joined(separator: "~") : suffix)
+            if decoded == nil && tails.count > 1 { link.preservesRawLabel = true }
             return seen.insert(link).inserted ? link : nil
         }
     }
@@ -218,16 +219,33 @@ public enum FrontmatterCodec {
 
     private static func unquote(_ value: String) -> String {
         guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return value }
-        let inner = String(value.dropFirst().dropLast())
-        return inner
-            .replacingOccurrences(of: "\\\"", with: "\"")
-            .replacingOccurrences(of: "\\\\", with: "\\")
+        var characters = value.dropFirst().dropLast().makeIterator()
+        var result = ""
+        // 이스케이프를 왼쪽부터 한 번만 해석해 역슬래시와 따옴표의 경계를 지킨다.
+        while let character = characters.next() {
+            guard character == "\\", let escaped = characters.next() else {
+                result.append(character)
+                continue
+            }
+            switch escaped {
+            case "\\": result.append("\\")
+            case "\"": result.append("\"")
+            case "n": result.append("\n")
+            case "r": result.append("\r")
+            default:
+                result.append("\\")
+                result.append(escaped)
+            }
+        }
+        return result
     }
 
     private static func quote(_ value: String) -> String {
         let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
         return "\"\(escaped)\""
     }
 
@@ -251,7 +269,7 @@ public enum FrontmatterCodec {
     /// 값 타입 포맷 스타일을 쓴다. ISO8601DateFormatter는 Sendable이 아니라
     /// 여러 스레드에서 목록을 읽을 때 안전하지 않다.
     ///
-    /// 시각은 UTC로 기록한다 — 기기 간 병합(SYNC-06)에서 시간대가 섞이면 비교가 어긋난다.
+    /// 시각은 UTC로 기록한다. 기기 간 병합(SYNC-06)에서 시간대가 섞이면 비교가 어긋난다.
     /// 소수점 이하까지 남기는 이유도 같다: 초 단위로 자르면 같은 초에 일어난 두 기기의 수정이
     /// 동률이 되어 어느 쪽이 최신인지 판정할 수 없다.
     private static let iso8601 = Date.ISO8601FormatStyle(includingFractionalSeconds: true, timeZone: .gmt)

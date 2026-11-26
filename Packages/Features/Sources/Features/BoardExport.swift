@@ -63,7 +63,7 @@ struct BoardExportContent {
 private struct BoardExportOptions: Equatable {
     var grid = true
     var pipes = true
-    var labels = UserDefaults.standard.object(forKey: "board.showPipeLabels") as? Bool ?? true
+    var labels = AppSettings.defaults.object(forKey: "board.showPipeLabels") as? Bool ?? true
     var footer = true
     var scale = 2
 }
