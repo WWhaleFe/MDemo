@@ -52,6 +52,11 @@ impl FileMemoRepository {
         Ok(Self { root, clock, keys })
     }
 
+    /// 그림자 읽기는 실제 폴더를 만들거나 바꾸지 않는다.
+    pub fn read_only(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into(), clock: Arc::new(super::SystemClock), keys: Arc::new(MemoryKeyStore::default()) }
+    }
+
     pub fn key_store(&self) -> &Arc<dyn KeyStore> {
         &self.keys
     }

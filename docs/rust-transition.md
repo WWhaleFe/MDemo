@@ -100,3 +100,24 @@
 새 폴더를 같은 부모의 `.<id>.tmp`에 만든다. 기존 폴더를 `.<id>.old`로 옮기고 임시 폴더를 원래 자리에 옮긴 뒤 복구본을 지운다. 임시 폴더 이동이 실패하면 복구본을 원래 이름으로 되돌린다. 되돌리기도 실패하면 복구본을 남기고 두 오류를 함께 반환한다. 남은 복구본을 덮어쓰지 않는다. 이 공통 함수의 실패 복구 · 기존 복구본 보존은 macOS에서 실행 시험했다. macOS 실제 교체는 `renamex_np(RENAME_SWAP)`의 원자적 이름 교환이다.
 
 Windows 실기 실행과 플랫폼 HTTP 연결은 각각 P8 · P7 이후 범위다. 이번에는 노션 원문을 읽을 수 있는 연결 도구가 없어 저장소 문서와 Swift 원본, 요청에 적힌 계획 규칙을 기준으로 구현했다. Rust는 링크와 안전하지 않은 ZIP 경로를 거부하므로 그 입력까지 Swift ditto와 같은 동작이라고 주장하지 않는다. 단순 파일 소실 시 엔진이 다시 보내는 기존 동작을 포함한 세부 사항은 `docs/hidden-behaviors.md`에 기록했다. 커밋 · 푸시 · 브랜치 변경은 하지 않았다.
+
+## P7 1단계 저장소 그림자 실행
+
+실제 쓰기는 Swift에 유지하고 Rust는 읽기 또는 회차별 복제본에서만 비교한다. `CoreShadow.wrap` 공개 함수 하나로 AppContainer에 연결했으며 기본 꺼짐이다. `App/Resources/Info.plist`의 `MDemoRustShadow`를 true로 하거나 `--rust-shadow`로 켠다. 시험 실행은 `--data-dir=<시험 폴더>`와 함께 사용한다. 앱 실행 검수는 이번 작업에서 하지 않는다.
+
+FFI의 `ShadowBridge`, MemoCore의 `ShadowMemoRepository`, `Scripts/shadow-report.sh`를 추가했다. 정규 문자열, 개인정보 기록 제한, 복제 범위와 엄격한 시각 비교의 한계는 [숨은 동작](hidden-behaviors.md)의 P7 절에 정의한다. `FileMemoRepository`는 Swift 구조체이므로 꺼짐 시험은 객체 동일성 대신 원래 구체 타입과 rootDirectory, 주입한 쓰기 훅의 보존을 확인한다.
+
+원문 노션 계획표는 이 환경의 도구로 열 수 없었다. 사용자 요청의 3장 6번·4장 P7 규칙과 저장소 문서, Swift 구현을 기준으로 작업했다. 노션 원문 일치 검수는 남아 있다. 커밋·푸시·브랜치 변경은 하지 않는다.
+
+변경 파일은 다음과 같다.
+
+- `core/crates/mdemo-ffi/src/shadow.rs`, `src/lib.rs`, `Cargo.toml`, `core/Cargo.lock`: 해시·요약·복제본 연산의 UniFFI 경계. 기존 sha2·serde_json 의존성만 연결했다.
+- `core/crates/mdemo-core/src/store/repository.rs`: 디렉터리 생성 없는 읽기 전용 저장소 생성 경로.
+- `Packages/CoreBridge/Sources/CoreBridge/ShadowBridge.swift`: 생성 바인딩의 얇은 Swift 래퍼.
+- `Packages/MemoCore/Sources/MemoCore/Storage/ShadowMemoRepository.swift`: 실제 Swift 위임, 제한된 복제와 직렬 비교, 개인정보 없는 JSONL·누적 요약, CoreShadow 켜기 함수.
+- `App/Sources/MDemo/AppContainer.swift`, `App/Resources/Info.plist`: MemoCore 공개 함수로 조립하고 기본 Bool을 false로 선언.
+- `Packages/MemoCore/Tests/MemoCoreTests/ShadowTests.swift`, `main.swift`: 격리된 그림자 시험과 단독 실행 인자.
+- `Scripts/shadow-report.sh`: 한국어 요약·차이 목록과 종료 코드.
+- `docs/hidden-behaviors.md`, `docs/measurements.md`, 이 문서: 정규 문자열 계약, 측정과 남은 차이 기록.
+
+검증은 `make test`(Swift 370개, Rust 161개 통과와 기존 장시간 시험 1개 생략, 양쪽 골든 17개, 저장소·암호·동기화·백업 교차 검사), `make check`(계층과 Windows MSVC release), 앱의 macOS 빌드까지 통과했다. 후속 잠금 판별·용량 예약 보강 후에는 그림자 시험 8개를 다시 통과했다. 보고서 스크립트는 차이 없음·차이 있음·기록 누락의 종료 코드 0·1·2를 확인했다. 실제 앱은 실행하지 않았다. 측정값과 목표를 넘긴 회차는 [측정 기록](measurements.md)의 P7 절에 함께 기록했다. 자동 mtime 차이를 숨기지 않으므로 이 결과를 쓰기 연산의 차이 0 승인으로 해석하면 안 된다.

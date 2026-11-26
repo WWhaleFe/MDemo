@@ -47,7 +47,8 @@ final class AppContainer {
 
         let repository: any MemoRepository
         do {
-            repository = try FileMemoRepository(rootDirectory: overrideRoot ?? FileMemoRepository.defaultRootDirectory())
+            let root = overrideRoot ?? FileMemoRepository.defaultRootDirectory()
+            repository = CoreShadow.wrap(try FileMemoRepository(rootDirectory: root), dataRoot: root)
         } catch {
             // 데이터 폴더를 만들지 못하면 메모를 저장할 수 없다. 조용히 실패하면 더 위험하다.
             fatalError("데이터 폴더를 만들 수 없습니다: \(error)")

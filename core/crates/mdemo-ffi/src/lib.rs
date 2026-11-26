@@ -54,3 +54,6 @@ pub fn input_rule_first_match(line: String, caret_offset: u32) -> Option<InputRu
     };
     Some(InputRuleMatchFfi { range_start: m.range.start as u32, range_end: m.range.end as u32, replacement: m.replacement, outcome })
 }
+
+mod shadow;
+pub use shadow::*;

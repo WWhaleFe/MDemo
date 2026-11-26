@@ -642,6 +642,8 @@ version = "0.16.0"
 dependencies = [
  "mdemo-core",
  "mdemo-markdown",
+ "serde_json",
+ "sha2",
  "uniffi",
 ]
 

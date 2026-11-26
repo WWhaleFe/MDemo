@@ -21,6 +21,11 @@ final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
 }
 let testKeychain = TestMemoKeychain()
 
+if CommandLine.arguments.contains("--shadow-tests-only") {
+    registerShadowTests(runner)
+    runner.finish()
+}
+
 // MARK: - 식별자와 모델
 
 runner.test("ULID는 26자이며 생성 시각순으로 정렬된다") { t in
@@ -1685,4 +1690,5 @@ runner.test("JSON 저장 서식의 현재 동작: 보드는 키 정렬하고 그
     t.expect(String(decoding: data, as: UTF8.self).contains("\"Z\\/\" : {"))
 }
 
+registerShadowTests(runner)
 runner.finish()

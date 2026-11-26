@@ -176,3 +176,21 @@ Scripts/golden-check.sh rust
 - Rust의 폴더 복사와 ZIP 가져오기는 심볼릭 링크, ZIP 상위 경로 이동, Windows 구분자와 드라이브 접두사를 거부한다. Swift의 ditto 경로까지 바꾸지는 않았다.
 
 - macOS 27 검증 환경에서 `URLResourceValues.isExcludedFromBackup` 조회는 표시를 설정한 직후에도 false를 돌려준다. 같은 폴더의 `com.apple.metadata:com_apple_backup_excludeItem`에는 `com.apple.backupd` 속성 목록이 실제로 있다. 기존 MemoCore 테스트는 조회 결과 대신 디스크의 속성 목록 값을 검증하도록 바꿨고 Swift 앱 저장 코드는 유지했다.
+
+## P7 그림자 비교 계약
+
+Swift `FileMemoRepository`가 실제 데이터 폴더를 쓴다. Rust의 실제 폴더 접근은 `read_only` 생성 경로의 읽기뿐이다. 쓰기 비교는 실제 폴더 밖 `Shadow/<회차>/before`에만 적용하고, Swift 결과의 `after` 복제본과 비교한 뒤 회차 폴더를 지운다. 기본값은 꺼짐이며 `MDemoRustShadow` Bool 또는 `--rust-shadow`로 켠다. 기본 경로는 `Application Support/MDemo/Shadow`, `--data-dir=X`일 때는 정규화한 X의 부모 아래 `<X이름>-shadow`다.
+
+요약 해시의 정규 문자열 정의는 이 절을 기준으로 한다. 메타데이터만 가진 `MemoDocument(meta, body: "", unknownFrontmatterLines: [], unknownLinkTokens: [])`를 각 구현의 프론트매터 저장기로 직렬화한다. 여는 구분자와 닫는 구분자, 빈 본문 앞 마지막 LF도 포함한다. 그 UTF-8 문자열에 NUL 한 개, 미리보기, NUL 한 개, `deletedAt.timeIntervalSinceReferenceDate`의 Swift `String(describing:)` 표기를 차례로 붙인다. 삭제 시각이 없으면 마지막 문자열은 빈 문자열이다. 전체 UTF-8 바이트의 소문자 SHA-256을 비교하며 목록 순서는 비교하지 않는다. 정수 Double은 `800000000.0`, 작은 값의 지수는 `1e-05` 형식이다.
+
+트리 비교는 숨김 파일, 첨부, 빈 폴더와 최상위 폴더를 포함한다. 폴더는 `dir:` 접두사, 링크는 SHA-256 필드의 `link` 표지로 구별하며 링크를 따라가지 않는다. 복제 경로에 링크가 있으면 Swift 측에서 해당 회차를 생략한다. mtime은 2001 기준 Double이며 절댓값 차이 1µs 이하만 같은 것으로 본다. 명시적으로 기록하는 휴지통 폴더 시각은 Swift 결과에서 읽어 Rust ManualClock에 전달한다. 영구 삭제와 비우기는 연결이 실제 바뀐 결과의 modified를 시계에 전달한다.
+
+mtime은 저장소가 시각을 직접 정하는 휴지통 폴더(`dir:trash/<ID>`, 삭제 시각)만 1µs 이하로 비교한다. 그 밖의 파일 · 폴더 mtime은 파일 시스템이 쓰는 순간을 찍으므로 독립된 두 저장에서 같을 수 없어 바이트 · 크기만 비교한다(P3 시나리오 비교의 휴지통 폴더 시각 규칙과 같다). 여러 연결을 지우는 중 Swift 시계가 밀리초 경계를 넘으면 결과 modified가 여러 값일 수 있다. 현재 단일 ManualClock에는 바뀐 결과 중 가장 큰 값을 전달하므로 이때의 바이트 차이도 기록된다.
+
+잠긴 입력이나 영향 경로의 잠긴 메모는 복제 전에 생략한다. 여러 잠긴 메모가 걸린 호출은 잠긴 ID별 해시 기록을 남긴다. 영구 삭제는 대상과 그 대상으로 향하는 연결을 가진 메모 폴더, 두 개인정보 장부만 복제한다. 전체 휴지통 비우기도 만료 대상과 연결 영향 경로만 복제한다. 검색, 첨부 경로 조회, 첨부 정리는 Swift에 그대로 위임한다.
+
+기록에는 원래 ID, 제목, 본문, 그룹 이름, 오류 문장을 쓰지 않는다. ID와 임의 파일명은 SHA-256 앞 12자만 남긴다. 차이 기록에는 경로별 두 해시, 크기, mtime을 넣고 누락 항목은 null로 쓴다. 읽기 차이는 Swift와 Rust를 한 번 더 읽고, 그사이 Swift 결과도 바뀌면 `skipped: changed`로 남긴다. 요약 비교는 각 목록 종류별 시작 시 한 번과 이후 한 시간에 최대 한 번이다. 기록 요약은 재시작 후에도 누적한다.
+
+작업 용량은 두 복제본과 새 입력의 예약량으로 제한한다. 500MiB 또는 대기 중인 비교 200건 상한에 걸리면 실제 Swift 호출은 실행하고 `skipped: backlog`를 기록한다. 정리하지 못한 회차의 예약량은 계속 상한에 포함한다. 기록 자체의 디스크 오류는 앱에 전파하지 않는다. 메인 호출 경로에는 복제뿐 아니라 잠금 헤더 확인과 링크·용량 메타데이터 검사도 필요하다. 본문 해시, Rust 연산과 비교, 기록은 직렬 utility 큐에서 수행한다.
+
+잠금 여부를 판단할 앞머리를 읽지 못하거나 메모 폴더가 링크이면 복제하지 않고 `skipped: unreadable`로 남긴다. `memos`·`trash` 자체가 링크인 저장소에는 장식자를 설치하지 않는다. 읽기 차이의 경로는 `memos/<ID해시>/memo.md` 또는 `<memos|trash>/<ID해시>/summary`이며, API가 해시만 돌려주는 정규 문자열의 크기·mtime은 null로 명시한다.
