@@ -39,7 +39,9 @@ public enum SlashCommandCatalog {
     ///
     /// 배치 순서는 글의 구조를 따라간다 — 본문에서 제목으로, 목록으로, 마지막에 구분·인용.
     /// 목록에서 위아래로 훑을 때 이 순서가 눈에 익으면 화살표 횟수가 줄어든다.
-    public static let standard: [SlashCommand] = [
+    public static var standard: [SlashCommand] { MarkdownEngineBackend.current.slashStandard() }
+
+    static let swiftStandard: [SlashCommand] = [
         SlashCommand(
             id: "paragraph", title: "본문", subtitle: "서식을 없애고 보통 문단으로",
             keywords: ["본문", "문단", "text", "paragraph", "normal"],
@@ -107,7 +109,9 @@ public enum SlashCommandCatalog {
     ]
 
     /// 글자 서식은 블록이 아니라 감싸는 기호로 넣는다. 팝업 아래쪽에 안내로만 보여 준다.
-    public static let inlineHints: [(label: String, shortcut: String)] = [
+    public static var inlineHints: [(label: String, shortcut: String)] { MarkdownEngineBackend.current.slashInlineHints() }
+
+    static let swiftInlineHints: [(label: String, shortcut: String)] = [
         ("굵게", "**글자**"),
         ("기울임", "*글자*"),
         ("취소선", "~~글자~~"),
@@ -119,6 +123,10 @@ public enum SlashCommandCatalog {
     ///
     /// 앞에서부터 일치하는 것을 먼저 보여준다 — "제"를 쳤을 때 "제목"이 위로 오는 편이 자연스럽다.
     public static func filter(_ query: String, in commands: [SlashCommand] = standard) -> [SlashCommand] {
+        MarkdownEngineBackend.current.slashFilter(query, in: commands)
+    }
+
+    static func swiftFilter(_ query: String, in commands: [SlashCommand] = standard) -> [SlashCommand] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return commands }
 

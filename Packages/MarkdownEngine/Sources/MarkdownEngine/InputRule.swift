@@ -66,12 +66,28 @@ public struct InputRuleSet: Sendable {
     }
 
     public func firstMatch(_ context: InputRuleContext) -> InputRuleMatch? {
+        let descriptors = rules.compactMap(Self.descriptor)
+        if descriptors.count == rules.count {
+            return MarkdownEngineBackend.current.firstMatch(context, rules: descriptors)
+        }
         for rule in rules {
             if let match = rule.match(context) {
                 return match
             }
         }
         return nil
+    }
+
+    private static func descriptor(_ rule: any InputRule) -> MarkdownRule? {
+        switch rule {
+        case is CodeBlockRule: return .codeBlock
+        case is HeadingRule: return .heading
+        case is CheckboxRule: return .checkbox
+        case is BulletListRule: return .bullet
+        case is OrderedListRule: return .ordered
+        case let paired as PairedDelimiterRule: return paired.backendRule
+        default: return nil
+        }
     }
 
     /// 편의용 — 문단 상태의 줄을 검사한다.

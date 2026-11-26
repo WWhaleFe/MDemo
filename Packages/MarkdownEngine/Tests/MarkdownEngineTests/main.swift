@@ -2,6 +2,14 @@ import Foundation
 import MarkdownEngine
 import TestKit
 
+#if MDEMO_RUST_MARKDOWN_TEST
+import MemoCore
+RustMarkdownBackend.installIfRequested()
+if CommandLine.arguments.contains("--rust-markdown") {
+    precondition(MarkdownEngineBackend.current is RustMarkdownBackend)
+}
+#endif
+
 let runner = TestRunner("MarkdownEngine")
 
 /// 문단 상태에서의 검사를 짧게 쓰기 위한 도우미.

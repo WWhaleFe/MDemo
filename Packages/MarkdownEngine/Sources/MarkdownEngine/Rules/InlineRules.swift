@@ -16,6 +16,12 @@ public struct PairedDelimiterRule: InputRule {
     }
 
     public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        MarkdownEngineBackend.current.firstMatch(context, rules: [backendRule])
+    }
+
+    var backendRule: MarkdownRule { .paired(delimiter: delimiter, style: style) }
+
+    func swiftMatch(_ context: InputRuleContext) -> InputRuleMatch? {
         let characters = Array(context.content)
         let delimiterCharacters = Array(delimiter)
         let length = delimiterCharacters.count

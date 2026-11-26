@@ -9,6 +9,10 @@ public enum MarkdownParser {
     public static let codeFence = "```"
 
     public static func parse(_ markdown: String) -> [StyledLine] {
+        MarkdownEngineBackend.current.parse(markdown)
+    }
+
+    static func swiftParse(_ markdown: String) -> [StyledLine] {
         var lines: [StyledLine] = []
         var insideCodeBlock = false
 
@@ -24,17 +28,21 @@ public enum MarkdownParser {
                 continue
             }
             // 표의 구분 줄은 문법이지 내용이 아니다. 화면에서 빼고 저장할 때 다시 만든다 (MD-14).
-            if MarkdownTable.isSeparatorRow(raw) {
+            if MarkdownTable.swiftIsSeparatorRow(raw) {
                 continue
             }
-            lines.append(parseLine(raw))
+            lines.append(swiftParseLine(raw))
         }
         return lines
     }
 
     public static func parseLine(_ line: String) -> StyledLine {
+        MarkdownEngineBackend.current.parseLine(line)
+    }
+
+    static func swiftParseLine(_ line: String) -> StyledLine {
         let (block, content) = parseBlock(line)
-        return StyledLine(block: block, spans: parseInline(content))
+        return StyledLine(block: block, spans: swiftParseInline(content))
     }
 
     // MARK: - 블록
@@ -48,7 +56,7 @@ public enum MarkdownParser {
         }
 
         // 이미지: 줄 전체가 `![설명](경로 =너비)`일 때만이다 (IMG-08).
-        if let image = MarkdownImage.parse(trimmed) {
+        if let image = MarkdownImage.swiftParse(trimmed) {
             return (.image(image), "")
         }
 
@@ -85,7 +93,7 @@ public enum MarkdownParser {
         }
 
         // 표는 세로줄이 곧 내용이다. 기호를 벗기지 않고 줄 전체를 그대로 둔다 (MD-14).
-        if MarkdownTable.isRow(trimmed) {
+        if MarkdownTable.swiftIsRow(trimmed) {
             return (.tableRow, trimmed)
         }
 
@@ -122,6 +130,10 @@ public enum MarkdownParser {
 
     /// 바깥쪽 기호부터 벗겨 낸다. 직렬화가 감싼 순서(굵게 → 기울임 → 취소선 → 형광 → 코드)의 역순이다.
     public static func parseInline(_ text: String) -> [StyledSpan] {
+        MarkdownEngineBackend.current.parseInline(text)
+    }
+
+    static func swiftParseInline(_ text: String) -> [StyledSpan] {
         guard !text.isEmpty else { return [] }
         var spans: [StyledSpan] = []
         appendSpans(from: Array(text), format: StyledSpan(text: ""), into: &spans)
@@ -221,7 +233,7 @@ public enum MarkdownParser {
               let propertyRange = Range(match.range(at: 2), in: window),
               let hexRange = Range(match.range(at: 3), in: window),
               let wholeRange = Range(match.range, in: window),
-              let hex = InlineColor.normalized(String(window[hexRange]))
+              let hex = InlineColor.swiftNormalized(String(window[hexRange]))
         else { return nil }
 
         let tag = String(window[tagRange])

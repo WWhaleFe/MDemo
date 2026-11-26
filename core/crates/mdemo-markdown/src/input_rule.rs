@@ -293,14 +293,14 @@ impl CheckboxRule {
 /// 짝을 이루는 기호로 감싼 구간에 서식을 입히는 규칙들 (MD-05 ~ MD-09).
 /// 닫는 기호를 입력하는 순간 변환된다. 여는 기호까지 되짚어 찾는다.
 pub struct PairedDelimiterRule {
-    id: &'static str,
-    delimiter: &'static str,
+    id: String,
+    delimiter: String,
     style: InlineStyleTag,
 }
 
 impl PairedDelimiterRule {
-    pub fn new(id: &'static str, delimiter: &'static str, style: InlineStyleTag) -> Self {
-        PairedDelimiterRule { id, delimiter, style }
+    pub fn new(id: &str, delimiter: &str, style: InlineStyleTag) -> Self {
+        PairedDelimiterRule { id: id.to_string(), delimiter: delimiter.to_string(), style }
     }
 
     /// `**텍스트**` → 굵게 (MD-05)
@@ -331,12 +331,12 @@ impl PairedDelimiterRule {
 
 impl InputRule for PairedDelimiterRule {
     fn id(&self) -> &str {
-        self.id
+        &self.id
     }
 
     fn matches(&self, context: &InputRuleContext) -> Option<InputRuleMatch> {
         let characters = chars(&context.content);
-        let delimiter = chars(self.delimiter);
+        let delimiter = chars(&self.delimiter);
         let length = delimiter.len();
         let caret = context.caret_offset;
 

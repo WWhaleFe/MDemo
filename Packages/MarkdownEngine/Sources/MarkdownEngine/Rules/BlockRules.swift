@@ -24,6 +24,10 @@ public struct HeadingRule: InputRule {
     public init() {}
 
     public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        MarkdownEngineBackend.current.firstMatch(context, rules: [.heading])
+    }
+
+    func swiftMatch(_ context: InputRuleContext) -> InputRuleMatch? {
         guard context.block == .paragraph else { return nil }
 
         let characters = Array(context.content)
@@ -47,6 +51,10 @@ public struct BulletListRule: InputRule {
     public init() {}
 
     public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        MarkdownEngineBackend.current.firstMatch(context, rules: [.bullet])
+    }
+
+    func swiftMatch(_ context: InputRuleContext) -> InputRuleMatch? {
         guard context.block == .paragraph else { return nil }
 
         let (level, contentStart) = indentLevel(of: context.content)
@@ -68,6 +76,10 @@ public struct OrderedListRule: InputRule {
     public init() {}
 
     public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        MarkdownEngineBackend.current.firstMatch(context, rules: [.ordered])
+    }
+
+    func swiftMatch(_ context: InputRuleContext) -> InputRuleMatch? {
         guard context.block == .paragraph else { return nil }
 
         let (level, contentStart) = indentLevel(of: context.content)
@@ -101,6 +113,10 @@ public struct CodeBlockRule: InputRule {
     public init() {}
 
     public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        MarkdownEngineBackend.current.firstMatch(context, rules: [.codeBlock])
+    }
+
+    func swiftMatch(_ context: InputRuleContext) -> InputRuleMatch? {
         guard context.block == .paragraph else { return nil }
         let marker = "``` "
         guard context.content.hasPrefix(marker), context.caretOffset == marker.count else { return nil }
@@ -124,6 +140,10 @@ public struct CheckboxRule: InputRule {
     private static let checkedMarkers = ["[x] ", "[X] "]
 
     public func match(_ context: InputRuleContext) -> InputRuleMatch? {
+        MarkdownEngineBackend.current.firstMatch(context, rules: [.checkbox])
+    }
+
+    func swiftMatch(_ context: InputRuleContext) -> InputRuleMatch? {
         switch context.block {
         case .paragraph:
             return matchFromParagraph(context)

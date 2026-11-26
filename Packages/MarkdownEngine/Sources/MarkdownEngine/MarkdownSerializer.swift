@@ -20,6 +20,10 @@ public enum MarkdownSerializer {
     }
 
     public static func serialize(_ lines: [StyledLine], flavor: Flavor = .file) -> String {
+        MarkdownEngineBackend.current.serialize(lines, flavor: flavor)
+    }
+
+    static func swiftSerialize(_ lines: [StyledLine], flavor: Flavor = .file) -> String {
         var out: [String] = []
         var insideCodeBlock = false
         var insideTable = false
@@ -35,13 +39,13 @@ public enum MarkdownSerializer {
                 insideCodeBlock = isCode
             }
 
-            let text = serializeLine(line, flavor: flavor)
+            let text = swiftSerializeLine(line, flavor: flavor)
             out.append(text)
 
             // 표는 첫 줄 뒤에 구분 줄이 있어야 표로 읽힌다. 화면에 없던 것을 여기서 되살린다 (MD-14).
             let isTable = line.block == .tableRow
             if isTable, !insideTable {
-                out.append(MarkdownTable.separatorRow(columns: MarkdownTable.columnCount(of: text)))
+                out.append(MarkdownTable.swiftSeparatorRow(columns: MarkdownTable.swiftColumnCount(of: text)))
             }
             insideTable = isTable
         }
@@ -52,12 +56,16 @@ public enum MarkdownSerializer {
     }
 
     public static func serializeLine(_ line: StyledLine, flavor: Flavor = .file) -> String {
+        MarkdownEngineBackend.current.serializeLine(line, flavor: flavor)
+    }
+
+    static func swiftSerializeLine(_ line: StyledLine, flavor: Flavor = .file) -> String {
         // 코드는 있는 그대로 적는다. 기호를 붙이면 코드가 아니게 된다.
         if line.block == .codeBlock {
             return line.spans.map(\.text).joined()
         }
         if case .image(let image) = line.block {
-            return image.markdown
+            return image.swiftMarkdown
         }
         let content = line.spans.map { serializeSpan($0, flavor: flavor) }.joined()
         return blockPrefix(for: line.block, flavor: flavor) + content

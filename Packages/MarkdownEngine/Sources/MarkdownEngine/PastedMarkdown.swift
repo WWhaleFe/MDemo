@@ -9,11 +9,19 @@ import Foundation
 /// 파일 해석기를 느슨하게 만들면 저장된 메모를 잘못 읽을 위험이 있어, 붙여넣기에서만 손본다.
 public enum PastedMarkdown {
     public static func parse(_ text: String) -> [StyledLine] {
-        MarkdownParser.parse(normalize(text))
+        MarkdownEngineBackend.current.pastedParse(text)
+    }
+
+    static func swiftParse(_ text: String) -> [StyledLine] {
+        MarkdownParser.swiftParse(swiftNormalize(text))
     }
 
     /// 파일 해석기가 바로 읽을 수 있는 꼴로 바꾼다. 코드 박스 안은 건드리지 않는다.
     public static func normalize(_ text: String) -> String {
+        MarkdownEngineBackend.current.pastedNormalize(text)
+    }
+
+    static func swiftNormalize(_ text: String) -> String {
         let raw = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")

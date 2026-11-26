@@ -61,18 +61,26 @@ public struct MarkdownImage: Hashable, Sendable {
     }
 
     /// 경로의 마지막 조각. 첨부 폴더 안의 파일 이름이다.
-    public var fileName: String {
+    public var fileName: String { MarkdownEngineBackend.current.imageFileName(self) }
+
+    var swiftFileName: String {
         Self.isLocalAttachmentPath(path) ? String(path.dropFirst("attachments/".count)) : ""
     }
 
     /// 한 줄 마크다운. 대괄호와 줄바꿈은 문법을 깨므로 설명에서 뺀다.
-    public var markdown: String {
+    public var markdown: String { MarkdownEngineBackend.current.imageMarkup(self) }
+
+    var swiftMarkdown: String {
         let size = width.map { " =\($0)" } ?? ""
         return "![\(alt)](\(path)\(size))"
     }
 
     /// 줄 전체가 이미지 문법일 때만 읽는다. 글 사이에 낀 이미지 문법은 일반 글자로 둔다.
     public static func parse(_ line: String) -> MarkdownImage? {
+        MarkdownEngineBackend.current.imageParse(line)
+    }
+
+    static func swiftParse(_ line: String) -> MarkdownImage? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")") else { return nil }
         let range = NSRange(trimmed.startIndex..., in: trimmed)
@@ -91,12 +99,16 @@ public struct MarkdownImage: Hashable, Sendable {
 
     /// 첨부 폴더 바로 아래의 파일 이름만 허용한다.
     public static func isValidFileName(_ name: String) -> Bool {
+        MarkdownEngineBackend.current.imageValidName(name)
+    }
+
+    static func swiftIsValidFileName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".."
             && !name.contains("/") && !name.contains("\\") && !name.contains("\0")
     }
 
     private static func isLocalAttachmentPath(_ path: String) -> Bool {
-        path.hasPrefix("attachments/") && isValidFileName(String(path.dropFirst("attachments/".count)))
+        path.hasPrefix("attachments/") && swiftIsValidFileName(String(path.dropFirst("attachments/".count)))
     }
 
     private static let pattern = try! NSRegularExpression(pattern: #"^!\[([^\]]*)\]\(([^()\s]+)(?:\s+=(\d+))?\)$"#)
@@ -119,25 +131,37 @@ public enum OrderedListMarker {
     }
 
     public static func style(forIndent indent: Int) -> Style {
+        MarkdownEngineBackend.current.orderedStyle(forIndent: indent)
+    }
+
+    static func swiftStyle(forIndent indent: Int) -> Style {
         let all = Style.allCases
         return all[max(0, indent) % all.count]
     }
 
     /// 화면에 보일 표식. 점은 포함하고 뒤 공백은 포함하지 않는다.
     public static func text(number: Int, indent: Int) -> String {
+        MarkdownEngineBackend.current.orderedText(number: number, indent: indent)
+    }
+
+    static func swiftText(number: Int, indent: Int) -> String {
         let value = max(1, number)
-        switch style(forIndent: indent) {
+        switch swiftStyle(forIndent: indent) {
         case .number:
             return "\(value)."
         case .letter:
-            return "\(letters(value))."
+            return "\(swiftLetters(value))."
         case .roman:
-            return "\(roman(value))."
+            return "\(swiftRoman(value))."
         }
     }
 
     /// 1 → a, 26 → z, 27 → aa. 엑셀 열 이름과 같은 규칙이다.
     public static func letters(_ number: Int) -> String {
+        MarkdownEngineBackend.current.orderedLetters(number)
+    }
+
+    static func swiftLetters(_ number: Int) -> String {
         var remaining = max(1, number)
         var result = ""
         while remaining > 0 {
@@ -150,6 +174,10 @@ public enum OrderedListMarker {
 
     /// 1 → i, 4 → iv, 9 → ix. 목록이 그렇게까지 길어질 일은 없지만 규칙은 온전히 둔다.
     public static func roman(_ number: Int) -> String {
+        MarkdownEngineBackend.current.orderedRoman(number)
+    }
+
+    static func swiftRoman(_ number: Int) -> String {
         let table: [(value: Int, symbol: String)] = [
             (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
             (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
@@ -208,6 +236,11 @@ public struct StyledSpan: Hashable, Sendable {
 public enum InlineColor {
     /// "#abc123" → "#ABC123". 형식이 틀리면 nil.
     public static func normalized(_ hex: String?) -> String? {
+        guard let hex else { return nil }
+        return MarkdownEngineBackend.current.color(hex)
+    }
+
+    static func swiftNormalized(_ hex: String?) -> String? {
         guard var value = hex?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
         if !value.hasPrefix("#") { value = "#" + value }
         let digits = value.dropFirst()

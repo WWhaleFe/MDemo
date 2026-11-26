@@ -199,7 +199,8 @@ impl OrderedListMarker {
 
 /// 글자 단위 서식. 여러 개가 겹칠 수 있다(비트 집합).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct InlineStyleTag(pub u32);
+// Swift Int의 사용자 서식 비트까지 왕복한다. Windows도 64비트 대상을 사용한다.
+pub struct InlineStyleTag(pub u64);
 
 impl InlineStyleTag {
     pub const NONE: InlineStyleTag = InlineStyleTag(0);

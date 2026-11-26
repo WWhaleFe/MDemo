@@ -6,8 +6,15 @@ import UniformTypeIdentifiers
 import MemoCore
 import TestKit
 
+RustMarkdownBackend.installIfRequested()
+
 let rustStorage = CommandLine.arguments.contains("--rust-storage")
 let runner = TestRunner("MemoCore [\(rustStorage ? "Rust" : "Swift")]")
+
+if CommandLine.arguments.contains("--markdown-tests-only") {
+    runMarkdownBackendTests(runner)
+    runner.finish()
+}
 
 /// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
 final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
@@ -1794,4 +1801,5 @@ runner.test("저장소 조립은 실행 플래그에 따라 구현을 선택한�
 // 정방향 그림자 장식자 자체의 계약 8개는 Swift 기반으로만 실행한다.
 if !rustStorage { registerShadowTests(runner) }
 
+runMarkdownBackendTests(runner)
 runner.finish()

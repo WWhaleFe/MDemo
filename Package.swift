@@ -11,6 +11,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "Packages/MemoCore"),
+        .package(path: "Packages/TestKit"),
         .package(path: "Packages/MarkdownEngine"),
         .package(path: "Packages/EditorKit"),
         .package(path: "Packages/StickyWindow"),
@@ -18,6 +19,16 @@ let package = Package(
         .package(path: "Packages/Features"),
     ],
     targets: [
+        .executableTarget(
+            name: "MarkdownEngineRustTests",
+            dependencies: [
+                .product(name: "MarkdownEngine", package: "MarkdownEngine"),
+                .product(name: "MemoCore", package: "MemoCore"),
+                .product(name: "TestKit", package: "TestKit"),
+            ],
+            path: "Packages/MarkdownEngine/Tests/MarkdownEngineTests",
+            swiftSettings: [.define("MDEMO_RUST_MARKDOWN_TEST")]
+        ),
         .executableTarget(
             name: "MDemo",
             dependencies: [

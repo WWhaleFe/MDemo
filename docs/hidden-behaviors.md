@@ -233,3 +233,13 @@ Foundation은 파일 수정 시각을 `(tv_sec - 978307200) + tv_nsec * 1e-9` �
 - `CoreDriveApi`의 여섯 동기 콜백은 기존 Swift `DriveAPI`를 호출한다. 드라이브 동기화 전체를 전용 DispatchQueue에서 실행하고, 콜백은 그 큐에서만 세마포어를 기다린다. 비동기 요청은 `Task.detached`가 수행하므로 MainActor에서 완료되는 API도 진행할 수 있다. 콜백의 메인 스레드 진입은 사전 조건으로 거부한다.
 - 키체인은 기존 플랫폼 콜백을 공유한다. 충돌 사본 ID와 스캔 후 경쟁 조건 시험 훅도 경계 너머로 전달하며, 보고서의 모든 계수와 충돌 사본 ID를 되돌린다. 네트워크 · OAuth · 토큰은 계속 플랫폼에만 있다.
 - Services 러너는 Swift · Rust 선택으로 같은 가짜 DriveAPI와 임시 폴더 시험을 반복한다. 업로드 금지 메모, 실패 회차 삭제 금지, MainActor 비동기 콜백 완료를 함께 확인한다.
+
+## P7 2-d 마크다운 뒷단 경계
+
+- `MarkdownEngineBackend`는 잠금으로 보호하는 단일 뒷단을 갖는다. 기본은 `SwiftMarkdownBackend`이며 `install`은 최초 한 번만 성공한다. `CoreStorage.make`는 `MDemoRustStorage` 또는 `--rust-storage`가 켜졌을 때 `RustMarkdownBackend`를 함께 설치한다. `--rust-markdown`은 저장소를 바꾸지 않고 같은 설치 경로를 시험한다. Rust 호출 오류를 Swift 구현으로 숨겨 대체하지 않는다.
+- MarkdownEngine은 CoreBridge와 MemoCore를 가져오지 않는다. MemoCore가 두 계층을 조립한다. CoreBridge의 P5 일치 · 측정 시험은 MemoCore 시험으로 옮겼으며, 원래 MarkdownEngine 시험 소스는 최상위 `MarkdownEngineRustTests` 타깃에서도 그대로 컴파일한다. EditorKit · StickyWindow · Features의 화면 소스는 바꾸지 않았다.
+- 문서 · 줄 · 인라인 파싱, 두 직렬화 Flavor, 표, 붙여넣기, OCR, 이미지 파싱 · 저장 이름, 색 정규화, 번호 표식, 슬래시 목록 · 안내 · 검색, 입력 규칙을 같은 뒷단으로 보낸다. Swift 값 타입의 생성 · 동등성 · 단순 계산 속성은 기존 모델 계약을 유지한다.
+- 기본 입력 규칙 목록은 현재 블록과 등록 순서를 포함해 한 번의 FFI 호출로 전달한다. 식별자가 아닌 실제 규칙 타입으로 판정하므로 같은 ID를 가진 사용자 규칙을 기본 규칙으로 오인하지 않는다. 사용자 `InputRule`은 기존 Swift 확장 지점으로 실행하고, 공개 `PairedDelimiterRule`의 임의 기호와 서식 비트는 Rust로 보낸다. Rust 기호는 소유한 String이므로 호출이 끝난 뒤 참조가 남지 않는다.
+- `InputRuleContext.caretOffset`과 `InputRuleMatch.range`는 원래부터 Character 단위다. Rust 어댑터에서도 그대로 전달한다. UTF-16 변환은 기존 `LiveFormatController`의 `characterOffset(in:utf16Offset:)`, `apply`의 `prefixUTF16` · `matchedUTF16` 계산에만 있다. 어댑터에서 다시 바꾸지 않는다. 추가 EditorKit 시험은 한글 · 이모지 · 결합 문자 · 가족 ZWJ · 국기 접두사 뒤의 자동 굵게 변환과 최종 UTF-16 커서를 확인한다.
+- Swift 공개 가변 필드는 초기화 후 색 · 이미지 설명 · 너비를 바꿀 수 있다. 경계 레코드는 생성자의 정규화를 다시 적용하지 않고 현재 값을 복사한다. 사용자 정의 InlineStyleTag의 높은 비트와 음수 Int도 보존하도록 Rust 비트 집합과 새 FFI 필드를 64비트로 맞췄다. P5 문단 전용 FFI는 기존 32비트 계약을 유지한다.
+- 1만 자 문서의 Rust parse 지연은 Swift 대비 +10% 목표를 넘었다. 측정값과 조건은 `measurements.md`의 P7 2-d 항목에 기록한다. Rust 선택 시 Swift 파서로 돌아가 성능 차이를 숨기지는 않는다.

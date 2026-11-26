@@ -11,10 +11,11 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../TestKit"),
-        .package(path: "../CoreBridge")
+        .package(path: "../CoreBridge"),
+        .package(path: "../MarkdownEngine")
     ],
     targets: [
-        .target(name: "MemoCore", dependencies: [.product(name: "CoreBridge", package: "CoreBridge")]),
+        .target(name: "MemoCore", dependencies: [.product(name: "CoreBridge", package: "CoreBridge"), .product(name: "MarkdownEngine", package: "MarkdownEngine")]),
         // Xcode가 없는 환경이라 .testTarget 대신 실행 가능한 러너를 쓴다 (TestKit 참고).
         .executableTarget(
             name: "MemoCoreTests",

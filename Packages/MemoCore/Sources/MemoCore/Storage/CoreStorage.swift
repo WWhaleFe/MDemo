@@ -11,6 +11,7 @@ public enum CoreStorage {
     public static func bridgeKeys(_ keys: any MemoKeychain) -> any CoreKeyStore { RepositoryKeyStore(keys) }
 
     public static func make(root: URL, keychain: any MemoKeychain = DeviceMemoKeychain()) throws -> any MemoRepository {
+        RustMarkdownBackend.installIfRequested()
         if usesRust {
             return try RustMemoRepository(rootDirectory: root, keychain: keychain)
         }

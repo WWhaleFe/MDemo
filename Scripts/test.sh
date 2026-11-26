@@ -28,7 +28,7 @@ if ! (cd "$ROOT/core" && cargo test --locked --workspace); then
 fi
 for package in CoreBridge MemoCore MarkdownEngine EditorKit StickyWindow Services Features; do
     STORAGE_MODES=(swift)
-    if [ "$package" = MemoCore ] || [ "$package" = Services ]; then STORAGE_MODES=(swift rust); fi
+    if [ "$package" = MemoCore ] || [ "$package" = Services ] || [ "$package" = EditorKit ]; then STORAGE_MODES=(swift rust); fi
     for storage in "${STORAGE_MODES[@]}"; do
         STORAGE_ARGS=()
         if [ "$storage" = rust ]; then STORAGE_ARGS=(--rust-storage); fi
@@ -38,6 +38,11 @@ for package in CoreBridge MemoCore MarkdownEngine EditorKit StickyWindow Service
         fi
     done
 done
+
+# 순수 패키지의 원래 시험 소스를 상위 조립 타깃에서 Rust 뒷단으로 반복한다.
+if ! swift run --package-path "$ROOT" -c debug --scratch-path "$SCRATCH" MarkdownEngineRustTests --rust-markdown; then
+    FAILED=1
+fi
 
 # 한 패키지가 실패해도 골든 비교까지 실행해 차이를 함께 보고한다.
 if ! "$ROOT/Scripts/golden-check.sh" swift; then

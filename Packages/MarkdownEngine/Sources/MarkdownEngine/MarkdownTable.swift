@@ -14,14 +14,22 @@ public enum MarkdownTable {
     ///
     /// 본문 가운데 있는 `|`까지 표로 보면, 그냥 세로줄을 쓴 문장이 표가 되어 버린다.
     public static func isRow(_ line: String) -> Bool {
+        MarkdownEngineBackend.current.tableIsRow(line)
+    }
+
+    static func swiftIsRow(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         return trimmed.hasPrefix(String(pipe)) && trimmed.count > 1
     }
 
     /// `| --- | --- |` 처럼 칸이 모두 줄표인 줄인가.
     public static func isSeparatorRow(_ line: String) -> Bool {
-        guard isRow(line) else { return false }
-        let cells = self.cells(of: line)
+        MarkdownEngineBackend.current.tableIsSeparatorRow(line)
+    }
+
+    static func swiftIsSeparatorRow(_ line: String) -> Bool {
+        guard swiftIsRow(line) else { return false }
+        let cells = swiftCells(of: line)
         guard !cells.isEmpty else { return false }
         return cells.allSatisfy { cell in
             let body = cell.trimmingCharacters(in: .whitespaces)
@@ -34,6 +42,10 @@ public enum MarkdownTable {
 
     /// 줄을 칸 단위로 쪼갠다. 양 끝의 빈 칸(세로줄 바깥)은 버린다.
     public static func cells(of line: String) -> [String] {
+        MarkdownEngineBackend.current.tableCells(of: line)
+    }
+
+    static func swiftCells(of line: String) -> [String] {
         var parts = line.trimmingCharacters(in: .whitespaces).split(
             separator: pipe,
             omittingEmptySubsequences: false
@@ -44,20 +56,36 @@ public enum MarkdownTable {
     }
 
     public static func columnCount(of line: String) -> Int {
-        max(1, cells(of: line).count)
+        MarkdownEngineBackend.current.tableColumnCount(of: line)
+    }
+
+    static func swiftColumnCount(of line: String) -> Int {
+        max(1, swiftCells(of: line).count)
     }
 
     /// 저장할 때 첫 줄 뒤에 넣는 구분 줄.
     public static func separatorRow(columns: Int) -> String {
-        row(cells: Array(repeating: "---", count: max(1, columns)))
+        MarkdownEngineBackend.current.separatorRow(columns: columns)
+    }
+
+    static func swiftSeparatorRow(columns: Int) -> String {
+        swiftRow(cells: Array(repeating: "---", count: max(1, columns)))
     }
 
     /// 빈 줄. 새 행을 만들 때 쓴다.
     public static func emptyRow(columns: Int) -> String {
-        row(cells: Array(repeating: "", count: max(1, columns)))
+        MarkdownEngineBackend.current.emptyRow(columns: columns)
+    }
+
+    static func swiftEmptyRow(columns: Int) -> String {
+        swiftRow(cells: Array(repeating: "", count: max(1, columns)))
     }
 
     public static func row(cells: [String]) -> String {
+        MarkdownEngineBackend.current.row(cells: cells)
+    }
+
+    static func swiftRow(cells: [String]) -> String {
         "\(pipe) " + cells.joined(separator: " \(pipe) ") + " \(pipe)"
     }
 
@@ -66,17 +94,25 @@ public enum MarkdownTable {
     /// 첫 줄은 제목 줄이다. 무엇을 채워야 하는지 보이도록 이름을 미리 넣어 둔다 —
     /// 빈 칸만 늘어놓으면 어디가 제목인지 알 수 없다.
     public static func skeleton(columns: Int = 2, rows: Int = 3) -> [String] {
+        MarkdownEngineBackend.current.skeleton(columns: columns, rows: rows)
+    }
+
+    static func swiftSkeleton(columns: Int = 2, rows: Int = 3) -> [String] {
         let headers = (1...max(1, columns)).map { columns == 2 && $0 == 1 ? "항목" : ($0 == 2 ? "내용" : "제목 \($0)") }
-        var lines = [row(cells: headers)]
+        var lines = [swiftRow(cells: headers)]
         for _ in 1..<max(2, rows) {
-            lines.append(emptyRow(columns: columns))
+            lines.append(swiftEmptyRow(columns: columns))
         }
         return lines
     }
 
     /// 칸이 비어 있는 줄인가. 빈 줄에서 엔터를 치면 표를 빠져나온다.
     public static func isEmptyRow(_ line: String) -> Bool {
-        guard isRow(line) else { return false }
-        return cells(of: line).allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+        MarkdownEngineBackend.current.tableIsEmptyRow(line)
+    }
+
+    static func swiftIsEmptyRow(_ line: String) -> Bool {
+        guard swiftIsRow(line) else { return false }
+        return swiftCells(of: line).allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }

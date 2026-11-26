@@ -50,7 +50,7 @@ pub fn input_rule_first_match(line: String, caret_offset: u32) -> Option<InputRu
         InputRuleOutcome::Block(BlockStyle::Ordered { indent, number }) => InputRuleOutcomeFfi::Ordered { indent: indent as u32, number },
         InputRuleOutcome::Block(BlockStyle::Checkbox { indent, checked }) => InputRuleOutcomeFfi::Checkbox { indent: indent as u32, checked },
         InputRuleOutcome::Block(_) => InputRuleOutcomeFfi::CodeBlock,
-        InputRuleOutcome::Inline(styles) => InputRuleOutcomeFfi::Inline { styles: styles.0 },
+        InputRuleOutcome::Inline(styles) => InputRuleOutcomeFfi::Inline { styles: styles.0 as u32 },
     };
     Some(InputRuleMatchFfi { range_start: m.range.start as u32, range_end: m.range.end as u32, replacement: m.replacement, outcome })
 }
@@ -64,3 +64,5 @@ mod lock_store;
 pub use repository::*;
 
 mod sync;
+
+mod markdown;

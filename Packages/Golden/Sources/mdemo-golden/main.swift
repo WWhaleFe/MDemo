@@ -157,36 +157,39 @@ func generate(input: URL, output: URL) throws {
     }
     try emit("relations.json", Data((ResultJSON.object(relations).text + "\n").utf8))
 }
+// 같은 골든 입력을 실제 Rust 뒷단에서도 검사한다. 기존 명령의 인자는 유지한다.
+RustMarkdownBackend.installIfRequested()
+let arguments = CommandLine.arguments.filter { $0 != "--rust-markdown" }
 
 do {
-    if [6, 7].contains(CommandLine.arguments.count), CommandLine.arguments[1] == "shadow-exercise" {
-        try await runShadowExercise(dataDir: URL(fileURLWithPath: CommandLine.arguments[2]), shadowDir: URL(fileURLWithPath: CommandLine.arguments[3]),
-                              steps: Int(CommandLine.arguments[4]) ?? 500, seed: UInt64(CommandLine.arguments[5]) ?? 1, rust: CommandLine.arguments.contains("--rust"))
+    if [6, 7].contains(arguments.count), arguments[1] == "shadow-exercise" {
+        try await runShadowExercise(dataDir: URL(fileURLWithPath: arguments[2]), shadowDir: URL(fileURLWithPath: arguments[3]),
+                              steps: Int(arguments[4]) ?? 500, seed: UInt64(arguments[5]) ?? 1, rust: arguments.contains("--rust"))
         exit(0)
     }
-    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "sync-step" {
-        try await runSyncStep(file: URL(fileURLWithPath: CommandLine.arguments[2]), root: URL(fileURLWithPath: CommandLine.arguments[3]))
+    if arguments.count == 4, arguments[1] == "sync-step" {
+        try await runSyncStep(file: URL(fileURLWithPath: arguments[2]), root: URL(fileURLWithPath: arguments[3]))
         exit(0)
     }
-    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "scenario" {
+    if arguments.count == 4, arguments[1] == "scenario" {
         try await MainActor.run {
-            try runScenario(file: URL(fileURLWithPath: CommandLine.arguments[2]), dataDir: URL(fileURLWithPath: CommandLine.arguments[3]))
+            try runScenario(file: URL(fileURLWithPath: arguments[2]), dataDir: URL(fileURLWithPath: arguments[3]))
         }
         exit(0)
     }
     // lock <시나리오.json> <데이터 폴더> [--phase N]: 암호 메모 시나리오 (P4)
-    if CommandLine.arguments.count >= 4, CommandLine.arguments[1] == "lock" {
+    if arguments.count >= 4, arguments[1] == "lock" {
         var phase: Int?
-        if CommandLine.arguments.count == 6, CommandLine.arguments[4] == "--phase" { phase = Int(CommandLine.arguments[5]) }
-        else if CommandLine.arguments.count != 4 { throw NSError(domain: "인자", code: 1, userInfo: [NSLocalizedDescriptionKey: "사용법: mdemo-golden lock <시나리오.json> <데이터 폴더> [--phase N]"]) }
-        try await runLockScenario(file: URL(fileURLWithPath: CommandLine.arguments[2]), dataDir: URL(fileURLWithPath: CommandLine.arguments[3]), phase: phase)
+        if arguments.count == 6, arguments[4] == "--phase" { phase = Int(arguments[5]) }
+        else if arguments.count != 4 { throw NSError(domain: "인자", code: 1, userInfo: [NSLocalizedDescriptionKey: "사용법: mdemo-golden lock <시나리오.json> <데이터 폴더> [--phase N]"]) }
+        try await runLockScenario(file: URL(fileURLWithPath: arguments[2]), dataDir: URL(fileURLWithPath: arguments[3]), phase: phase)
         exit(0)
     }
-    guard CommandLine.arguments.count == 3 else {
+    guard arguments.count == 3 else {
         throw NSError(domain: "인자", code: 1, userInfo: [NSLocalizedDescriptionKey: "사용법: mdemo-golden <입력 폴더> <출력 폴더> | mdemo-golden scenario <시나리오.json> <데이터 폴더> | mdemo-golden lock <시나리오.json> <데이터 폴더> [--phase N]"])
     }
     try await MainActor.run {
-        try generate(input: URL(fileURLWithPath: CommandLine.arguments[1]), output: URL(fileURLWithPath: CommandLine.arguments[2]))
+        try generate(input: URL(fileURLWithPath: arguments[1]), output: URL(fileURLWithPath: arguments[2]))
     }
 } catch {
     FileHandle.standardError.write(Data("골든 생성 실패: \(error)\n".utf8))

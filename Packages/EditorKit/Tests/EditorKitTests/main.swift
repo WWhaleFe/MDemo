@@ -10,6 +10,8 @@ import TestKit
 // 화면에는 "☐ 우유"가 보이지만 파일에는 "- [ ] 우유"가 들어가야 한다.
 // 이 왕복이 깨지면 파일이 조용히 망가지므로 여기서 촘촘히 확인한다.
 
+RustMarkdownBackend.installIfRequested()
+
 let runner = TestRunner("EditorKit")
 let theme = EditorTheme(textColor: .black)
 
@@ -1557,6 +1559,22 @@ runner.test("암호 첨부는 평문 파일 없이 이미지로 표시하고 파
         session.clear()
         store.purge()
         t.expectNil(try? store.read(saved.fileName))
+    }
+}
+
+runner.test("Rust 교체 후에도 UTF-16 선택과 문자소 입력 규칙 범위가 일치한다") { t in
+    MainActor.assumeIsolated {
+        for prefix in ["한글 ", "😀 ", "e\u{301} ", "👩‍👩‍👧‍👦 ", "🇰🇷 "] {
+            let (textView, controller) = makeEditor()
+            let input = prefix + "**한😀e\u{301}👩‍👩‍👧‍👦**"
+            textView.insertText(input, replacementRange: NSRange(location: 0, length: 0))
+            textView.setSelectedRange(NSRange(location: input.utf16.count, length: 0))
+            controller.textDidChange()
+            let expected = prefix + "한😀e\u{301}👩‍👩‍👧‍👦"
+            t.expectEqual(textView.string, expected)
+            t.expectEqual(textView.selectedRange().location, expected.utf16.count)
+            t.expectEqual(textView.currentMarkdown(), input)
+        }
     }
 }
 

@@ -51,6 +51,10 @@ public enum OCRMarkdownBuilder {
     }
 
     public static func build(lines: [OCRLine], mode: Mode) -> String {
+        MarkdownEngineBackend.current.ocrBuild(lines: lines, mode: mode)
+    }
+
+    static func swiftBuild(lines: [OCRLine], mode: Mode) -> String {
         let rows = mergeRows(lines)
         guard !rows.isEmpty else { return "" }
 
