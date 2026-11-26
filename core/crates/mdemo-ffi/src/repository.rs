@@ -32,7 +32,7 @@ impl From<StoreError> for CoreRepositoryError {
     fn from(e: StoreError) -> Self {
         match e {
             StoreError::Destroyed => Self::Destroyed,
-            StoreError::Damaged => Self::Damaged,
+            StoreError::Damaged | StoreError::Authentication | StoreError::IncorrectSize => Self::Damaged,
             StoreError::Locked => Self::Locked,
             StoreError::MissingKey => Self::MissingKey,
             StoreError::WrongPassword => Self::WrongPassword,
@@ -58,7 +58,7 @@ pub trait CoreKeyStore: Send + Sync {
     fn write_failures(&self, id: String, failures: i64) -> Result<()>;
     fn delete_failures(&self, id: String) -> Result<()>;
 }
-struct Keys(Arc<dyn CoreKeyStore>);
+pub(crate) struct Keys(pub(crate) Arc<dyn CoreKeyStore>);
 fn key_error(e: CoreRepositoryError) -> LockError {
     match e {
         CoreRepositoryError::Damaged => LockError::Damaged,
@@ -248,7 +248,7 @@ pub struct CoreBoardLayout {
     pub manual_order: Vec<String>,
 }
 #[derive(Default)]
-struct RepositoryClock(Mutex<Option<f64>>);
+pub(crate) struct RepositoryClock(pub(crate) Mutex<Option<f64>>);
 impl Clock for RepositoryClock {
     fn now(&self) -> MemoDate {
         self.0
@@ -260,8 +260,9 @@ impl Clock for RepositoryClock {
 }
 #[derive(uniffi::Object)]
 pub struct CoreRepository {
-    repository: FileMemoRepository,
+    pub(crate) repository: FileMemoRepository,
     clock: Arc<RepositoryClock>,
+    pub(crate) keys: Arc<dyn CoreKeyStore>,
 }
 #[uniffi::export]
 impl CoreRepository {
@@ -269,8 +270,9 @@ impl CoreRepository {
     pub fn new(root: String, keys: Arc<dyn CoreKeyStore>) -> Result<Arc<Self>> {
         let clock = Arc::new(RepositoryClock::default());
         Ok(Arc::new(Self {
-            repository: FileMemoRepository::with_keys(root, clock.clone(), Arc::new(Keys(keys)))?,
+            repository: FileMemoRepository::with_keys(root, clock.clone(), Arc::new(Keys(keys.clone())))?,
             clock,
+            keys,
         }))
     }
     pub fn set_clock_for_testing(&self, at: f64) {

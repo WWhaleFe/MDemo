@@ -10,12 +10,13 @@ public final class RustMemoRepository: MemoRepository, @unchecked Sendable {
         do { core = try CoreRepository(root: rootDirectory.path, keys: RepositoryKeyStore(keychain)) }
         catch let error as CoreRepositoryError { throw Self.convert(error) }
     }
+    func makeLockStore() throws -> RustLockBridge { try call { RustLockBridge(core: try core.lockStore()) } }
     public func setClockForTesting(_ date: Date) { core.setClockForTesting(at: date.timeIntervalSinceReferenceDate) }
     private func call<T>(_ action: () throws -> T) throws -> T {
         do { return try action() }
         catch let error as CoreRepositoryError { throw Self.convert(error) }
     }
-    private static func convert(_ error: CoreRepositoryError) -> Error {
+    static func convert(_ error: CoreRepositoryError) -> Error {
         switch error {
         case .Destroyed: return MemoLockError.destroyed
         case .Damaged: return MemoLockError.damaged
@@ -142,4 +143,42 @@ extension CoreMemoMeta {
         m.lockFailures = lockFailures.map(Int.init)
         return m
     }
+}
+
+/// FFI 버퍼는 호출 뒤 덮는다. 화면에서 받은 String 자체는 지울 수 없다.
+final class RustPassword: @unchecked Sendable {
+    private var bytes: Data
+    init(_ password: String) {
+        var utf8 = Array(password.utf8)
+        defer { _ = utf8.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) } }
+        bytes = Data(utf8)
+    }
+    func use<T>(_ action: (Data) throws -> T) rethrows -> T {
+        defer { bytes.resetBytes(in: 0..<bytes.count) }
+        return try action(bytes)
+    }
+    deinit { bytes.resetBytes(in: 0..<bytes.count) }
+}
+
+final class RustPrivacyHook: CorePrivacyHook, @unchecked Sendable {
+    let action: (MemoID) throws -> Void
+    init(_ action: @escaping (MemoID) throws -> Void) { self.action = action }
+    func beforeRemoval(id: String) throws {
+        do { try action(MemoID(rawValue: id)) }
+        catch { throw CoreRepositoryError.Io(message: error.localizedDescription) }
+    }
+}
+
+/// 생성된 핸들은 이 객체를 통해서만 앱에서 사용한다.
+final class RustLockBridge: @unchecked Sendable {
+    let core: CoreLockStore
+    init(core: CoreLockStore) { self.core = core }
+    func call<T>(_ action: (CoreLockStore) throws -> T) throws -> T {
+        do { return try action(core) }
+        catch let error as CoreRepositoryError { throw RustMemoRepository.convert(error) }
+    }
+}
+
+extension CoreDecryptedDocument {
+    var native: MemoDocument { MemoDocument(meta: meta.native, body: body, unknownFrontmatterLines: unknownFrontmatterLines, unknownLinkTokens: unknownLinkTokens) }
 }

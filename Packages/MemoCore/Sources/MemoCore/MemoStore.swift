@@ -1,5 +1,5 @@
 import Foundation
-import CryptoKit
+import CoreBridge
 import CryptoKit
 import Observation
 
@@ -23,6 +23,11 @@ public final class MemoStore {
     public private(set) var boardLayout: BoardLayout = .empty
 
     @ObservationIgnored public let keychain: any MemoKeychain
+    @ObservationIgnored private var rustLocks: RustLockBridge?
+    @ObservationIgnored private var rustLockInitializationError: Error?
+    @ObservationIgnored private var rustOperationActive = false
+    @ObservationIgnored private var rustRelockRequests = Set<MemoID>()
+    @ObservationIgnored private var hasCustomCalibration = false
     @ObservationIgnored private var unlocking = Set<MemoID>()
     @ObservationIgnored private var lockSessions: [MemoID: MemoLockSession] = [:]
     @ObservationIgnored private let repository: any MemoRepository
@@ -30,11 +35,17 @@ public final class MemoStore {
     @ObservationIgnored public var clock: @Sendable () -> Date = { MemoMeta.now() }
     @ObservationIgnored public var generateID: @Sendable () -> MemoID = { MemoID.generate() }
     /// 시험 · 시나리오 전용: 새 암호 메모와 암호 바꾸기의 PBKDF2 반복 횟수. 앱은 기본값(기기 보정값)을 그대로 쓴다.
-    @ObservationIgnored public var calibrateIterations: @Sendable () -> Int = { LockCrypto.calibratedIterations() }
+    @ObservationIgnored public var calibrateIterations: @Sendable () -> Int = { LockCrypto.calibratedIterations() } {
+        didSet { hasCustomCalibration = true }
+    }
 
     public init(repository: any MemoRepository, keychain: any MemoKeychain = DeviceMemoKeychain()) {
         self.keychain = keychain
         self.repository = repository
+        if let repository = repository as? RustMemoRepository {
+            do { rustLocks = try repository.makeLockStore() }
+            catch { rustLockInitializationError = error }
+        }
         summaries = (try? repository.loadSummaries()) ?? []
         reloadGroups()
         reloadBoardLayout()
@@ -157,7 +168,17 @@ public final class MemoStore {
     @discardableResult
     public func saveBody(id: MemoID, body: String) -> Bool {
         guard var document = try? repository.load(id: id) else { return false }
+        if document.meta.isLocked, let rustLocks {
+            guard !rustOperationActive else { return false }
+            var bytes = Data(body.utf8)
+            defer { bytes.resetBytes(in: 0..<bytes.count) }
+            guard rustLocks.core.saveBody(id: id.rawValue, body: bytes, at: clock().timeIntervalSinceReferenceDate),
+                  let saved = try? repository.load(id: id) else { return false }
+            updateSummary(meta: saved.meta, preview: "")
+            return true
+        }
         if document.meta.isLocked {
+            if rustLockInitializationError != nil { return false }
             var plaintext = Data(body.utf8)
             defer { plaintext.resetBytes(in: 0..<plaintext.count) }
             guard let session = lockSessions[id], let encrypted = try? session.seal(plaintext) else { return false }
@@ -490,17 +511,34 @@ public final class MemoStore {
     }
 
     public func lockFailureCount(id: MemoID) -> Int {
-        max(summaries.first(where: { $0.id == id })?.meta.lockFailures ?? 0, (try? keychain.readFailures(id: id)) ?? 0)
+        if let rustLocks { return Int(rustLocks.core.lockFailureCount(id: id.rawValue)) }
+        return max(summaries.first(where: { $0.id == id })?.meta.lockFailures ?? 0, (try? keychain.readFailures(id: id)) ?? 0)
     }
 
-    public func lockSession(for id: MemoID) -> MemoLockSession? { lockSessions[id] }
+    public func lockSession(for id: MemoID) -> MemoLockSession? {
+        if let rustLocks {
+            if let session = lockSessions[id] { return session }
+            guard !rustOperationActive, let handle = rustLocks.core.lockSession(id: id.rawValue) else { return nil }
+            let session = MemoLockSession(id: id, rust: handle)
+            lockSessions[id] = session
+            return session
+        }
+        return lockSessions[id]
+    }
 
     public func relock(_ id: MemoID) {
+        if rustOperationActive { rustRelockRequests.insert(id) }
+        else { rustLocks?.core.relock(id: id.rawValue) }
         lockSessions.removeValue(forKey: id)?.clear()
         if let meta = summaries.first(where: { $0.id == id })?.meta { updateSummary(meta: meta, preview: "") }
     }
 
     public func decryptedDocument(id: MemoID) throws -> MemoDocument {
+        if let error = rustLockInitializationError { throw error }
+        if let rustLocks {
+            guard !rustRelockRequests.contains(id) else { throw MemoLockError.locked }
+            return try rustLocks.call { try $0.decryptedDocument(id: id.rawValue).native }
+        }
         var document = try repository.load(id: id)
         guard document.meta.isLocked else { return document }
         guard let session = lockSessions[id], let cipher = Data(base64Encoded: document.body) else { throw MemoLockError.locked }
@@ -511,8 +549,22 @@ public final class MemoStore {
         return document
     }
 
-    /// 무거운 키 유도는 호출자가 백그라운드에서 수행한다. 실패 횟수 기록은 메인에서 직렬화한다.
+    /// 무거운 키 유도는 백그라운드에서 수행한다. Rust 경로의 실패 횟수는 Rust에서 직렬화한다.
     public func unlock(id: MemoID, password: String) async throws {
+        if let error = rustLockInitializationError { throw error }
+        if let rustLocks {
+            let secret = RustPassword(password)
+            guard !rustOperationActive else { throw MemoLockError.locked }
+            rustOperationActive = true
+            defer { rustOperationActive = false; finishRustLockOperation() }
+            configureRustLocks()
+            try await Task.detached(priority: .userInitiated) {
+                try secret.use { bytes in try rustLocks.call { try $0.unlock(id: id.rawValue, password: bytes) } }
+            }.value
+            lockSessions.removeValue(forKey: id)?.clear()
+            if Task.isCancelled { rustLocks.core.relock(id: id.rawValue); throw CancellationError() }
+            return
+        }
         guard LockCrypto.validPassword(password) else { throw MemoLockError.wrongPassword }
         guard unlocking.insert(id).inserted else { throw MemoLockError.locked }
         defer { unlocking.remove(id) }
@@ -573,6 +625,17 @@ public final class MemoStore {
     /// 새 ID에는 첫 기록부터 암호문만 쓴다. 원본은 검증 완료 전에는 건드리지 않는다.
     @discardableResult
     public func createLockedMemo(password: String, moving source: MemoID? = nil) async throws -> MemoID {
+        if let error = rustLockInitializationError { throw error }
+        if let rustLocks {
+            let secret = RustPassword(password)
+            guard !rustOperationActive else { throw MemoLockError.locked }
+            rustOperationActive = true
+            defer { rustOperationActive = false; finishRustLockOperation() }
+            configureRustLocks(nextID: generateID(), iterations: hasCustomCalibration ? calibrateIterations() : 0)
+            return try await Task.detached(priority: .userInitiated) {
+                try secret.use { bytes in try rustLocks.call { MemoID(rawValue: try $0.createLockedMemo(password: bytes, moving: source?.rawValue)) } }
+            }.value
+        }
         guard LockCrypto.validPassword(password) else { throw MemoLockError.invalidPassword }
         let original = try source.map { try repository.load(id: $0) }
         guard original?.meta.isLocked != true else { throw MemoLockError.locked }
@@ -671,6 +734,18 @@ public final class MemoStore {
     }
 
     public func changePassword(id: MemoID, password: String) async throws {
+        if let error = rustLockInitializationError { throw error }
+        if let rustLocks {
+            let secret = RustPassword(password)
+            guard !rustOperationActive else { throw MemoLockError.locked }
+            rustOperationActive = true
+            defer { rustOperationActive = false; finishRustLockOperation() }
+            configureRustLocks(iterations: hasCustomCalibration ? calibrateIterations() : 0)
+            try await Task.detached(priority: .userInitiated) {
+                try secret.use { bytes in try rustLocks.call { try $0.changePassword(id: id.rawValue, password: bytes) } }
+            }.value
+            return
+        }
         guard LockCrypto.validPassword(password) else { throw MemoLockError.invalidPassword }
         guard let session = lockSessions[id] else { throw MemoLockError.locked }
         guard let previous = try keychain.read(id: id) else { throw MemoLockError.missingKey }
@@ -691,6 +766,13 @@ public final class MemoStore {
 
     @discardableResult
     public func moveToPlainMemo(id: MemoID) throws -> MemoID {
+        if let error = rustLockInitializationError { throw error }
+        if let rustLocks {
+            guard !rustOperationActive else { throw MemoLockError.locked }
+            configureRustLocks(nextID: generateID())
+            defer { finishRustLockOperation() }
+            return try rustLocks.call { MemoID(rawValue: try $0.moveToPlainMemo(id: id.rawValue)) }
+        }
         var document = try decryptedDocument(id: id)
         guard document.meta.isLocked, let session = lockSessions[id] else { throw MemoLockError.locked }
         let newID = generateID()
@@ -736,6 +818,14 @@ public final class MemoStore {
     @ObservationIgnored public var beforePrivacyRemoval: ((MemoID) throws -> Void)?
 
     public func destroyMemo(id: MemoID) throws {
+        if let error = rustLockInitializationError { throw error }
+        if let rustLocks {
+            guard !rustOperationActive else { throw MemoLockError.locked }
+            configureRustLocks()
+            defer { finishRustLockOperation() }
+            try rustLocks.call { try $0.destroyMemo(id: id.rawValue) }
+            return
+        }
         try keychain.delete(id: id)
         relock(id)
         let root = repository.attachmentsDirectory(for: id).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -753,6 +843,19 @@ public final class MemoStore {
         normalizeManualOrder()
         try repository.saveBoardLayout(boardLayout)
         reloadTrash()
+    }
+
+    private func configureRustLocks(nextID: MemoID? = nil, iterations: Int = LockCrypto.minimumIterations) {
+        rustLocks?.core.configure(at: clock().timeIntervalSinceReferenceDate, nextId: nextID?.rawValue, iterations: Int64(iterations), hook: beforePrivacyRemoval.map(RustPrivacyHook.init))
+    }
+
+    private func finishRustLockOperation() {
+        for id in rustRelockRequests { rustLocks?.core.relock(id: id.rawValue) }
+        rustRelockRequests.removeAll()
+        lockSessions = lockSessions.filter { rustLocks?.core.lockSession(id: $0.key.rawValue) != nil }
+        reloadSummaries()
+        reloadTrash()
+        if rustLocks?.core.takePrivacyChange() == true { onPrivacyChange?() }
     }
 
     private func updateSummary(meta: MemoMeta, preview: String) {

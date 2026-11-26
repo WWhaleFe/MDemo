@@ -280,10 +280,10 @@ func makeTemporarySwiftRepository() throws -> (FileMemoRepository, URL) {
     return (try FileMemoRepository(rootDirectory: root, keychain: testKeychain), root)
 }
 
-func makeTemporaryRepository() throws -> (any MemoRepository, URL) {
+func makeTemporaryRepository(keychain: any MemoKeychain = testKeychain) throws -> (any MemoRepository, URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MDemoTests-\(UUID().uuidString)", isDirectory: true)
-    return (try makeRepository(root: root, keychain: testKeychain), root)
+    return (try makeRepository(root: root, keychain: keychain), root)
 }
 
 runner.test("저장한 메모를 그대로 다시 읽는다") { t in
@@ -1364,6 +1364,33 @@ runner.test("본문·첨부 AES-GCM 왕복과 잘못된 열쇠·문맥 거부") 
     t.expectNil(try? session.seal(Data()))
 }
 
+await runner.testAsync("잠금 세션은 열쇠를 노출하지 않고 relock 뒤 기존 핸들도 폐기된다") { t in
+    let keys = MemoryLockKeychain()
+    let (repository, root) = try makeTemporaryRepository(keychain: keys)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = MemoStore(repository: repository, keychain: keys)
+    store.calibrateIterations = { 2_000_000 }
+    let id = try await store.createLockedMemo(password: "1234")
+    store.relock(id)
+    try await store.unlock(id: id, password: "1234")
+    let session = store.lockSession(for: id)!
+    t.expect(store.lockSession(for: id) === session, "같은 세션 래퍼를 보존한다")
+    let cipher = try session.seal(Data("첨부".utf8), name: "a.png")
+    do { try await store.unlock(id: id, password: "!"); t.expect(false) }
+    catch { if case MemoLockError.wrongPassword = error {} else { t.expect(false) } }
+    t.expectEqual(try session.open(cipher, name: "a.png"), Data("첨부".utf8))
+    if rustStorage {
+        let storedKey = Mirror(reflecting: session).children.first { $0.label == "key" }?.value as? Data
+        t.expectEqual(storedKey, Data())
+    }
+    store.relock(id)
+    t.expectNil(store.lockSession(for: id))
+    do { _ = try session.seal(Data()); t.expect(false) }
+    catch { if case MemoLockError.locked = error {} else { t.expect(false) } }
+    do { _ = try session.open(cipher, name: "a.png"); t.expect(false) }
+    catch { if case MemoLockError.locked = error {} else { t.expect(false) } }
+}
+
 runner.test("영구 파기는 같은 길이 덮어쓰기와 fsync 뒤 휴지통 없이 삭제한다") { t in
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -1382,9 +1409,9 @@ runner.test("영구 파기는 같은 길이 덮어쓰기와 fsync 뒤 휴지통 
 }
 
 await runner.testAsync("새 암호 메모의 첫 저장·편집은 암호문이고 검색·복제·백업에서 제외된다") { t in
-    let (repository, root) = try makeTemporaryRepository()
-    defer { try? FileManager.default.removeItem(at: root) }
     let keychain = MemoryLockKeychain()
+    let (repository, root) = try makeTemporaryRepository(keychain: keychain)
+    defer { try? FileManager.default.removeItem(at: root) }
     let store = MemoStore(repository: repository, keychain: keychain)
     let id = try await store.createLockedMemo(password: "Ab1234")
     let folder = root.appendingPathComponent("memos").appendingPathComponent(id.rawValue)
@@ -1436,9 +1463,9 @@ await runner.testAsync("새 암호 메모의 첫 저장·편집은 암호문이�
 }
 
 await runner.testAsync("본문 손상은 맞는 암호의 실패 횟수를 올리지 않는다") { t in
-    let (repository, root) = try makeTemporaryRepository()
-    defer { try? FileManager.default.removeItem(at: root) }
     let keys = MemoryLockKeychain()
+    let (repository, root) = try makeTemporaryRepository(keychain: keys)
+    defer { try? FileManager.default.removeItem(at: root) }
     let store = MemoStore(repository: repository, keychain: keys)
     let id = try await store.createLockedMemo(password: "1234")
     store.relock(id)
@@ -1469,9 +1496,9 @@ await runner.testAsync("본문 손상은 맞는 암호의 실패 횟수를 올�
 }
 
 await runner.testAsync("열 번째 실패는 열쇠·폴더를 파기하고 묘비를 남긴다") { t in
-    let (repository, root) = try makeTemporaryRepository()
-    defer { try? FileManager.default.removeItem(at: root) }
     let keychain = MemoryLockKeychain()
+    let (repository, root) = try makeTemporaryRepository(keychain: keychain)
+    defer { try? FileManager.default.removeItem(at: root) }
     let store = MemoStore(repository: repository, keychain: keychain)
     let id = try await store.createLockedMemo(password: "1234")
     store.relock(id)
@@ -1497,9 +1524,9 @@ await runner.testAsync("열 번째 실패는 열쇠·폴더를 파기하고 묘�
 }
 
 await runner.testAsync("암호 메모 이동은 새 ID·첨부 암호화·원본 파기·연결 제거를 수행한다") { t in
-    let (repository, root) = try makeTemporaryRepository()
-    defer { try? FileManager.default.removeItem(at: root) }
     let keychain = MemoryLockKeychain()
+    let (repository, root) = try makeTemporaryRepository(keychain: keychain)
+    defer { try? FileManager.default.removeItem(at: root) }
     let store = MemoStore(repository: repository, keychain: keychain)
     let source = store.createMemo(group: "업무").id
     store.updateMeta(id: source) { $0.title = "보이는 제목"; $0.backgroundAlpha = 0.7 }

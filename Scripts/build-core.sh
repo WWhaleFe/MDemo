@@ -18,7 +18,7 @@ FINGERPRINT="$(
         rustc --version
         cargo --version
         find core -path core/target -prune -o -type f \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock -o -name uniffi.toml \) -print | LC_ALL=C sort | while IFS= read -r file; do shasum -a 256 "$file"; done
-        shasum -a 256 Scripts/build-core.sh Scripts/toolchain.sh
+        shasum -a 256 Scripts/build-core.sh Scripts/toolchain.sh Scripts/harden-bindings.py
     } | shasum -a 256 | cut -d ' ' -f1
 )"
 if [ -f "$OUT/fingerprint" ] && [ "$(cat "$OUT/fingerprint")" = "$FINGERPRINT" ] \
@@ -46,6 +46,7 @@ case "$(uname -m)" in arm64) HOST=aarch64-apple-darwin ;; *) HOST=x86_64-apple-d
 cargo run --locked -p uniffi-bindgen -- generate \
     --library "target/$HOST/$PROFILE/libmdemo_ffi.dylib" \
     --config crates/mdemo-ffi/uniffi.toml --language swift --out-dir "$STAGE/generated" --no-format
+python3 "$ROOT/Scripts/harden-bindings.py" "$STAGE/generated/MDemoBindings.swift"
 cp "$STAGE/generated/"*.h "$STAGE/headers/"
 cp "$STAGE/generated/"*.modulemap "$STAGE/headers/module.modulemap"
 xcodebuild -create-xcframework -library "$STAGE/libmdemo_ffi.a" \

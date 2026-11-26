@@ -215,3 +215,14 @@ Foundation은 파일 수정 시각을 `(tv_sec - 978307200) + tv_nsec * 1e-9` �
 - 본문 검색은 한 문서씩 Rust에서 읽고 바로 버린다. Swift `.localizedCaseInsensitiveContains`와 `.whitespaces` 트림을 유지한다. 기존 검색이 휴지통까지 읽고 파기 장부 · 폴더와 문서의 ID 불일치 검사를 하지 않는 동작도 검색 전용 Rust 읽기에서 유지한다. 일반 load는 파기 · ID 검사를 그대로 한다.
 - 열쇠 콜백의 deleteKey는 기존 MemoKeychain.delete 계약에 따라 열쇠와 실패 횟수를 순서대로 지운다. 이어지는 deleteFailures는 이미 완료한 삭제이므로 아무 작업도 하지 않는다. 키체인 오류 상태와 손상 오류는 FFI를 왕복해 구분한다.
 - 역방향 그림자 `--rust`는 Rust 실제 결과에서 삭제 시각과 연결 정리 시각을 받아 Swift 복제본에 같은 입력을 준다. 양쪽의 자동 파일 mtime은 비교하지 않고 휴지통 폴더의 삭제 시각만 기존 1µs 기준으로 비교한다. 제목 · 본문 · 원본 ID는 기록하지 않으며 차이의 Swift/Rust 항목은 실제 구현 방향에 맞춰 기록한다.
+
+## P7 2-b 실제 앱의 Rust 잠금 연결
+
+- `CoreStorage`가 `RustMemoRepository`를 반환할 때만 `MemoStore`의 잠금 흐름을 Rust `MemoStore::lock_flow`로 보낸다. 저장소의 같은 루트와 같은 `CoreKeyStore` 콜백을 재사용한다. Swift 경로와 정방향 그림자는 기존 잠금 구현을 쓴다. Rust 잠금 객체 초기화 실패는 오류로 남겨 Swift 잠금으로 조용히 돌아가지 않는다.
+- Swift 세션은 `CoreLockSession` 핸들만 감싸며 Swift의 열쇠 Data는 비어 있다. Rust 핸들에는 열쇠를 읽거나 만드는 공개 API가 없다. 화면에 쓰던 `seal` · `open` · `wrapped` · `clear`는 유지한다. 같은 메모의 Swift 래퍼를 재사용해 임시 래퍼의 해제가 살아 있는 세션을 지우지 않게 한다. `relock`은 이미 전달한 핸들의 봉인 · 개봉도 막는다.
+- 암호 입력 UI와 공개 API는 이번에도 `String`이다. 따라서 계획표의 "Swift 문자열을 거치지 않는 입력"까지 달성한 것은 아니다. Rust 분기는 받은 암호를 곧 UTF-8 배열로 바꾸고 배열을 덮는다. FFI용 Data는 백그라운드 호출을 소유하는 객체가 성공 · 실패 뒤 덮는다. 원본 암호 String과 UI · Swift 런타임이 만든 복사본은 확실하게 덮을 수 없다. 화면 입력을 바이트 기반으로 바꾸는 일은 별도 작업이다.
+- Rust의 `SecretBytes`는 UniFFI가 소유권을 넘긴 입력 직렬화 버퍼부터 `Zeroizing`으로 감싸고, 암호 · 평문 인자도 `Secret`으로만 보관한다. 복호화 문서의 본문은 `SecretText`로 직렬화해 중간 Rust String 복사본을 만들지 않는다. 출력의 전송 버퍼는 Swift가 읽은 뒤 전체 할당 영역을 덮고 Rust에 해제를 요청한다. `harden-bindings.py`가 생성 바인딩의 입력 writer, reader, 문자열 · Data 변환 임시 배열도 덮도록 보강하며 UniFFI 템플릿이 바뀌면 빌드를 중단한다. 해석 오류 경로에서도 버퍼를 해제한다.
+- 화면에 전달한 복호화 본문은 Swift `MemoDocument.body`의 String으로 남는다. EditorKit 이미지 표시에는 세션 `open`의 평문 Data도 필요하다. 편집 본문 String과 첨부 입력 Data 역시 기존 공개 API의 입력이다. 이 값들의 수명과 ARC · 값 복사, 화면 프레임워크의 내부 복사본까지 Rust에서 덮을 수는 없다. Rust가 가진 복호화 원본과 FFI가 소유한 전송 버퍼의 제거를 보장하는 범위이며, 화면에 표시한 비밀 전체의 메모리 제거 보장은 아니다. 일반 메모로 이동할 때 코덱 내부 임시 문자열이 남는 기존 P4 한계도 유지된다.
+- PBKDF2를 사용하는 생성 · 해제 · 암호 변경은 Swift `Task.detached`에서 동기 FFI를 부른다. Rust 경로의 기본 반복 횟수 보정도 Rust에서 수행한다. 시험의 시각 · ID · 반복 횟수 주입은 유지한다. 한 `MemoStore`의 무거운 잠금 변경은 하나씩 진행하며 중복 변경은 `locked`다. 진행 중 `relock`은 기존 화면 핸들을 곧 지우고, 작업 완료 뒤 새 세션도 지운다. 취소된 `unlock`도 설치한 세션을 지운다.
+- 실패 횟수 · 10회 파기 · 암호 변경 · 이동 · 첨부 검증 순서는 Rust P4 한 곳에서 수행한다. FFI의 태그 불일치 · 짧은 암호문은 앱 경계에서 `MemoLockError.damaged`로 변환한다. Swift 경로의 기존 CryptoKit 오류는 그대로다. 파기 뒤 Swift는 목록과 보드를 다시 읽고 Rust의 개인정보 변경 알림을 메인 액터에서 전달한다. 삭제 실패 주입 콜백은 시험 전용이며 Rust 흐름이 실행되는 스레드에서 호출된다.
+- 두 구현 러너에서 제외하는 Swift 전용 시험은 기존 10개다. 2개는 Swift 저장소 장식자의 쓰기 가로채기 · 실패 주입 계약이고, 8개는 정방향 그림자 자체의 계약이다. 실제 잠금 생성 · 해제 · 횟수 · 손상 · 파기 · 암호 변경 · 일반 이동 · 영구 삭제 · 첨부 검증은 양쪽 러너에서 실행한다. 추가 시험은 Rust 세션의 Swift 열쇠 저장 공간이 비었음과 래퍼 재사용, relock 뒤 이전 핸들의 봉인 · 개봉 실패를 확인한다. Rust 전송 형식 시험과 P4의 zeroize 시험도 실행한다.

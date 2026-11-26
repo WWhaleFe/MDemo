@@ -1,3 +1,4 @@
+import CoreBridge
 import Foundation
 import CryptoKit
 import CommonCrypto
@@ -164,17 +165,29 @@ public struct DeviceMemoKeychain: MemoKeychain {
 public final class MemoLockSession: @unchecked Sendable {
     private let mutex = NSLock()
     private var key: Data
+    private let rust: CoreLockSession?
     public let id: MemoID
-    public init(id: MemoID, key: Data) { self.id = id; self.key = key }
+    public init(id: MemoID, key: Data) { self.id = id; self.key = key; self.rust = nil }
+    init(id: MemoID, rust: CoreLockSession) { self.id = id; self.key = Data(); self.rust = rust }
+    private func rustCall<T>(_ action: () throws -> T) throws -> T {
+        do { return try action() }
+        catch let error as CoreRepositoryError { throw RustMemoRepository.convert(error) }
+    }
     public func seal(_ data: Data, name: String? = nil) throws -> Data {
         mutex.lock(); defer { mutex.unlock() }
+        if let rust { return try rustCall { try rust.seal(data: data, name: name) } }
         return try LockCrypto.seal(data, key: key, context: id.rawValue + (name.map { "/attachment/" + $0 } ?? "/body"))
     }
     public func open(_ data: Data, name: String? = nil) throws -> Data {
         mutex.lock(); defer { mutex.unlock() }
+        if let rust { return try rustCall { try rust.open(data: data, name: name) } }
         return try LockCrypto.open(data, key: key, context: id.rawValue + (name.map { "/attachment/" + $0 } ?? "/body"))
     }
     public func wrapped(password: String, salt: Data, iterations: Int) throws -> Data {
+        if let rust {
+            let secret = RustPassword(password)
+            return try secret.use { bytes in try rustCall { try rust.wrapped(password: bytes, salt: salt, iterations: Int64(iterations)) } }
+        }
         var kek = try LockCrypto.derive(password: password, salt: salt, iterations: iterations)
         defer { kek.resetBytes(in: 0..<kek.count) }
         mutex.lock(); defer { mutex.unlock() }
@@ -183,6 +196,7 @@ public final class MemoLockSession: @unchecked Sendable {
     }
     public func clear() {
         mutex.lock(); defer { mutex.unlock() }
+        rust?.clear()
         key.resetBytes(in: 0..<key.count)
         key.removeAll(keepingCapacity: false)
     }

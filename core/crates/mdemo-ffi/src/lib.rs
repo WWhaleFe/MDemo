@@ -59,4 +59,6 @@ mod shadow;
 pub use shadow::*;
 
 mod repository;
+mod secret_transfer;
+mod lock_store;
 pub use repository::*;
