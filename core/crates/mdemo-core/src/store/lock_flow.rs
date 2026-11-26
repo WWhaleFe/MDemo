@@ -413,7 +413,7 @@ impl MemoStore {
             }
         }
         secure_delete::synchronize(&self.memo_folder(new_id))?;
-        if self.repo.load(new_id)?.body != document.body {
+        if Wiped(self.repo.load(new_id)?).0.body != document.body {
             return Err(StoreError::Damaged);
         }
         for path in read_all(&from)? {

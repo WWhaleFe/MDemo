@@ -92,7 +92,8 @@ fn cipher(key: &[u8]) -> Result<Aes256Gcm, LockError> {
 /// 출력 버퍼에 평문을 넣고 제자리에서 암호화하므로 평문이 남는 별도 복사본이 없다.
 pub fn seal(plaintext: &[u8], key: &[u8], context: &str) -> Result<Vec<u8>, LockError> {
     let cipher = cipher(key)?;
-    let mut combined = Vec::with_capacity(NONCE_LENGTH + plaintext.len() + TAG_LENGTH);
+    // 암호화가 끝나기 전 오류로 떨어져도 평문이 남지 않도록 0으로 지우는 버퍼에 담는다(Gemini 교차 검수 지적).
+    let mut combined = Zeroizing::new(Vec::with_capacity(NONCE_LENGTH + plaintext.len() + TAG_LENGTH));
     combined.resize(NONCE_LENGTH, 0);
     getrandom::getrandom(&mut combined[..NONCE_LENGTH]).map_err(|e| LockError::KeyStore(format!("난수 생성 실패: {e}")))?;
     combined.extend_from_slice(plaintext);
@@ -101,7 +102,7 @@ pub fn seal(plaintext: &[u8], key: &[u8], context: &str) -> Result<Vec<u8>, Lock
         .encrypt_in_place_detached(&nonce, context.as_bytes(), &mut combined[NONCE_LENGTH..])
         .map_err(|_| LockError::Authentication)?;
     combined.extend_from_slice(&tag);
-    Ok(combined)
+    Ok(std::mem::take(&mut *combined))
 }
 
 /// `seal`의 반대. 태그가 맞지 않으면 `Authentication`, 너무 짧으면 `IncorrectSize`.

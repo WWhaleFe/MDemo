@@ -239,6 +239,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let result = (|| {
         let mut file = fs::File::create(&temp)?;
         file.write_all(bytes)?;
+        // 이름을 바꾸기 전에 내용을 디스크에 반영한다. 암호 바꾸기에서 새 열쇠는 저장됐는데 앞머리(솔트 · 반복 횟수)가
+        // 옛 값으로 남아 메모를 열 수 없게 되는 경우를 막는다(Gemini 교차 검수 지적).
+        file.sync_all()?;
         drop(file);
         fs::rename(&temp, path)
     })();

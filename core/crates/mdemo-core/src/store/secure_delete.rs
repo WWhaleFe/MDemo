@@ -1,9 +1,9 @@
 //! 안전 삭제 (Swift `SecureMemoDeletion`). 같은 길이의 난수로 덮고 동기화한 뒤 지운다.
 //!
 //! APFS 스냅샷, SSD의 물리 블록, Windows의 NTFS 로그까지 지웠다고 보장하지는 않는다(Swift와 같다).
-//! Swift는 `O_NOFOLLOW`로 열어 심볼릭 링크를 따라가지 않는다. 여기서는 열기 전에 `symlink_metadata`로
-//! 종류를 확인한다. 확인과 열기 사이에 파일이 링크로 바뀌는 경쟁은 막지 못한다(외부 크레이트 없이
-//! 플랫폼 플래그를 쓸 수 없어서). 알려진 차이로 `docs/hidden-behaviors.md`에 적었다.
+//! Swift처럼 `O_NOFOLLOW`로 열어 심볼릭 링크를 따라가지 않는다(확인과 열기 사이 경쟁을 커널이 막는다,
+//! 2026-11-26 Gemini 교차 검수 지적 반영). 열 때 링크로 바뀌어 있으면 ELOOP으로 실패하고, 덮어쓰기는 그 항목을 건너뛴다.
+//! Windows는 P8에서 FILE_FLAG_OPEN_REPARSE_POINT로 같은 규칙을 정한다.
 
 use super::{StoreError, StoreResult};
 use crate::id::MemoID;
@@ -24,6 +24,49 @@ fn synchronize_directory(_directory: &Path) -> StoreResult<()> {
     Ok(())
 }
 
+/// 링크를 따라가지 않고 쓰기용으로 연다(Swift `open(O_WRONLY | O_NOFOLLOW)`).
+fn open_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        #[cfg(target_os = "macos")]
+        const O_NOFOLLOW: i32 = 0x0100;
+        #[cfg(not(target_os = "macos"))]
+        const O_NOFOLLOW: i32 = 0o400000;
+        options.custom_flags(O_NOFOLLOW);
+    }
+    options.open(path)
+}
+
+/// 일반 파일 하나를 같은 길이의 난수로 덮고 동기화한 뒤 비운다. 열 때 링크였으면 건드리지 않는다.
+fn overwrite_file(path: &Path) -> StoreResult<()> {
+    let mut file = match open_no_follow(path) {
+        Ok(file) => file,
+        Err(error) if fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false) => {
+            let _ = error;
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Ok(());
+    }
+    let mut remaining = meta.len();
+    while remaining > 0 {
+        let chunk = remaining.min(65_536) as usize;
+        // 난수를 새로 뽑아 청크마다 쓴다(Swift와 같다). 난수 버퍼는 떨어질 때 0으로 덮인다.
+        let data = mdemo_crypto::random(chunk)?;
+        file.write_all(&data)?;
+        remaining -= chunk as u64;
+    }
+    file.sync_all()?;
+    file.set_len(0)?;
+    Ok(())
+}
+
 fn parent_of(directory: &Path) -> PathBuf {
     directory.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
 }
@@ -40,7 +83,7 @@ pub fn synchronize(directory: &Path) -> StoreResult<()> {
             synchronize(&entry.path())?;
         } else {
             // Swift `FileHandle(forUpdating:)`처럼 쓰기 권한이 필요하다.
-            fs::OpenOptions::new().write(true).open(entry.path())?.sync_all()?;
+            open_no_follow(&entry.path()).map_err(|_| StoreError::Damaged)?.sync_all()?;
         }
     }
     synchronize_directory(directory)?;
@@ -62,21 +105,7 @@ fn overwrite_tree(directory: &Path) -> StoreResult<()> {
         if !kind.is_file() {
             continue;
         }
-        let mut file = fs::OpenOptions::new().write(true).open(&path)?;
-        let meta = file.metadata()?;
-        if !meta.is_file() {
-            continue;
-        }
-        let mut remaining = meta.len();
-        while remaining > 0 {
-            let chunk = remaining.min(65_536) as usize;
-            // 난수를 새로 뽑아 청크마다 쓴다(Swift와 같다). 난수 버퍼는 떨어질 때 0으로 덮인다.
-            let data = mdemo_crypto::random(chunk)?;
-            file.write_all(&data)?;
-            remaining -= chunk as u64;
-        }
-        file.sync_all()?;
-        file.set_len(0)?;
+        overwrite_file(&path)?;
     }
     Ok(())
 }
@@ -93,6 +122,9 @@ pub fn remove(directory: &Path, before_removal: Option<&dyn Fn(&Path) -> StoreRe
     }
     if directory.is_dir() {
         overwrite_tree(directory)?;
+    } else {
+        // 폴더가 아닌 파일 하나가 와도 덮어쓴 뒤 지운다(Gemini 교차 검수 지적).
+        overwrite_file(directory)?;
     }
     if let Some(hook) = before_removal {
         hook(directory)?;
@@ -121,4 +153,61 @@ pub fn remove_copies(id: &MemoID, root: &Path) -> StoreResult<()> {
         remove(&root.join(folder).join(&id.raw_value), None)?;
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mdemo-secure-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn 링크가_가리키는_바깥_파일은_덮어쓰지_않는다() {
+        let root = temp("link");
+        let outside = root.join("outside.txt");
+        fs::write(&outside, b"keep me").unwrap();
+        let memo = root.join("memo");
+        fs::create_dir_all(&memo).unwrap();
+        fs::write(memo.join("memo.md"), b"secret").unwrap();
+        std::os::unix::fs::symlink(&outside, memo.join("link.md")).unwrap();
+        remove(&memo, None).unwrap();
+        assert!(!memo.exists());
+        assert_eq!(fs::read(&outside).unwrap(), b"keep me");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn 폴더가_아닌_파일도_덮어쓴_뒤_지운다() {
+        let root = temp("file");
+        let file = root.join("plain.enc");
+        fs::write(&file, b"secret-bytes").unwrap();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let hook = |p: &Path| -> StoreResult<()> {
+            seen.borrow_mut().push(fs::read(p).unwrap());
+            Ok(())
+        };
+        remove(&file, Some(&hook)).unwrap();
+        assert!(!file.exists());
+        // 지우기 직전에는 이미 비워져 있어야 한다(덮어쓴 뒤 길이 0).
+        assert_eq!(seen.borrow()[0], Vec::<u8>::new());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn 열_때_링크면_건너뛴다() {
+        let root = temp("open");
+        let target = root.join("target");
+        fs::write(&target, b"x").unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(open_no_follow(&link).is_err());
+        overwrite_file(&link).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"x");
+        fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -324,10 +324,12 @@ fn exclude_from_backup(directory: &Path) -> StoreResult<()> {
         0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1C,
     ];
+    // 링크를 따라가지 않는다(Gemini 교차 검수 지적).
+    const XATTR_NOFOLLOW: i32 = 0x0001;
     let path = CString::new(directory.as_os_str().as_bytes()).map_err(|_| StoreError::Damaged)?;
     let name = CString::new("com.apple.metadata:com_apple_backup_excludeItem").expect("속성 이름");
     // SAFETY: 두 C 문자열은 호출이 끝날 때까지 살아 있고, 값 버퍼는 길이만큼 유효하다.
-    let status = unsafe { setxattr(path.as_ptr().cast(), name.as_ptr().cast(), VALUE.as_ptr(), VALUE.len(), 0, 0) };
+    let status = unsafe { setxattr(path.as_ptr().cast(), name.as_ptr().cast(), VALUE.as_ptr(), VALUE.len(), 0, XATTR_NOFOLLOW) };
     if status == 0 {
         Ok(())
     } else {
