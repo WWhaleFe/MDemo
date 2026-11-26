@@ -400,7 +400,7 @@ runner.test("보드 기본 배치는 저장하지 않고 네 열로 채우며 �
     }
 }
 
-runner.test("재정렬은 이어진 메모끼리 한 무리로 모으고 흐름은 한 줄로, 외톨이는 맨 아래에 둔다") { t in
+runner.test("재정렬은 이어진 메모끼리 한 무리로 모으고 방향에 따라 열을 나누고 외톨이는 맨 아래에 둔다") { t in
     try MainActor.assumeIsolated {
         let (model, root) = try makeModel()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -412,16 +412,23 @@ runner.test("재정렬은 이어진 메모끼리 한 무리로 모으고 흐름�
         model.link(from: ids[5], to: ids[6], kind: .related)
         let memos = ids.compactMap { id in model.store.summaries.first { $0.id == id } }
         let positions = model.autoArrangedPlacements(for: memos)
-        // 가장 큰 무리(0-1-2 흐름 + 관련 7)는 왼쪽 위: 흐름 한 줄, 관련은 그 아래 줄.
+        // 가장 큰 무리는 방향에 따라 네 열을 차지한다.
         t.expectEqual(positions[ids[0]], .init(x: 40, y: 100))
-        t.expectEqual(positions[ids[1]], .init(x: 320, y: 100))
-        t.expectEqual(positions[ids[2]], .init(x: 600, y: 100))
-        t.expectEqual(positions[ids[7]], .init(x: 40, y: 280))
-        // 다음 무리들은 오른쪽으로 이어 붙고, 넘치면 아래 줄로.
-        t.expectEqual(positions[ids[3]], .init(x: 40 + 760 + 80, y: 100))
-        t.expectEqual(positions[ids[4]], .init(x: 40 + 760 + 80 + 280, y: 100))
-        t.expectEqual(positions[ids[5]]?.y, positions[ids[6]]?.y)
-        t.expect((positions[ids[5]]?.y ?? 0) > 280)
+        for i in 1...2 { t.expectEqual(positions[ids[i]]!.x - positions[ids[i - 1]]!.x, 280) }
+        t.expectEqual(positions[ids[7]]!.x - positions[ids[2]]!.x, 280)
+        // 두 작은 무리는 다음 선반에서 옆으로 이어 붙는다.
+        t.expectEqual(positions[ids[3]], .init(x: 40, y: 300))
+        t.expectEqual(positions[ids[4]], .init(x: 320, y: 300))
+        t.expectEqual(positions[ids[5]], .init(x: 600, y: 300))
+        t.expectEqual(positions[ids[6]], .init(x: 880, y: 300))
+        for i in ids.indices {
+            for j in ids.indices where j > i {
+                let a = positions[ids[i]]!, b = positions[ids[j]]!
+                t.expect(!CGRect(x: a.x, y: a.y, width: 200, height: 120)
+                    .intersects(CGRect(x: b.x, y: b.y, width: 200, height: 120)))
+            }
+        }
+        t.expectEqual(positions, model.autoArrangedPlacements(for: memos))
         // 외톨이 8은 모든 무리보다 아래.
         let lowest = [0, 1, 2, 3, 4, 5, 6, 7].compactMap { positions[ids[$0]]?.y }.max() ?? 0
         t.expect((positions[ids[8]]?.y ?? 0) > lowest)
@@ -940,6 +947,139 @@ runner.test("짧은 선의 이름표는 카드 위로 옮긴다") { t in
     let point = pipe.labelPoint(avoiding: cards)
     t.expect(point.y < 0)
     t.expectEqual(point.x, pipe.midpoint.x)
+}
+
+runner.test("저장된 카드를 옮겨도 미저장 카드 자리를 고정하고 되돌리기로 전체 저장 상태를 복원한다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for _ in 0..<3 { model.store.createMemo() }
+        let memos = model.visibleMemos, id = memos[0].id
+        model.moveCard(id, to: .init(x: 40, y: 100))
+        let saved = model.store.boardLayout.placements
+        let before = model.boardPlacements(for: memos)
+        let undo = UndoManager()
+        undo.beginUndoGrouping()
+        model.moveCards([id: .init(x: 53, y: 913)], freezing: memos, undoManager: undo)
+        undo.endUndoGrouping()
+        let after = model.boardPlacements(for: memos)
+        t.expectEqual(after[id], .init(x: 60, y: 920))
+        for memo in memos.dropFirst() { t.expectEqual(after[memo.id], before[memo.id]) }
+        t.expectEqual(model.store.boardLayout.placements.count, 3)
+        undo.undo()
+        t.expectEqual(model.store.boardLayout.placements, saved)
+        t.expectEqual(model.boardPlacements(for: memos), before)
+        undo.redo()
+        t.expectEqual(model.boardPlacements(for: memos), after)
+    }
+}
+
+runner.test("단계별 배치는 분기와 순환에서도 결정적이며 카드가 겹치지 않는다") { t in
+    try MainActor.assumeIsolated {
+        let (model, root) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ids = (0..<12).map { _ in model.store.createMemo().id }
+        for (a, b) in [(0, 1), (0, 2), (1, 3), (2, 3), (4, 5), (5, 6), (6, 4)] {
+            model.link(from: ids[a], to: ids[b], kind: .flow)
+        }
+        let memos = ids.compactMap { id in model.store.summaries.first { $0.id == id } }
+        let positions = model.autoArrangedPlacements(for: memos)
+        t.expectEqual(positions, model.autoArrangedPlacements(for: memos))
+        t.expectEqual(positions[ids[1]]!.x, positions[ids[2]]!.x)
+        t.expect(abs(positions[ids[1]]!.y - positions[ids[2]]!.y) >= 200)
+        for i in ids.indices { for j in ids.indices where j > i {
+            let a = positions[ids[i]]!, b = positions[ids[j]]!
+            t.expect(!CGRect(x: a.x, y: a.y, width: 200, height: 120).intersects(CGRect(x: b.x, y: b.y, width: 200, height: 120)))
+        } }
+    }
+}
+
+runner.test("격자 길찾기는 장애물을 피하고 같은 변의 포트를 상대 위치 순으로 나눈다") { t in
+    let ids = (0..<4).map { _ in MemoID.generate() }
+    let positions: [MemoID: BoardLayout.Placement] = [ids[0]: .init(x: 0, y: 200), ids[1]: .init(x: 840, y: 0),
+        ids[2]: .init(x: 840, y: 400), ids[3]: .init(x: 420, y: 200)]
+    let edges = [MemoEdge(from: ids[0], to: ids[2], kind: .flow), MemoEdge(from: ids[0], to: ids[1], kind: .flow)]
+    let pipes = PipeGeometry.make(edges: edges, positions: positions)
+    t.expectEqual(pipes.count, 2)
+    // 상대 카드 쪽으로 가장 가까운 자리: 위 카드로 가는 선은 위 끝, 아래 카드로 가는 선은 아래 끝.
+    t.expectEqual(pipes[0].points.first, CGPoint(x: 200, y: 300))
+    t.expectEqual(pipes[1].points.first, CGPoint(x: 200, y: 220))
+    t.expectEqual(pipes.map(\.points), PipeGeometry.make(edges: edges, positions: positions).map(\.points))
+    for pipe in pipes {
+        for (a, b) in zip(pipe.points, pipe.points.dropFirst()) {
+            t.expect(a.x == b.x || a.y == b.y)
+            let obstacle = CGRect(x: 410, y: 190, width: 220, height: 140)
+            if a.y == b.y && a.y > obstacle.minY && a.y < obstacle.maxY {
+                t.expect(max(a.x, b.x) <= obstacle.minX || min(a.x, b.x) >= obstacle.maxX)
+            }
+            if a.x == b.x && a.x > obstacle.minX && a.x < obstacle.maxX {
+                t.expect(max(a.y, b.y) <= obstacle.minY || min(a.y, b.y) >= obstacle.maxY)
+            }
+        }
+        for i in pipe.points.indices.dropFirst().dropLast() {
+            let a = pipe.points[i - 1], b = pipe.points[i], c = pipe.points[i + 1]
+            t.expect(!(a.x == b.x && b.x == c.x) && !(a.y == b.y && b.y == c.y))
+        }
+    }
+}
+
+runner.test("나란한 두 카드 사이 선은 한 변에 선이 여럿이어도 곧게 간다") { t in
+    let ids = (0..<3).map { _ in MemoID.generate() }
+    let positions: [MemoID: BoardLayout.Placement] = [ids[0]: .init(x: 0, y: 0), ids[1]: .init(x: 280, y: 0), ids[2]: .init(x: 0, y: 200)]
+    let edges = [MemoEdge(from: ids[0], to: ids[1], kind: .flow), MemoEdge(from: ids[1], to: ids[2], kind: .flow)]
+    let pipes = PipeGeometry.make(edges: edges, positions: positions)
+    t.expectEqual(pipes[0].points, [CGPoint(x: 200, y: 60), CGPoint(x: 280, y: 60)])
+}
+
+runner.test("길찾기는 국소 범위 바깥으로 재시도하고 막히면 기존 경로로 돌아간다") { t in
+    let a = MemoID.generate(), b = MemoID.generate()
+    let edge = MemoEdge(from: a, to: b, kind: .flow)
+    var positions: [MemoID: BoardLayout.Placement] = [a: .init(x: 0, y: 0), b: .init(x: 840, y: 0)]
+    let wall = stride(from: -600, through: 600, by: 120).map { y in
+        (MemoID.generate(), BoardLayout.Placement(x: 420, y: Double(y)))
+    }
+    for (id, p) in wall { positions[id] = p }
+    let pipe = PipeGeometry.make(edges: [edge], positions: positions)[0]
+    t.expect(pipe.points.contains { $0.y < -600 || $0.y > 720 })
+    t.expectEqual(pipe.points.first, CGPoint(x: 200, y: 60))
+    t.expectEqual(pipe.points.last, CGPoint(x: 840, y: 60))
+    let blocked: [MemoID: BoardLayout.Placement] = [a: .init(x: 0, y: 0), b: .init(x: 840, y: 0),
+        MemoID.generate(): .init(x: 200, y: 0)]
+    let fallback = PipeGeometry(edge: edge, a: CGRect(x: 0, y: 0, width: 200, height: 120),
+                                b: CGRect(x: 840, y: 0, width: 200, height: 120))
+    t.expectEqual(PipeGeometry.make(edges: [edge], positions: blocked)[0].points, fallback.points)
+    let diagonal: [MemoID: BoardLayout.Placement] = [a: .init(x: 0, y: 0), b: .init(x: 280, y: 220)]
+    let vertical = PipeGeometry.make(edges: [edge], positions: diagonal)[0]
+    t.expectEqual(vertical.points.first, CGPoint(x: 100, y: 120))
+    t.expectEqual(vertical.points.last, CGPoint(x: 380, y: 220))
+}
+
+runner.test("이름표 중점은 전체 길이의 절반이고 엇갈림은 양쪽 구간 안쪽만 센다") { t in
+    let edge = MemoEdge(from: .generate(), to: .generate(), kind: .flow)
+    let pipe = PipeGeometry(edge: edge, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 20), CGPoint(x: 300, y: 20)])
+    t.expectEqual(pipe.midpoint, CGPoint(x: 140, y: 20))
+    let horizontal = PipeGeometry(edge: edge, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)])
+    let vertical = PipeGeometry(edge: edge, points: [CGPoint(x: 50, y: -40), CGPoint(x: 50, y: 40)])
+    let touching = PipeGeometry(edge: edge, points: [CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 40)])
+    let crossings = PipeGeometry.crossings(in: [horizontal, vertical, touching])
+    t.expectEqual(crossings.count, 1)
+    t.expectEqual(crossings.first?.point, CGPoint(x: 50, y: 0))
+    t.expectEqual(crossings.first?.horizontalPipe, 0)
+    t.expectEqual(crossings.first?.segment, 0)
+}
+
+runner.test("큰 보드의 150개 메모와 200개 선 길찾기 시간을 출력한다") { t in
+    let ids = (0..<150).map { _ in MemoID.generate() }
+    let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map { i, id in
+        (id, BoardLayout.Placement(x: Double(i % 15) * 400, y: Double(i / 15) * 400))
+    })
+    let edges = (0..<200).map { i in
+        MemoEdge(from: ids[i % 150], to: ids[(i * 37 + 17) % 150], kind: i % 2 == 0 ? .flow : .related)
+    }
+    let start = Date()
+    let pipes = PipeGeometry.make(edges: edges, positions: positions)
+    print("  큰 보드 길찾기: \(Int(Date().timeIntervalSince(start) * 1000)) ms (메모 150, 선 200, 범위 약 6000×4000)")
+    t.expectEqual(pipes.count, 200)
 }
 
 runner.finish()

@@ -35,7 +35,18 @@ struct BoardView: View {
     /// 이보다 작게 축소하면 카드를 간단한 그림으로 그린다. 너무 높으면 조금만 축소해도 카드 모양이 바뀌어 배치가 달라진 것처럼 보인다.
     static let flatZoom: CGFloat = 0.35
     private var flat: Bool { zoom < Self.flatZoom }
+    private var highlightedEdge: MemoEdge? { selectedEdge ?? hoveredEdge }
+    private func cardOpacity(_ id: MemoID) -> Double {
+        guard let edge = highlightedEdge else { return 1 }
+        return edge.from == id || edge.to == id ? 1 : 0.45
+    }
 
+    private func dragPipes(positions: [MemoID: BoardLayout.Placement]) -> [PipeGeometry] {
+        let fixed = model.boardPipes(for: memos, edges: index.edges)
+            .filter { moving[$0.edge.from] == nil && moving[$0.edge.to] == nil }
+        let touching = index.edges.filter { moving[$0.from] != nil || moving[$0.to] != nil }
+        return fixed + PipeGeometry.make(edges: touching, positions: positions, avoiding: fixed)
+    }
     private func screen(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x * zoom + pan.width, y: point.y * zoom + pan.height) }
     private func world(_ point: CGPoint) -> CGPoint { CGPoint(x: (point.x - pan.width) / zoom, y: (point.y - pan.height) / zoom) }
     private func rect(_ placement: BoardLayout.Placement) -> CGRect { CGRect(x: placement.x, y: placement.y, width: 200, height: 120) }
@@ -49,7 +60,8 @@ struct BoardView: View {
             let positions = placements()
             let viewport = CGRect(origin: world(.zero), size: CGSize(width: geo.size.width / zoom, height: geo.size.height / zoom))
             // 드래그 중이 아니면 모델이 계산해 둔 파이프를 쓴다.
-            let pipes = moving.isEmpty ? model.boardPipes(for: memos, edges: index.edges) : PipeGeometry.make(edges: index.edges, positions: positions)
+            // 끄는 중에는 옮기는 카드에 붙은 선만 새 길을 찾고, 나머지는 저장된 길을 피해 가게 한다. 놓으면 전체를 다시 계산한다.
+            let pipes = moving.isEmpty ? model.boardPipes(for: memos, edges: index.edges) : dragPipes(positions: positions)
             let endpoints = moving.isEmpty ? model.boardEndpoints(for: memos, edges: index.edges) : PipeGeometry.endpoints(of: pipes)
             ZStack(alignment: .topLeading) {
                 ListTheme.boardBg
@@ -81,6 +93,7 @@ struct BoardView: View {
                     ForEach(Array(pipes.enumerated()), id: \.offset) { _, pipe in
                         if showLabels || hoveredEdge == pipe.edge || selectedEdge == pipe.edge || editingEdge == pipe.edge {
                             pipeLabel(pipe, positions: positions)
+                                .opacity(highlightedEdge == nil || highlightedEdge == pipe.edge ? 1 : 0.18)
                         }
                     }
                 }
@@ -93,7 +106,7 @@ struct BoardView: View {
                 if !flat {
                     ForEach(memos.filter { memo in positions[memo.id].map { rect($0).intersects(viewport.insetBy(dx: -240, dy: -160)) } ?? false }) { memo in
                         if let placement = positions[memo.id] {
-                            boardCard(memo, placement: placement, positions: positions, endpoints: endpoints[memo.id] ?? [])
+                            boardCard(memo, placement: placement, positions: positions, endpoints: endpoints[memo.id] ?? []).opacity(cardOpacity(memo.id))
                         }
                     }
                 }
@@ -135,7 +148,7 @@ struct BoardView: View {
             .onContinuousHover { phase in
                 if case .active(let location) = phase {
                     hoveredEdge = hitCard(at: world(location), positions: positions, excluding: nil) == nil
-                        ? pipes.reversed().first { $0.distance(to: world(location)) * zoom <= 8 }?.edge : nil
+                        ? pipes.reversed().first { $0.distance(to: world(location)) * zoom <= 6 }?.edge : nil
                 } else { hoveredEdge = nil }
             }
             .clipped().coordinateSpace(name: "메모보드")
@@ -208,14 +221,10 @@ struct BoardView: View {
             context.fill(dots, with: .color(ListTheme.boardDot))
             context.translateBy(x: pan.width, y: pan.height)
             context.scaleBy(x: zoom, y: zoom)
-            for pipe in pipes {
-                if selectedEdge == pipe.edge {
-                    context.stroke(pipe.path, with: .color(ListTheme.lime), style: StrokeStyle(lineWidth: 10, lineCap: .round, lineJoin: .round))
-                }
-                pipe.draw(in: &context)
-            }
+            PipeGeometry.drawAll(pipes, in: &context, background: ListTheme.boardBg,
+                                 highlighted: highlightedEdge, dimOthers: highlightedEdge != nil)
             if flat {
-                drawFlatCards(context: &context, positions: positions, viewport: viewport)
+                drawFlatCards(context: &context, positions: positions, viewport: viewport, endpoints: PipeGeometry.endpoints(of: pipes))
             }
             if linkStart != nil, let pointer = linkPointer {
                 var line = Path(); line.move(to: linkPort); line.addLine(to: world(pointer))
@@ -225,9 +234,11 @@ struct BoardView: View {
     }
 
     /// 멀리서 볼 때 카드를 캔버스에 직접 그린다. 보이는 영역 근처 카드만 그린다.
-    private func drawFlatCards(context: inout GraphicsContext, positions: [MemoID: BoardLayout.Placement], viewport: CGRect) {
+    private func drawFlatCards(context: inout GraphicsContext, positions: [MemoID: BoardLayout.Placement], viewport: CGRect, endpoints: [MemoID: [CGPoint]]) {
         let near = viewport.insetBy(dx: -40, dy: -40)
         for memo in memos {
+            var context = context
+            context.opacity *= cardOpacity(memo.id)
             guard let placement = positions[memo.id] else { continue }
             let bounds = rect(placement)
             guard bounds.intersects(near) else { continue }
@@ -247,6 +258,11 @@ struct BoardView: View {
             }
             if shown {
                 context.fill(Path(ellipseIn: CGRect(x: bounds.maxX - 22, y: bounds.minY + 15, width: 8, height: 8)), with: .color(ListTheme.lime))
+            }
+            for point in endpoints[memo.id] ?? [] {
+                let dot = Path(ellipseIn: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+                context.fill(dot, with: .color(ListTheme.lime))
+                context.stroke(dot, with: .color(ListTheme.ink), lineWidth: 1)
             }
         }
     }
@@ -268,11 +284,13 @@ struct BoardView: View {
                     for sel in model.selection { dragOrigins[sel] = positions[sel] }
                 }
                 for (sel, origin) in dragOrigins {
-                    moving[sel] = .init(x: origin.x + translation.width / zoom, y: origin.y + translation.height / zoom)
+                    // 선 길찾기가 20pt 격자 위에서 하므로 끄는 동안에도 격자에 맞춘다(놓을 때와 같은 반올림).
+                    moving[sel] = .init(x: ((origin.x + translation.width / zoom) / 20).rounded() * 20,
+                                        y: ((origin.y + translation.height / zoom) / 20).rounded() * 20)
                 }
             },
             onDragEnded: {
-                model.moveCards(moving, undoManager: undoManager)
+                model.moveCards(moving, freezing: memos, undoManager: undoManager)
                 moving = [:]; dragOrigins = [:]
             },
             onPortChanged: { point, location in linkStart = id; linkPort = point; linkPointer = location; focused = true },
@@ -493,10 +511,15 @@ private struct BoardCardView: View {
             .contextMenu { menu }
             .overlay {
                 ZStack {
+                    ForEach(Array(endpoints.enumerated()), id: \.offset) { _, point in
+                        LimeDot(size: 10)
+                            .position(x: point.x - bounds.minX, y: point.y - bounds.minY)
+                            .allowsHitTesting(false)
+                    }
                     ForEach(0..<4, id: \.self) { side in
                         let point = port(side)
                         let connected = endpoints.contains { hypot($0.x - point.x, $0.y - point.y) < 1 }
-                        if hovered || connected || linking {
+                        if hovered || linking {
                             LimeDot(size: 10).opacity(connected ? 1 : 0.55)
                                 .frame(width: 20, height: 20).contentShape(Circle())
                                 .position(x: point.x - bounds.minX, y: point.y - bounds.minY)
@@ -517,12 +540,275 @@ private struct BoardCardView: View {
 struct PipeGeometry {
     let edge: MemoEdge
     let points: [CGPoint]
-    static func make(edges: [MemoEdge], positions: [MemoID: BoardLayout.Placement]) -> [PipeGeometry] {
-        func rect(_ placement: BoardLayout.Placement) -> CGRect { CGRect(x: placement.x, y: placement.y, width: 200, height: 120) }
-        return edges.compactMap { edge -> PipeGeometry? in
-            guard let a = positions[edge.from], let b = positions[edge.to] else { return nil }
-            return PipeGeometry(edge: edge, a: rect(a), b: rect(b))
+    static func make(edges: [MemoEdge], positions: [MemoID: BoardLayout.Placement], avoiding: [PipeGeometry] = []) -> [PipeGeometry] {
+        let valid = edges.filter { positions[$0.from] != nil && positions[$0.to] != nil }
+        guard !valid.isEmpty else { return [] }
+        let router = Router(edges: valid, positions: positions)
+        router.markUsed(avoiding)
+        return router.route()
+    }
+
+    /// 격자와 탐색 버퍼는 한 보드의 모든 선이 함께 쓴다.
+    private final class Router {
+        struct Route {
+            var edge: MemoEdge
+            var side: Int
+            var a = CGPoint.zero
+            var b = CGPoint.zero
         }
+        struct PortKey: Hashable { var id: MemoID; var side: Int }
+        struct Port { var route: Int; var start: Bool; var coordinate: Double }
+        struct Cell {
+            var blocked = false
+            var usedH = false
+            var usedV = false
+            var nodeH = false
+            var nodeV = false
+            var owner = -1
+        }
+        struct State {
+            var cost = 0
+            var priority = 0
+            var previous = -1
+            var stamp = 0
+            var queuePrevious = -1
+            var queueNext = -1
+            var queued = false
+        }
+        let directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        let positions: [MemoID: BoardLayout.Placement]
+        let x0: Double, y0: Double
+        let width: Int, height: Int
+        var routes: [Route]
+        let cells: UnsafeMutableBufferPointer<Cell>
+        let states: UnsafeMutableBufferPointer<State>
+        let queue: UnsafeMutableBufferPointer<Int>
+        var generation = 0
+
+        init(edges: [MemoEdge], positions: [MemoID: BoardLayout.Placement]) {
+            self.positions = positions
+            let xs = positions.values.map(\.x), ys = positions.values.map(\.y)
+            x0 = floor((xs.min()! - 100) / 20) * 20
+            y0 = floor((ys.min()! - 100) / 20) * 20
+            width = Int((ceil((xs.max()! + 300) / 20) * 20 - x0) / 20) + 1
+            height = Int((ceil((ys.max()! + 220) / 20) * 20 - y0) / 20) + 1
+            let count = width * height
+            cells = .allocate(capacity: count)
+            cells.initialize(repeating: Cell())
+            states = .allocate(capacity: count * 4)
+            states.initialize(repeating: State())
+            queue = .allocate(capacity: 64)
+            queue.initialize(repeating: -1)
+            routes = edges.map { edge in
+                let a = positions[edge.from]!, b = positions[edge.to]!
+                let dx = (b.x - a.x) / 280, dy = (b.y - a.y) / 200
+                return Route(edge: edge, side: abs(dx) >= abs(dy) ? (dx >= 0 ? 0 : 2) : (dy >= 0 ? 1 : 3))
+            }
+            // 카드 둘레의 막힌 점만 채워 큰 보드에서도 카드 수 곱하기 전체 격자 순회를 피한다.
+            for p in positions.values {
+                let left = max(0, Int(floor((p.x - 10 - x0) / 20)) + 1)
+                let right = min(width - 1, Int(ceil((p.x + 210 - x0) / 20)) - 1)
+                let top = max(0, Int(floor((p.y - 10 - y0) / 20)) + 1)
+                let bottom = min(height - 1, Int(ceil((p.y + 130 - y0) / 20)) - 1)
+                if left <= right && top <= bottom {
+                    for y in top...bottom { for x in left...right { cells[y * width + x].blocked = true } }
+                }
+            }
+            var ports: [PortKey: [Port]] = [:]
+            for (i, r) in routes.enumerated() {
+                for start in [true, false] {
+                    let side = start ? r.side : (r.side + 2) % 4
+                    let other = positions[start ? r.edge.to : r.edge.from]!
+                    ports[PortKey(id: start ? r.edge.from : r.edge.to, side: side), default: []]
+                        .append(Port(route: i, start: start, coordinate: side % 2 == 0 ? other.y + 60 : other.x + 100))
+                }
+            }
+            for (key, list) in ports {
+                let sorted = list.sorted { $0.coordinate == $1.coordinate ? $0.route < $1.route : $0.coordinate < $1.coordinate }
+                let p = positions[key.id]!
+                let slots = Self.slots(for: sorted.map { $0.coordinate - (key.side % 2 == 0 ? p.y : p.x) }, length: key.side % 2 == 0 ? 120 : 200)
+                for (i, port) in sorted.enumerated() {
+                    let offset = Double(slots[min(i, slots.count - 1)])
+                    let point: CGPoint
+                    switch key.side {
+                    case 0: point = CGPoint(x: p.x + 200, y: p.y + offset)
+                    case 1: point = CGPoint(x: p.x + offset, y: p.y + 120)
+                    case 2: point = CGPoint(x: p.x, y: p.y + offset)
+                    default: point = CGPoint(x: p.x + offset, y: p.y)
+                    }
+                    if port.start { routes[port.route].a = point } else { routes[port.route].b = point }
+                }
+            }
+            for (i, r) in routes.enumerated() {
+                for (point, side) in [(r.a, r.side), (r.b, (r.side + 2) % 4)] {
+                    let node = index(stub(point, side))
+                    let owner = cells[node].owner
+                    cells[node].owner = owner == -1 || owner == i ? i : -2
+                }
+            }
+        }
+        /// 한 변에 나갈 선들의 자리를 20pt 간격 후보 중에서 순서를 지키며 고른다.
+        /// 상대 카드 중심(이 카드 기준 좌표)에 가장 가까운 자리를 골라, 나란한 두 카드 사이 선이 꺾이지 않고 곧게 가게 한다.
+        /// 선이 하나면 상대가 어디 있든 가운데, 후보보다 많으면 가운데부터 고르게 나눈다.
+        static func slots(for wanted: [Double], length: Int) -> [Int] {
+            let candidates = Array(stride(from: 20, through: length - 20, by: 20))
+            let n = wanted.count
+            guard n > 1 else { return [length / 2] }
+            guard n <= candidates.count else { return candidates }
+            // cost[i][j]: 앞의 i개 선을 후보 j개 안에서 배치한 최소 비용
+            let m = candidates.count
+            var cost = Array(repeating: Array(repeating: Double.infinity, count: m + 1), count: n + 1)
+            var take = Array(repeating: Array(repeating: false, count: m + 1), count: n + 1)
+            for j in 0...m { cost[0][j] = 0 }
+            for i in 1...n {
+                for j in i...m {
+                    let skip = cost[i][j - 1]
+                    let use = cost[i - 1][j - 1] + abs(Double(candidates[j - 1]) - wanted[i - 1])
+                    if use <= skip { cost[i][j] = use; take[i][j] = true } else { cost[i][j] = skip }
+                }
+            }
+            var result: [Int] = [], i = n, j = m
+            while i > 0 {
+                if take[i][j] { result.append(candidates[j - 1]); i -= 1 }
+                j -= 1
+            }
+            return result.reversed()
+        }
+        deinit {
+            cells.deinitialize(); cells.deallocate()
+            states.deinitialize(); states.deallocate()
+            queue.deinitialize(); queue.deallocate()
+        }
+        func stub(_ p: CGPoint, _ side: Int) -> CGPoint {
+            CGPoint(x: p.x + Double(directions[side].0 * 20), y: p.y + Double(directions[side].1 * 20))
+        }
+        func index(_ p: CGPoint) -> Int {
+            Int(((p.y - y0) / 20).rounded()) * width + Int(((p.x - x0) / 20).rounded())
+        }
+        func point(_ node: Int) -> CGPoint { CGPoint(x: x0 + Double(node % width * 20), y: y0 + Double(node / width * 20)) }
+
+        func search(_ start: CGPoint, _ sd: Int, _ goal: CGPoint, _ gd: Int, _ owner: Int, local: Bool) -> [CGPoint]? {
+            generation += 1
+            // 지역 포인터로 읽어 매 칸마다 참조 계수와 배열 복사 여부를 검사하지 않는다.
+            let cells = cells.baseAddress!, states = states.baseAddress!, queue = queue.baseAddress!
+            let width = width, height = height, stamp = generation
+            // 한 칸의 예상 비용 증가는 최대 37이다. 64칸 순환 큐로 정수 우선순위를 관리한다.
+            for i in 0..<64 { queue[i] = -1 }
+            let si = index(start), gi = index(goal), gx = gi % width, gy = gi / width
+            let sx = si % width, sy = si / width
+            let left = local ? max(0, min(sx, gx) - 20) : 0
+            let right = local ? min(width - 1, max(sx, gx) + 20) : width - 1
+            let top = local ? max(0, min(sy, gy) - 20) : 0
+            let bottom = local ? min(height - 1, max(sy, gy) + 20) : height - 1
+            let initial = si * 4 + sd
+            var priority = abs(sx - gx) + abs(sy - gy)
+            states[initial] = State(cost: 0, priority: priority, previous: -1, stamp: stamp, queued: true)
+            queue[priority % 64] = initial
+            var queueCount = 1, best = Int.max, bestState = -1
+            while queueCount > 0 {
+                while queue[priority % 64] < 0 { priority += 1 }
+                if priority >= best { break }
+                let current = queue[priority % 64], nextInQueue = states[current].queueNext
+                queue[priority % 64] = nextInQueue
+                if nextInQueue >= 0 { states[nextInQueue].queuePrevious = -1 }
+                states[current].queued = false
+                queueCount -= 1
+                let node = current / 4, direction = current % 4, cost = states[current].cost
+                if node == gi {
+                    let total = cost + (direction == gd ? 0 : 6)
+                    if total < best { best = total; bestState = current }
+                    continue
+                }
+                let x = node % width, y = node / width
+                for nd in 0..<4 {
+                    if nd == (direction + 2) % 4 { continue }
+                    let nx = x + (nd == 0 ? 1 : (nd == 2 ? -1 : 0))
+                    let ny = y + (nd == 1 ? 1 : (nd == 3 ? -1 : 0))
+                    if nx < left || nx > right || ny < top || ny > bottom { continue }
+                    let next = ny * width + nx, cell = cells[next]
+                    if next != gi && (cell.blocked || (cell.owner != -1 && cell.owner != owner)) { continue }
+                    let horizontal = nd % 2 == 0, segment = cells[min(node, next)]
+                    let extra = (horizontal ? segment.usedH : segment.usedV) ? 30 : 0
+                    let crossing = (horizontal ? cell.nodeV : cell.nodeH) ? 2 : 0
+                    let total = cost + 1 + (nd == direction ? 0 : 3) + extra + crossing
+                    let state = next * 4 + nd, old = states[state]
+                    if old.stamp == stamp && total >= old.cost { continue }
+                    let estimate = total + abs(nx - gx) + abs(ny - gy)
+                    if old.stamp == stamp && old.queued {
+                        if old.queuePrevious < 0 { queue[old.priority % 64] = old.queueNext }
+                        else { states[old.queuePrevious].queueNext = old.queueNext }
+                        if old.queueNext >= 0 { states[old.queueNext].queuePrevious = old.queuePrevious }
+                    } else { queueCount += 1 }
+                    let bucket = estimate % 64, head = queue[bucket]
+                    states[state] = State(cost: total, priority: estimate, previous: current, stamp: stamp, queueNext: head, queued: true)
+                    if head >= 0 { states[head].queuePrevious = state }
+                    queue[bucket] = state
+                }
+            }
+            guard bestState >= 0 else { return nil }
+            var result: [CGPoint] = [], state = bestState
+            while state >= 0 { result.append(point(state / 4)); state = states[state].previous }
+            return result.reversed()
+        }
+
+        /// 이미 그려 둔 선이 지나는 격자 구간을 '쓴 길'로 표시해 새 선이 그 위에 포개지지 않게 한다.
+        func markUsed(_ pipes: [PipeGeometry]) {
+            for pipe in pipes {
+                for (a, b) in zip(pipe.points, pipe.points.dropFirst()) {
+                    let horizontal = abs(a.y - b.y) < 0.5
+                    let steps = Int((max(abs(b.x - a.x), abs(b.y - a.y)) / 20).rounded())
+                    guard steps > 0 else { continue }
+                    for k in 0..<steps {
+                        let t0 = Double(k) / Double(steps), t1 = Double(k + 1) / Double(steps)
+                        let p = CGPoint(x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0)
+                        let q = CGPoint(x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1)
+                        let maxX = x0 + Double((width - 1) * 20), maxY = y0 + Double((height - 1) * 20)
+                        guard [p, q].allSatisfy({ $0.x >= x0 && $0.x <= maxX && $0.y >= y0 && $0.y <= maxY }) else { continue }
+                        let ip = index(p), iq = index(q)
+                        if horizontal { cells[min(ip, iq)].usedH = true; cells[ip].nodeH = true; cells[iq].nodeH = true }
+                        else { cells[min(ip, iq)].usedV = true; cells[ip].nodeV = true; cells[iq].nodeV = true }
+                    }
+                }
+            }
+        }
+
+        func route() -> [PipeGeometry] {
+            func length(_ r: Route) -> CGFloat { abs(r.a.x - r.b.x) + abs(r.a.y - r.b.y) }
+            let order = routes.indices.sorted { length(routes[$0]) == length(routes[$1]) ? $0 < $1 : length(routes[$0]) < length(routes[$1]) }
+            var result: [Int: PipeGeometry] = [:]
+            for i in order {
+                let r = routes[i], opposite = (r.side + 2) % 4
+                let start = stub(r.a, r.side), goal = stub(r.b, opposite)
+                guard let path = search(start, r.side, goal, r.side, i, local: true)
+                    ?? search(start, r.side, goal, r.side, i, local: false) else {
+                    let a = positions[r.edge.from]!, b = positions[r.edge.to]!
+                    result[i] = PipeGeometry(edge: r.edge, a: CGRect(x: a.x, y: a.y, width: 200, height: 120), b: CGRect(x: b.x, y: b.y, width: 200, height: 120))
+                    continue
+                }
+                for (a, b) in zip(path, path.dropFirst()) {
+                    let ia = index(a), ib = index(b)
+                    if a.y == b.y { cells[min(ia, ib)].usedH = true; cells[ia].nodeH = true; cells[ib].nodeH = true }
+                    else { cells[min(ia, ib)].usedV = true; cells[ia].nodeV = true; cells[ib].nodeV = true }
+                }
+                result[i] = PipeGeometry(edge: r.edge, points: PipeGeometry.simplified([r.a] + path + [r.b]))
+            }
+            return routes.indices.compactMap { result[$0] }
+        }
+    }
+
+    static func simplified(_ points: [CGPoint]) -> [CGPoint] {
+        var result: [CGPoint] = []
+        for p in points {
+            if let last = result.last, hypot(last.x - p.x, last.y - p.y) < 0.5 { continue }
+            result.append(p)
+            while result.count >= 3 {
+                let a = result[result.count - 3], b = result[result.count - 2], c = result[result.count - 1]
+                if (abs(a.x - b.x) < 0.5 && abs(b.x - c.x) < 0.5) || (abs(a.y - b.y) < 0.5 && abs(b.y - c.y) < 0.5) {
+                    result.remove(at: result.count - 2)
+                } else { break }
+            }
+        }
+        return result
     }
     init(edge: MemoEdge, points: [CGPoint]) {
         self.edge = edge
@@ -550,8 +836,17 @@ struct PipeGeometry {
         return result
     }
     var midpoint: CGPoint {
-        guard points.count > 2 else { return CGPoint(x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2) }
-        return CGPoint(x: (points[1].x + points[2].x) / 2, y: (points[1].y + points[2].y) / 2)
+        guard let first = points.first else { return .zero }
+        let lengths = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
+        var remaining = lengths.reduce(0, +) / 2
+        for (i, length) in lengths.enumerated() {
+            if remaining <= length && length > 0 {
+                let a = points[i], b = points[i + 1], t = remaining / length
+                return CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+            }
+            remaining -= length
+        }
+        return first
     }
     func labelPoint(avoiding cards: [CGRect], scale: CGFloat = 1, extraWidth: CGFloat = 0) -> CGPoint {
         let width = (CGFloat(edge.displayLabel.count) * 12 + 24 + extraWidth) / scale
@@ -576,21 +871,105 @@ struct PipeGeometry {
         context.stroke(shape, with: .color(ListTheme.hairline), lineWidth: 1)
         context.draw(text, at: point)
     }
-    var path: Path {
-        var path = Path(); path.move(to: points[0])
-        for i in 1..<(points.count - 1) {
-            let previous = points[i - 1], corner = points[i], next = points[i + 1]
-            let before = hypot(corner.x - previous.x, corner.y - previous.y)
-            let after = hypot(next.x - corner.x, next.y - corner.y)
-            let radius = min(8, before / 2, after / 2)
-            if radius > 0 {
-                let entry = CGPoint(x: corner.x + (previous.x - corner.x) * radius / before, y: corner.y + (previous.y - corner.y) * radius / before)
-                let exit = CGPoint(x: corner.x + (next.x - corner.x) * radius / after, y: corner.y + (next.y - corner.y) * radius / after)
-                path.addLine(to: entry); path.addQuadCurve(to: exit, control: corner)
-            } else { path.addLine(to: corner) }
-        }
-        path.addLine(to: points.last!); return path
+    struct Crossing: Equatable {
+        var point: CGPoint
+        var horizontalPipe: Int
+        var segment: Int
     }
+    static func crossings(in pipes: [PipeGeometry]) -> [Crossing] {
+        var result: [Crossing] = []
+        for p in pipes.indices {
+            for q in pipes.indices where q > p {
+                for i in pipes[p].points.indices.dropLast() {
+                    let a = pipes[p].points[i], b = pipes[p].points[i + 1]
+                    for j in pipes[q].points.indices.dropLast() {
+                        let c = pipes[q].points[j], d = pipes[q].points[j + 1]
+                        let ph = abs(a.y - b.y) < 0.5, qh = abs(c.y - d.y) < 0.5
+                        guard ph != qh else { continue }
+                        let h0 = ph ? a : c, h1 = ph ? b : d, v0 = ph ? c : a, v1 = ph ? d : b
+                        guard abs(v0.x - v1.x) < 0.5,
+                              v0.x > min(h0.x, h1.x) + 0.5, v0.x < max(h0.x, h1.x) - 0.5,
+                              h0.y > min(v0.y, v1.y) + 0.5, h0.y < max(v0.y, v1.y) - 0.5 else { continue }
+                        let crossing = Crossing(point: CGPoint(x: v0.x, y: h0.y), horizontalPipe: ph ? p : q, segment: ph ? i : j)
+                        if !result.contains(crossing) { result.append(crossing) }
+                    }
+                }
+            }
+        }
+        return result
+    }
+    private func bridgeFits(_ crossing: Crossing) -> Bool {
+        guard edge.kind != .same && edge.kind != .oppose else { return false }
+        let i = crossing.segment, a = points[i], b = points[i + 1]
+        let startRadius = i == 0 ? 0 : cornerRadius(i)
+        let endRadius = i + 1 == points.count - 1 ? 0 : cornerRadius(i + 1)
+        let start = toward(a, b, startRadius), end = toward(b, a, endRadius)
+        return crossing.point.x > min(start.x, end.x) + 8 && crossing.point.x < max(start.x, end.x) - 8
+    }
+    private func cornerRadius(_ i: Int) -> CGFloat {
+        min(8, hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y) / 2,
+            hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y) / 2)
+    }
+    private func toward(_ a: CGPoint, _ b: CGPoint, _ distance: CGFloat) -> CGPoint {
+        let length = max(0.001, hypot(b.x - a.x, b.y - a.y))
+        return CGPoint(x: a.x + (b.x - a.x) * distance / length, y: a.y + (b.y - a.y) * distance / length)
+    }
+    private static func bridge(_ path: inout Path, at p: CGPoint, rightward: Bool) {
+        let sign: CGFloat = rightward ? 1 : -1
+        path.addLine(to: CGPoint(x: p.x - sign * 6, y: p.y))
+        // 위쪽 반원을 두 곡선으로 이어 진행 방향과 관계없이 위로 넘긴다.
+        let k: CGFloat = 6 * 0.5522847498307936
+        path.addCurve(to: CGPoint(x: p.x, y: p.y - 6),
+                      control1: CGPoint(x: p.x - sign * 6, y: p.y - k),
+                      control2: CGPoint(x: p.x - sign * k, y: p.y - 6))
+        path.addCurve(to: CGPoint(x: p.x + sign * 6, y: p.y),
+                      control1: CGPoint(x: p.x + sign * k, y: p.y - 6),
+                      control2: CGPoint(x: p.x + sign * 6, y: p.y - k))
+    }
+    private func path(hops: [Crossing]) -> Path {
+        guard let first = points.first, points.count >= 2 else { return Path() }
+        var path = Path(); path.move(to: first)
+        for i in points.indices.dropLast() {
+            let a = points[i], b = points[i + 1]
+            let end = i + 1 == points.count - 1 ? b : toward(b, a, cornerRadius(i + 1))
+            let crossings = hops.filter { $0.segment == i && bridgeFits($0) }
+                .sorted { a.x < b.x ? $0.point.x < $1.point.x : $0.point.x > $1.point.x }
+            for crossing in crossings { Self.bridge(&path, at: crossing.point, rightward: b.x > a.x) }
+            path.addLine(to: end)
+            if i + 1 < points.count - 1 {
+                path.addQuadCurve(to: toward(b, points[i + 2], cornerRadius(i + 1)), control: b)
+            }
+        }
+        return path
+    }
+    static func drawAll(_ pipes: [PipeGeometry], in context: inout GraphicsContext, background: Color, highlighted: MemoEdge?, dimOthers: Bool) {
+        let crossings = crossings(in: pipes).filter { pipes[$0.horizontalPipe].bridgeFits($0) }
+        let grouped = Dictionary(grouping: crossings, by: \.horizontalPipe)
+        for (i, pipe) in pipes.enumerated() {
+            var layer = context
+            layer.opacity *= dimOthers && pipe.edge != highlighted ? 0.18 : 1
+            let path = pipe.path(hops: grouped[i] ?? [])
+            if pipe.edge == highlighted {
+                layer.stroke(path, with: .color(ListTheme.lime), style: StrokeStyle(lineWidth: 10, lineCap: .round, lineJoin: .round))
+            }
+            pipe.draw(in: &layer, routedPath: path, background: background)
+        }
+        // 모든 선을 그린 뒤 다리 조각을 덧그려 가로선이 항상 위에 오도록 한다.
+        for crossing in crossings {
+            let pipe = pipes[crossing.horizontalPipe], p = crossing.point
+            var layer = context
+            layer.opacity *= dimOthers && pipe.edge != highlighted ? 0.18 : 1
+            var fragment = Path()
+            fragment.move(to: CGPoint(x: p.x - 9, y: p.y))
+            bridge(&fragment, at: p, rightward: true)
+            fragment.addLine(to: CGPoint(x: p.x + 9, y: p.y))
+            let dashed = pipe.edge.kind.lineStyle == .dashed
+            let width: CGFloat = dashed ? 3 : 4
+            layer.stroke(fragment, with: .color(background), style: StrokeStyle(lineWidth: width + 7, lineCap: .butt, lineJoin: .round))
+            layer.stroke(fragment, with: .color(dashed ? ListTheme.related : ListTheme.ink), style: StrokeStyle(lineWidth: width, lineCap: .butt, lineJoin: .round))
+        }
+    }
+    var path: Path { path(hops: []) }
     /// 삼각형 꼭짓점을 카드 가장자리에 맞추고 안쪽으로 길이 10, 폭 9를 채운다.
     var arrow: Path {
         var path = Path()
@@ -611,13 +990,19 @@ struct PipeGeometry {
         }
         return path
     }
-    func draw(in context: inout GraphicsContext, sample: Bool = false) {
+    func draw(in context: inout GraphicsContext, sample: Bool = false, routedPath: Path? = nil, background: Color? = nil) {
         let dashed = edge.kind.lineStyle == .dashed
         let color = sample || !dashed ? ListTheme.ink : ListTheme.related
         let width: CGFloat = sample ? 2 : (dashed ? 3 : 4)
         let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dashed ? (sample ? [4, 3] : [6, 6]) : [])
+        func halo(_ path: Path, in layer: inout GraphicsContext) {
+            if let background {
+                layer.stroke(path, with: .color(background), style: StrokeStyle(lineWidth: width + 7, lineCap: .round, lineJoin: .round))
+            }
+        }
         if edge.kind == .same {
             // 코너에서도 같은 간격을 유지하도록 각 직선 구간의 법선으로 옮긴다.
+            var shiftedPaths: [Path] = []
             for side: CGFloat in [-3, 3] {
                 var shifted = Path()
                 for i in points.indices {
@@ -636,8 +1021,10 @@ struct PipeGeometry {
                     let p = CGPoint(x: point.x + (n.x + m.x) * side / divisor, y: point.y + (n.y + m.y) * side / divisor)
                     if i == 0 { shifted.move(to: p) } else { shifted.addLine(to: p) }
                 }
-                context.stroke(shifted, with: .color(color), style: style)
+                shiftedPaths.append(shifted)
             }
+            for shifted in shiftedPaths { halo(shifted, in: &context) }
+            for shifted in shiftedPaths { context.stroke(shifted, with: .color(color), style: style) }
         } else if edge.kind == .oppose {
             var wave = Path(); var traveled: CGFloat = 0
             for (a, b) in zip(points, points.dropFirst()) {
@@ -653,13 +1040,18 @@ struct PipeGeometry {
                 }
                 traveled += length
             }
+            halo(wave, in: &context)
             context.stroke(wave, with: .color(color), style: style)
             let circle = Path(ellipseIn: CGRect(x: midpoint.x - 7, y: midpoint.y - 7, width: 14, height: 14))
             context.fill(circle, with: .color(.white)); context.stroke(circle, with: .color(color), lineWidth: 1.5)
             var cross = Path()
             for sign: CGFloat in [-1, 1] { cross.move(to: CGPoint(x: midpoint.x - 3, y: midpoint.y - 3 * sign)); cross.addLine(to: CGPoint(x: midpoint.x + 3, y: midpoint.y + 3 * sign)) }
             context.stroke(cross, with: .color(color), lineWidth: 1.5)
-        } else { context.stroke(path, with: .color(color), style: style) }
+        } else {
+            let shape = routedPath ?? path
+            halo(shape, in: &context)
+            context.stroke(shape, with: .color(color), style: style)
+        }
         context.fill(arrow, with: .color(color))
         if edge.kind == .contain || edge.kind == .block, let end = points.last,
            let previous = points.dropLast().last(where: { $0 != end }) {
