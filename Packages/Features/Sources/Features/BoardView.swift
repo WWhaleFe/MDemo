@@ -4,7 +4,7 @@ import SwiftUI
 
 /// 모든 파이프를 한 캔버스에 그리며 카드만 화면 근처에서 만든다
 struct BoardView: View {
-    @AppStorage("board.lineButtonStyle") private var lineButtonStyle = "A"
+    @AppStorage("board.lineButtonStyle", store: AppSettings.defaults) private var lineButtonStyle = "A"
     @Bindable var model: MemoListModel
     let memos: [MemoSummary]
     let index: MemoListModel.LinkIndex
@@ -14,7 +14,7 @@ struct BoardView: View {
     let menu: (MemoID) -> AnyView
     @Environment(\.undoManager) private var undoManager
     @State private var showsExport = false
-    @AppStorage("board.showPipeLabels") private var showLabels = true
+    @AppStorage("board.showPipeLabels", store: AppSettings.defaults) private var showLabels = true
     @State private var hoveredEdge: MemoEdge?
     @State private var editingEdge: MemoEdge?
     @State private var zoom: CGFloat = 1

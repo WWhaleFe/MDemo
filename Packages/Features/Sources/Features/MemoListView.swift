@@ -7,9 +7,9 @@ public struct MemoListView: View {
     @Bindable private var model: MemoListModel
     private let onOpenMemo: (MemoID) -> Void
     private let onCreateMemo: () -> Void
-    @AppStorage("memoList.viewMode") private var savedMode = MemoListModel.ViewMode.list.rawValue
-    @AppStorage(MemoListWindowController.alwaysOnTopKey) private var alwaysOnTop = false
-    @AppStorage(AppPreferences.appearanceKey) private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage("memoList.viewMode", store: AppSettings.defaults) private var savedMode = MemoListModel.ViewMode.list.rawValue
+    @AppStorage(MemoListWindowController.alwaysOnTopKey, store: AppSettings.defaults) private var alwaysOnTop = false
+    @AppStorage(AppPreferences.appearanceKey, store: AppSettings.defaults) private var appearanceRaw = AppearanceMode.system.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var modeNamespace
     /// 카드판에서 지금 보이는 맨 위(카드 한 줄 단위로 맞춘 값). 화면 근처 카드만 만들 때 쓴다.

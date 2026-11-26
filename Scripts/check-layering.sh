@@ -47,4 +47,14 @@ else
     echo "✓ Rust 경계 계층 규칙 통과"
 fi
 
+# 화면 설정은 AppSettings.defaults를 거친다. 그래야 --data-dir 시험 실행이 실제 앱 설정을 바꾸지 않는다.
+STORE_HITS="$(grep -rn --include='*.swift' '@AppStorage(' "$ROOT/Packages" "$ROOT/App" | grep -v 'store: AppSettings.defaults' || true)"
+if [ -n "$STORE_HITS" ]; then
+    echo "✗ @AppStorage가 AppSettings.defaults를 쓰지 않습니다 (시험 실행이 실제 설정을 바꿀 수 있음):"
+    echo "$STORE_HITS"
+    STATUS=1
+else
+    echo "✓ 화면 설정 저장소 규칙 통과"
+fi
+
 exit $STATUS

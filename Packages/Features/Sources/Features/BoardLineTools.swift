@@ -22,8 +22,8 @@ struct BoardLineTools: View {
     let selected: MemoLinkKind
     let availableWidth: CGFloat
     let choose: (MemoLinkKind) -> Void
-    @AppStorage("board.lineButtonStyle") private var style = "A"
-    @AppStorage("board.showPipeLabels") private var labels = true
+    @AppStorage("board.lineButtonStyle", store: AppSettings.defaults) private var style = "A"
+    @AppStorage("board.showPipeLabels", store: AppSettings.defaults) private var labels = true
     @State private var visibleNames = AppSettings.defaults.stringArray(forKey: "board.visibleLineKinds") ?? MemoLinkKind.basic.map(\.rawValue)
     @State private var legend = false
     @State private var visibility = false
