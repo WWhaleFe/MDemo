@@ -645,10 +645,19 @@ runner.test("목록에서 받은 사진은 첨부 폴더에 저장되고 본문 
 }
 
 
+final class Counter: @unchecked Sendable {
+    private var value = 0
+    private let lock = NSLock()
+    func next() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
+}
+
 runner.test("복제 메뉴는 잠금과 휴지통에서 차단하고 복제본 전체를 선택한다") { t in
     try MainActor.assumeIsolated {
         let (model, root) = try makeModel()
         defer { try? FileManager.default.removeItem(at: root) }
+        // 같은 밀리초에 원본 수정과 복제가 겹치면 목록 순서가 바뀌어 간헐적으로 실패했다. 시각이 반드시 늘어나게 한다.
+        let ticks = Counter()
+        model.store.clock = { Date(timeIntervalSince1970: 1_800_000_000 + Double(ticks.next())) }
         let a = model.store.createMemo(group: "업무").id
         let b = model.store.createMemo(group: "업무").id
         model.store.updateMeta(id: a) { $0.title = "가나다" }

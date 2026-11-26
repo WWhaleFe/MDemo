@@ -87,8 +87,8 @@ public final class MemoStore {
         for id in ids where seen.insert(id).inserted {
             guard let index = summaries.firstIndex(where: { $0.id == id }),
                   var document = try? repository.load(id: id), !document.meta.isLocked else { continue }
-            let newID = MemoID.generate()
-            let now = Date()
+            let newID = generateID()
+            let now = clock()
             document.meta.id = newID
             document.meta.created = now
             document.meta.modified = now
