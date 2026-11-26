@@ -1,5 +1,6 @@
 use mdemo_core::{board_layout::BoardLayout, device_state, frontmatter, groups, json, ledger};
 mod lock_scenario;
+mod markdown_cases;
 mod scenario;
 mod search_cases;
 use std::{env, error::Error, fs, path::Path};
@@ -41,6 +42,11 @@ fn run(input: &Path, output: &Path) -> Result<(), Box<dyn Error>> {
         let text = search_cases::run(&cases, &root)?;
         fs::remove_dir_all(&root)?;
         fs::write(output.join("search-results.json"), text)?;
+    }
+    // 마크다운 엔진 고정 사례(P5). 입력에 markdown-cases.json이 있을 때만 만든다.
+    let markdown = input.join("markdown-cases.json");
+    if markdown.exists() {
+        fs::write(output.join("markdown-results.json"), markdown_cases::run(&markdown)?)?;
     }
     Ok(())
 }

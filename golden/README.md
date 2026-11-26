@@ -34,6 +34,7 @@ mdemo-golden <입력 폴더 절대 경로> <출력 폴더 절대 경로>
 | `sync-state-google.json`, `sync-state-google.hashes.json` | 실제 동기화 상태 읽기와 쓰기. 날짜 불일치 지문은 버림 |
 | `drive-state.json` | 실제 드라이브 상태 읽기와 쓰기. 네트워크 호출은 실패하는 가짜 API만 주입 |
 | `search-cases.json` | (본문, 검색어) 쌍의 일치 여부를 `search-results.json`에 `[[MemoSearch.matches, searchBodies], ...]` 한 줄로 기록. 앞은 본문을 미리보기로 넣은 요약의 제목 · 미리보기 · 그룹 판정, 뒤는 파일에 저장한 본문만의 판정(Swift는 실제 `MemoSearch.matches`와 `FileMemoRepository.searchBodies`) |
+| `markdown-cases.json` | 마크다운 엔진 사례(문서 · 한 줄 · 인라인 · 표 · 붙여넣기 · OCR 줄 목록 · 이미지 이름 · 슬래시 검색 · 입력 규칙 · 이미지 줄 · 번호 표식)를 엔진에 그대로 넣고 `markdown-results.json`에 키를 정렬한 한 줄 JSON으로 기록. 문자열은 따옴표 · 역슬래시 · 0x20 미만 제어 문자만 이스케이프하고 나머지는 UTF-8 그대로. 블록은 `{kind, ...}`, 구간은 `{text, styles(비트), textColor, highlightColor}` |
 | `board-calculations.json` | 여러 무리, 순환, 외톨이 재정렬, 직선, 장애물, 같은 변의 여러 선 점열과 엇갈림을 `board-calculations.json`에 기록. 바로 이웃, 두 단계, 중복, 최대 12, 설정 끔은 `relations.json`에 기록 |
 
 입력의 모든 ID와 드라이브 식별자는 가짜다. 날짜는 고정되어 있고 ID 생성과 현재 시각을 쓰는 경로는 호출하지 않는다. 생성기의 작업 폴더는 임시 폴더이고 키체인은 메모리 대역이다. 스크립트는 Foundation 설정 홈도 임시 폴더로 분리한다.
@@ -57,6 +58,10 @@ Scripts/fuzz-diff.sh 2000 42
 차이가 나거나 CLI가 실패하면 `golden/fuzz-failures/`에 입력, 두 출력과 로그를 남기고 실패한다. 출력에는 건수, 경과 초, 차이 파일 수와 시드를 표시한다. 기본 시드도 명시하므로 그대로 재현할 수 있다. 보관한 최소 재현 입력은 해당 폴더 README를 참고한다.
 
 Rust는 캐시에 있는 크레이트만 사용한다. 라벨 경계는 `unicode-segmentation`, Swift의 문자열 동등 비교는 Unicode 17.0 정규 분해 표를 사용한다. `unicode-normalization`은 캐시에 없어 별도 크레이트 없이 정규 분해를 구현했다. 표 재생성은 Unicode 17.0 데이터를 가진 Python에서 `python3 Scripts/generate-unicode-tables.py`로 한다.
+
+## 마크다운 엔진 비교 (P5)
+
+`inputs/markdown-cases.json`은 열한 갈래(`documents` `lines` `inlines` `tables` `pastes` `ocr` `imageNames` `slash` `inputRules` `images` `markers`)에 각 80개 이상, 모두 1,280여 건이다. 한글, 이모지, 결합 문자, CRLF, 탭, 중첩 목록, 깨진 표, 색 태그, 정규 동치 글자(U+1FEF 등)를 포함한다. Swift(`Packages/Golden/.../MarkdownCases.swift`)와 Rust(`mdemo-golden/src/markdown_cases.rs`)가 같은 `markdown-results.json`을 내야 통과한다. 차분 퍼즈는 `mdemo-fuzzgen`이 배치마다 이 파일을 무작위로 다시 만든다(문서 · 한 줄 · 인라인 · 붙여넣기 · 표 · 입력 규칙 · 이미지 문법은 건수만큼, OCR · 이미지 이름 · 슬래시 · 표식은 절반). 짝이 맞는 중첩 서식, 닫는 기호 누락, 색 태그 변형, 앞머리 직후 커서를 자주 만든다. 마크다운 쪽은 로케일 의존 판정이 없어 검색과 달리 차이를 허용하지 않는다. 읽은 규칙은 `docs/hidden-behaviors.md`의 P5 항목을 본다.
 
 ## 데이터 폴더 시나리오 (P3)
 

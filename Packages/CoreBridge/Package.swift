@@ -6,7 +6,7 @@ let package = Package(
     name: "CoreBridge",
     platforms: [.macOS(.v14)],
     products: [.library(name: "CoreBridge", targets: ["CoreBridge"])],
-    dependencies: [.package(path: "../TestKit")],
+    dependencies: [.package(path: "../TestKit"), .package(path: "../MarkdownEngine")],
     targets: [
         .binaryTarget(name: "MDemoCoreFFI", path: "../../build/core/MDemoCoreFFI.xcframework"),
         // UniFFI 0.28 생성 코드는 Swift 5 동시성 규칙을 기준으로 한다.
@@ -17,7 +17,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "CoreBridgeTests",
-            dependencies: ["CoreBridge", .product(name: "TestKit", package: "TestKit")],
+            // 규칙 일치와 지연 비교를 위해 시험에서만 Swift 구현(MarkdownEngine)을 함께 쓴다.
+            dependencies: [
+                "CoreBridge",
+                .product(name: "TestKit", package: "TestKit"),
+                .product(name: "MarkdownEngine", package: "MarkdownEngine"),
+            ],
             path: "Tests/CoreBridgeTests"
         ),
     ]

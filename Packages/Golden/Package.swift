@@ -9,11 +9,13 @@ let package = Package(
     dependencies: [
         .package(path: "../MemoCore"), .package(path: "../Services"),
         .package(path: "../Features"), .package(path: "../StickyWindow"),
+        .package(path: "../MarkdownEngine"),
     ],
     targets: [.executableTarget(name: "mdemo-golden", dependencies: [
         .product(name: "MemoCore", package: "MemoCore"),
         .product(name: "Services", package: "Services"),
         .product(name: "Features", package: "Features"),
         .product(name: "StickyWindow", package: "StickyWindow"),
+        .product(name: "MarkdownEngine", package: "MarkdownEngine"),
     ])]
 )

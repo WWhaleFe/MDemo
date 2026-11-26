@@ -8,3 +8,4 @@ license.workspace = true
 mdemo-core = { path = "../mdemo-core" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 mdemo-crypto = { path = "../mdemo-crypto" }
+mdemo-markdown = { path = "../mdemo-markdown" }

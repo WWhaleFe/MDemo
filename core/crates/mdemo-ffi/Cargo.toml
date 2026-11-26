@@ -10,4 +10,5 @@ name = "mdemo_ffi"
 
 [dependencies]
 mdemo-core = { path = "../mdemo-core" }
+mdemo-markdown = { path = "../mdemo-markdown" }
 uniffi = { workspace = true }

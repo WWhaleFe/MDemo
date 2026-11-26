@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mdemo-core", "crates/mdemo-crypto", "crates/mdemo-golden", "crates/mdemo-ffi", "uniffi-bindgen"]
+members = ["crates/mdemo-core", "crates/mdemo-crypto", "crates/mdemo-golden", "crates/mdemo-markdown", "crates/mdemo-ffi", "uniffi-bindgen"]
 
 [workspace.package]
 edition = "2021"

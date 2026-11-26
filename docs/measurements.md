@@ -177,3 +177,24 @@ Windows 검증은 기존 cargo-xwin 캐시를 `build/xwin-cache`로 복사하고
 - `make test`의 Swift 러너는 360개 통과, MemoCore 1개 실패로 명령 전체는 실패.
 - 실패는 백업 제외 속성 검사로, 변경 전 HEAD의 MemoCore 러너에서도 88개 통과와 같은 1개 실패를 확인했다. `isExcludedFromBackup`이 기대값 `true` 대신 `false`다.
 - release 지문 캐시의 재실행 건너뛰기와 staticlib의 arm64, x86_64 포함을 확인했다.
+
+## P5 입력 규칙 지연 (2026-11-26)
+
+계획표 기준: 키 입력 1회의 FFI 왕복이 0.2ms 이하일 때만 입력 규칙을 Rust로 옮긴다.
+`Scripts/measure-input-rule.sh`가 Rust를 release로 빌드하고 `CoreBridgeTests`를 release로 돌려 잰다
+(`Packages/CoreBridge/Tests/CoreBridgeTests/main.swift`의 `MDEMO_MEASURE=1` 경로).
+대표 줄 200개(평범한 글을 한 글자씩 치는 줄, 줄머리 기호 직후, 닫는 기호 직후, 줄 중간 커서, 이모지 · 결합 문자 줄)를 1,000회씩, 20만 호출이다.
+평균은 전체 시간을 호출 수로 나눈 값이고, p99와 최대는 호출마다 시계를 읽어 잰 값이다(시계 호출 비용 약 0.04us 포함).
+Swift 직접 호출은 `InputRuleSet.m1.firstMatch`, FFI는 `InputRuleBridge.firstMatch`(UniFFI 문자열 · 레코드 변환 포함)다.
+측정 환경: Apple M4, macOS 26.6.2, release 빌드(Rust는 lto, opt-level s). 결과 일치는 같은 시험에서 200줄 모두 확인했다.
+
+| 구현 | 호출 수 | 평균 | p99 | 최대 |
+|---|---:|---:|---:|---:|
+| Swift 직접 호출 | 200,000 | 3.71 us | 11.17 us | 112.7 us |
+| Rust FFI 왕복 | 200,000 | 9.76 us | 33.50 us | 95.2 us |
+| (참고) 빈 FFI 호출 `ping` | 200,000 | 0.00 us | 0.04 us | 0.1 us |
+
+판단: **이전 가능.** FFI 왕복은 평균 0.0098ms, p99 0.034ms, 최대 0.095ms로 기준 0.2ms의 5%, 17%, 48%다.
+Swift 직접 호출보다 평균 약 6us 느리지만 키 입력 한 번의 예산에 비하면 무시할 수 있다.
+느려진 몫은 호출 고정 비용(0.00us)이 아니라 줄의 문자소 나누기와 문자열 변환이다. 앱 연결은 P7에서 한다.
+한계: 한 줄이 수천 자인 경우와 하위 macOS의 Intel 기기에서는 재지 않았다. 이 경우를 확인하려면 같은 스크립트로 줄 목록을 바꿔 다시 잰다.

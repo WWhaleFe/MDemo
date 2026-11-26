@@ -579,6 +579,7 @@ name = "mdemo-ffi"
 version = "0.16.0"
 dependencies = [
  "mdemo-core",
+ "mdemo-markdown",
  "uniffi",
 ]
 
@@ -588,7 +589,16 @@ version = "0.16.0"
 dependencies = [
  "mdemo-core",
  "mdemo-crypto",
+ "mdemo-markdown",
  "serde_json",
+]
+
+[[package]]
+name = "mdemo-markdown"
+version = "0.16.0"
+dependencies = [
+ "mdemo-core",
+ "unicode-segmentation",
 ]
 
 [[package]]

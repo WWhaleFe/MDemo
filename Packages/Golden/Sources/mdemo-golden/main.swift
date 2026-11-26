@@ -114,6 +114,11 @@ func generate(input: URL, output: URL) throws {
         try emit("search-results.json", searchResults(input: input.appendingPathComponent("search-cases.json"), root: searchRoot, keychain: keychain))
     }
 
+    // 마크다운 엔진 고정 사례(P5). 입력에 markdown-cases.json이 있을 때만 만든다.
+    if fm.fileExists(atPath: input.appendingPathComponent("markdown-cases.json").path) {
+        try emit("markdown-results.json", markdownResults(input: input.appendingPathComponent("markdown-cases.json")))
+    }
+
     let scenario = try JSONDecoder().decode(Scenario.self, from: read("board-calculations.json"))
     let ids = scenario.ids.map { MemoID(rawValue: $0) }
     let edges = scenario.edges.map(\.value)

@@ -26,3 +26,5 @@ pub mod meta;
 pub mod store;
 
 mod unicode;
+// 마크다운 엔진이 Swift `Character` 동등 비교(정규 동치)에 쓴다.
+pub use unicode::nfd;

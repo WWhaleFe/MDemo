@@ -107,6 +107,24 @@ Rust(`mdemo-crypto`, `mdemo-core::store`의 `lock_flow` · `secure_delete`)를 S
 - 평문이 `String`으로 남는 곳(`lock_flow.rs` 머리말에도 있다): 일반 메모를 잠글 때 읽는 원본 `MemoDocument.body`와 비교용 재읽기 복사본(떨어질 때 덮음, 원본이 이미 평문 파일), 잠금을 일반 메모로 옮길 때의 `MemoDocument.body`(쓰고 나서 덮음)와 `frontmatter::encode`가 내부에서 만드는 임시 문자열(덮을 수 없음), `save_body(&str)`로 들어오는 본문(호출자 소유). 시나리오 실행기는 시험 도구라 암호를 JSON 문자열로 든다.
 - 코드 검토 목록: `mdemo-crypto` 안에서 비밀 바이트가 `Zeroizing`이 아닌 그릇에 들어가는 곳은 `seal`의 반환 버퍼(암호문으로 바뀐 뒤 반환)와 `KeyStore`의 감싼 열쇠(암호문)뿐이다.
 
+## P5에서 찾은 마크다운 엔진의 숨은 동작
+
+`mdemo-markdown`(Rust)은 아래 동작까지 Swift와 바이트 단위로 맞췄다(골든 `markdown-cases.json` 사례 1,280여 건과 차분 퍼즈). 모두 Swift 구현을 바꾸지 않고 그대로 따른 것이다.
+
+- **`Character ==`는 정규 동치다.** U+1FEF(그리스 바리아)는 `` ` ``와, U+037E는 `;`와, U+212A(켈빈)는 `K`와, U+0387은 `·`와 같다. 그래서 U+1FEF 두 개가 인라인 코드 기호 구실을 하고, OCR 줄머리의 U+0387이 글머리 `·`로 읽힌다. 한글 자모 열과 완성형도 같다.
+- **`hasPrefix` · `hasSuffix` · `contains`는 문자소 경계에서만 맞는다.** `-` 바로 뒤에 결합 기호가 붙은 줄(`-\u{301} x`)은 글머리가 아니고, 닫는 `)` 뒤에 결합 기호가 붙은 줄은 이미지 줄이 아니다. 첨부 경로의 `/` 뒤에 결합 기호가 붙으면 그 글자는 `/`로 세지 않아 파일 이름으로 통한다(`attachments/a/\u{301}.png`는 유효한 이미지).
+- **`replacingOccurrences`는 스칼라 단위로 찾되, 일치 바로 뒤에 결합 기호(Extend: 결합 악센트, 변이 선택자, 이모지 피부색, ZWNJ)가 붙은 자리는 건너뛴다.** 그래서 `\r\n` 뒤에 `\u{FE0F}` 같은 글자가 오면 `\r\n`이 `\n`으로 바뀌지 않고, 뒤이은 `\r` 바꾸기가 `\r\n` 가운데의 `\r`만 `\n`으로 바꾼다. ZWJ · 간격 결합 기호 · 한글 자모가 뒤따르는 자리는 바꾼다. 앞쪽 글자는 상관없다. NBSP 바꾸기도 같다.
+- **`components(separatedBy: "\n")`은 스칼라마다 자른다.** `\r\n` 한가운데의 `\n`에서도 자르고(`\r`은 앞 줄에 남는다), 뒤에 결합 기호가 붙어도 자른다. (같은 함수를 문자소 경계로 쓰는 `frontmatter` 쪽 분리와는 다르다.)
+- **들여쓰기 한 칸짜리 제목.** 들여쓰기 단계는 `공백 수 / 2`라 공백 한 칸은 0단계이고, 앞 공백을 뗀 줄이 `# `로 시작하면 제목이다(` # 제목`은 제목 1).
+- **`Character.isNumber`는 첫 스칼라의 Numeric_Type이 None이 아닌지만 본다.** 한자 숫자(`一`), 분수(`½`), 동그라미 숫자, 아랍 인도 숫자, 숫자 + 결합 기호가 모두 숫자다. 붙여넣기의 `isListLine` · `1)` 변환은 이 글자들도 번호로 보지만(`一) 항목` → `一. 항목`), 해석기는 `Int(...)`가 읽는 ASCII 숫자만 번호 목록으로 받아 결과는 문단이다. 자리수가 `Int`를 넘는 번호(`99999999999999999999.`)도 문단이다. 입력 규칙의 `1.` 규칙도 같다.
+- **이미지 줄 정규식(ICU)**: `\s`는 White_Space(NBSP · NEL · 줄 구분자 · VT 포함, ZWSP는 아님), `\d`는 Nd다. `=너비`가 ASCII 숫자가 아니거나(`=٣`) `Int` 범위를 넘거나 0이면 이미지가 아니라 문단이다. `\u{2028}`로 경로와 `=너비`를 띄운 줄은 이미지다.
+- **색 태그 길이는 문자소로 센다.** 여는 태그의 `>` 바로 뒤에 결합 기호가 붙어 있으면 `>`와 결합 기호가 한 글자(`Character`)라 태그가 그것까지 삼킨다. `<span style="color:#D93025">\u{301}x</span>`는 `\u{301}`이 사라진 `x`가 된다(글자 하나가 조용히 없어짐). 닫는 태그 뒤 결합 기호는 닫는 태그가 `Character` 하나로 안 맞아 서식 없이 글자로 남는다.
+- **`lowercased()`는 글자마다 대응하며 마지막 시그마 문맥이 없다.** 슬래시 명령 검색에서 `ΑΣ`는 `ας`가 아니라 `ασ`가 된다. Rust의 `str::to_lowercase`는 문맥을 보므로 글자별 `char::to_lowercase`로 맞췄다.
+- **슬래시 명령 검색은 로케일을 쓰지 않는다.** `lowercased()` · `hasPrefix` · `contains`뿐이라 검색 판정(`localizedCaseInsensitiveContains`)과 달리 Rust가 정확히 따라간다. 그래서 마크다운 엔진은 전부 Rust로 옮길 수 있고 맥에 남길 부분이 없다.
+- **입력 규칙의 위치는 Character 단위다**(UTF-16이 아니다). `caretOffset`, 돌려주는 구간 모두 같다. 화면(NSTextView)이 UTF-16을 쓰면 연결하는 쪽(P7)에서 바꿔야 한다.
+
+한계: 이 비교는 macOS 26.6.2(Xcode 27.0)의 Swift · Foundation · ICU로 만든 기준이다. Rust는 Unicode 17.0 표(숫자 종류는 `Scripts/generate-markdown-tables.py`, 정규 분해는 mdemo-core, 문자소 경계는 `unicode-segmentation`)를 쓴다. 앱이 지원하는 하위 macOS(14)의 Swift 런타임과 Foundation은 유니코드 판이나 문자열 함수 구현이 달라 새로 배정된 글자나 위의 Foundation 관찰이 다를 수 있다. 확인하지 못했다.
+
 ## 골든과 실행
 
 [골든 규약](../golden/README.md)에 입력 목록, 키 순서 정규화 예외, 두 구현의 CLI 계약을 기록했다. `make golden`은 기준을 갱신하고 `make test`는 기존 TestKit 러너와 `Scripts/golden-check.sh swift`를 실행한다. P2에서는 Rust 데이터 모델과 CLI가 이관한 10개 파일도 바이트 비교한다. 미이전 파일과 차분 퍼즈 사용법은 골든 규약을 따른다.

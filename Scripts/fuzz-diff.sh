@@ -30,7 +30,7 @@ while [ "$DONE" -lt "$N" ]; do
         python3 - "$WORK/swift" "$WORK/rust" <<'PY' || STATUS=1
 import pathlib, sys
 swift, rust = map(pathlib.Path, sys.argv[1:])
-names = {'board.json', 'groups.json', 'device-state.json', 'destroyed.json', 'local-only.json', 'board-calculations.json', 'relations.json', 'search-results.json'}
+names = {'board.json', 'groups.json', 'device-state.json', 'destroyed.json', 'local-only.json', 'board-calculations.json', 'relations.json', 'search-results.json', 'markdown-results.json'}
 names |= {str(p.relative_to(swift)) for p in (swift / 'memos').glob('*.md')}
 names |= {str(p.relative_to(rust)) for p in (rust / 'memos').glob('*.md')}
 differences = [n for n in sorted(names) if not (swift/n).is_file() or not (rust/n).is_file() or (swift/n).read_bytes() != (rust/n).read_bytes()]
