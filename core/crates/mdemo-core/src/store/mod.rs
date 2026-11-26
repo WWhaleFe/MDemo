@@ -195,12 +195,16 @@ pub(crate) fn to_system_time(date: MemoDate) -> SystemTime {
     }
 }
 
+/// Foundation과 같은 순서로 바꾼다: 정수 초에서 기준 차이를 먼저 빼고 나노초를 더한다.
+/// 1970 기준 실수에서 빼면 마지막 자리가 달라져 Swift가 읽은 값과 어긋난다(P7 그림자 실행에서 발견).
 pub(crate) fn from_system_time(time: SystemTime) -> MemoDate {
-    let unix = match time.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(d) => d.as_secs_f64(),
-        Err(e) => -e.duration().as_secs_f64(),
+    let nanos: i128 = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => d.as_nanos() as i128,
+        Err(e) => -(e.duration().as_nanos() as i128),
     };
-    MemoDate(unix - UNIX_TO_REFERENCE)
+    let secs = nanos.div_euclid(1_000_000_000) as i64;
+    let nsec = nanos.rem_euclid(1_000_000_000) as i64;
+    MemoDate((secs - UNIX_TO_REFERENCE as i64) as f64 + nsec as f64 * 1e-9)
 }
 
 /// 파일 또는 폴더의 수정 시각.
@@ -264,4 +268,16 @@ pub(crate) fn visible_entries(dir: &Path) -> io::Result<Vec<(String, std::path::
     // 읽는 순서는 운영체제 마음이라 이름순으로 고정한다.
     entries.sort();
     Ok(entries)
+}
+
+#[cfg(test)]
+mod foundation_time_tests {
+    use super::*;
+    #[test]
+    fn mtime_matches_foundation_order() {
+        // 실제로 어긋났던 값: 1795351237.995639000 → Foundation 817044037.995639
+        let t = SystemTime::UNIX_EPOCH + Duration::new(1_795_351_237, 995_639_000);
+        assert_eq!(from_system_time(t).0, (1_795_351_237i64 - 978_307_200) as f64 + 995_639_000f64 * 1e-9);
+        assert_eq!(format!("{}", from_system_time(t).0), "817044037.995639");
+    }
 }

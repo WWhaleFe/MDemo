@@ -165,7 +165,8 @@ func registerShadowTests(_ runner: TestRunner) {
         try shadow.save(MemoDocument(meta: shadowMeta(id), body: "시각시험"))
         shadow.waitForShadow()
         let trash = "trash/\(id.rawValue)"
-        for delta in [0.0000005, 0.000002] {
+        // Foundation setAttributes는 마이크로초 단위로 시각을 쓰므로 경계(0.5µs)가 아니라 0과 분명한 차이(10µs)로 본다.
+        for delta in [0.0, 0.00001] {
             shadow.afterShadowApply = { before in
                 let after = before.deletingLastPathComponent().appendingPathComponent("after").appendingPathComponent(trash)
                 let attrs = try FileManager.default.attributesOfItem(atPath: after.path)
