@@ -49,6 +49,8 @@ public final class WindowRegistry {
         for flow in store.flows {
             for id in flow.memoIDs { flows[id] = flow }
         }
+        let settings = MemoStripSettings()
+        let edges = store.edges
         for (id, controller) in controllers {
             if summaries[id] == nil {
                 if controller.isShowingDestruction { continue }
@@ -56,7 +58,7 @@ public final class WindowRegistry {
                 controllers.removeValue(forKey: id)
                 continue
             }
-            controller.updateFlowStrip(flow: flows[id], summaries: summaries) { [weak self] target in
+            controller.updateFlowStrip(relations: .calculate(current: id, flow: flows[id], edges: edges, depth: settings.depth, showRelations: settings.showRelations), settings: settings, summaries: summaries) { [weak self] target in
                 self?.openMemo(id: target)
             }
         }
@@ -64,6 +66,11 @@ public final class WindowRegistry {
 
     public func flowStripState(of id: MemoID) -> (isVisible: Bool, previous: MemoID?, next: MemoID?)? {
         controllers[id]?.flowStripState
+    }
+
+    /// 흐름 상태와 별개로 관계만 가진 메모의 줄도 조회한다.
+    public func relationStripIsVisible(of id: MemoID) -> Bool {
+        controllers[id].map { !$0.flowStrip.isHidden } ?? false
     }
 
     public var openCount: Int { controllers.count }
