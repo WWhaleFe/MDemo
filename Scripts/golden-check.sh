@@ -6,7 +6,7 @@ if [ "$#" -ne 1 ]; then
     echo "사용법: $0 swift|rust" >&2
     exit 2
 fi
-RUST_PENDING=(board-calculations.json relations.json sync-state-google.json sync-state-google.hashes.json drive-state.json)
+RUST_PENDING=(sync-state-google.json sync-state-google.hashes.json drive-state.json)
 case "$1" in
     swift) CLI="$ROOT/Scripts/golden-run-swift.sh" ;;
     rust)

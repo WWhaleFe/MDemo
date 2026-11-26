@@ -13,6 +13,7 @@ mod tests {
     }
 }
 
+pub mod board;
 pub mod board_layout;
 pub mod device_state;
 pub mod frontmatter;

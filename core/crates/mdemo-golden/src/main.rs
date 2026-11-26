@@ -27,6 +27,10 @@ fn run(input: &Path, output: &Path) -> Result<(), Box<dyn Error>> {
         let ids = ledger::decode(&fs::read(input.join(name))?)?;
         fs::write(output.join(name), json::encode(&ids, false, true)?)?;
     }
+    // 보드 계산 두 파일(v0.14 재정렬 · 길찾기 · 엇갈림, v0.15 관계)
+    let calc = input.join("board-calculations.json");
+    fs::write(output.join("board-calculations.json"), mdemo_core::board::golden::board_calculations(&calc)?)?;
+    fs::write(output.join("relations.json"), mdemo_core::board::golden::relations(&calc)?)?;
     Ok(())
 }
 fn main() {
