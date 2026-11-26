@@ -1,3 +1,4 @@
+import CoreBridge
 import Foundation
 import MemoCore
 
@@ -23,6 +24,7 @@ public struct BackupService: Sendable {
     /// macOS가 기본으로 갖고 있는 도구가 첨부 파일까지 그대로 담아 준다.
     @discardableResult
     public func exportBackup(to destination: URL) throws -> Int {
+        if CoreStorage.usesRust { return Int(try rustCall { try coreExportBackup(root: dataRoot.path, destination: destination.path) }) }
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("MDemoBackup-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: staging) }
         let filtered = staging.appendingPathComponent(dataRoot.lastPathComponent)
@@ -54,6 +56,7 @@ public struct BackupService: Sendable {
     /// - false면 기존 메모를 남기고 백업에 있는 것만 더한다 (DAT-05).
     @discardableResult
     public func importBackup(from archive: URL, replaceExisting: Bool) throws -> Int {
+        if CoreStorage.usesRust { return Int(try rustCall { try coreImportBackup(root: dataRoot.path, archive: archive.path, replace: replaceExisting, keys: CoreStorage.bridgeKeys(keychain)) }) }
         let staging = FileManager.default.temporaryDirectory
             .appendingPathComponent("MDemoRestore-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: staging) }

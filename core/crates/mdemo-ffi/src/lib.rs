@@ -62,3 +62,5 @@ mod repository;
 mod secret_transfer;
 mod lock_store;
 pub use repository::*;
+
+mod sync;

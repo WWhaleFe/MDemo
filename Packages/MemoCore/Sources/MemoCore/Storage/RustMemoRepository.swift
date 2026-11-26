@@ -73,7 +73,7 @@ public final class RustMemoRepository: MemoRepository, @unchecked Sendable {
 }
 
 /// 키체인 접근은 Swift에 남긴다. delete는 기존 계약대로 키와 실패 횟수를 함께 지운다.
-private final class RepositoryKeyStore: CoreKeyStore, @unchecked Sendable {
+final class RepositoryKeyStore: CoreKeyStore, @unchecked Sendable {
     let keys: any MemoKeychain
     init(_ keys: any MemoKeychain) { self.keys = keys }
     private func call<T>(_ action: () throws -> T) throws -> T {

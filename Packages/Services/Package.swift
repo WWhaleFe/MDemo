@@ -11,6 +11,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../MemoCore"),
+        .package(path: "../CoreBridge"),
         .package(path: "../MarkdownEngine"),
         .package(path: "../TestKit"),
     ],
@@ -19,6 +20,7 @@ let package = Package(
             name: "Services",
             dependencies: [
                 .product(name: "MemoCore", package: "MemoCore"),
+                .product(name: "CoreBridge", package: "CoreBridge"),
                 .product(name: "MarkdownEngine", package: "MarkdownEngine"),
             ]
         ),

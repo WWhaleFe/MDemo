@@ -117,6 +117,7 @@ public struct DriveMirrorSync: Sendable {
     // MARK: - 동기화
 
     public func sync(mode: SyncMode = .both) async throws -> SyncReport {
+        if CoreStorage.usesRust { return try await rustDriveSync(service: service, state: stateURL, api: api, mode: mode, privacy: false) }
         var state = loadState()
         if mode != .push {
             try await download(into: &state)
@@ -131,6 +132,7 @@ public struct DriveMirrorSync: Sendable {
     /// 파기 · 로컬 전용 정리를 거울까지 반영하고, 거울에서 사라진 파일을 드라이브에서도 영구 삭제한다.
     /// 드라이브에 닿지 못해도 로컬 정리는 끝난 것이다. 남은 삭제는 다음 동기화가 한다.
     public func enforcePrivacy() async throws -> SyncReport {
+        if CoreStorage.usesRust { return try await rustDriveSync(service: service, state: stateURL, api: api, mode: .both, privacy: true) }
         let report = try service.enforcePrivacy()
         var state = loadState()
         if state.completedOnce || !state.files.isEmpty {

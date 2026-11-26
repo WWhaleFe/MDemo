@@ -1,3 +1,4 @@
+import CoreBridge
 import CryptoKit
 import Foundation
 import MemoCore
@@ -60,8 +61,8 @@ public struct SyncService: Sendable {
     public let localRoot: URL
     public let remoteRoot: URL
     /// 마지막으로 맞춰 둔 시각을 메모별로 적어 둔다. 기기마다 따로 갖는다.
-    private let keychain: any MemoKeychain
-    private let stateURL: URL
+    let keychain: any MemoKeychain
+    let stateURL: URL
     /// 시험에서 충돌 사본 ID를 고정한다. 앱은 기존 생성기를 그대로 쓴다.
     public var generateID: @Sendable () -> MemoID = { MemoID.generate() }
     /// 시험용: 폴더를 훑은 직후, 반영하기 직전에 불린다. 그 사이 다른 쪽이 바뀌는 경쟁 상황을 흉내 낸다.
@@ -92,6 +93,7 @@ public struct SyncService: Sendable {
     // MARK: - 동기화
 
     public func sync(mode: SyncMode = .both) throws -> SyncReport {
+        if CoreStorage.usesRust { return try rustCall { try rustService().sync(mode: mode.core) }.native }
         try prepareFolders()
 
         var state = loadState()
@@ -144,6 +146,7 @@ public struct SyncService: Sendable {
 
     /// 자동 동기화가 꺼져 있어도 원본 파기와 로컬 전용 삭제 기록은 즉시 반영한다.
     public func enforcePrivacy() throws -> SyncReport {
+        if CoreStorage.usesRust { return try rustCall { try rustService().enforcePrivacy() }.native }
         try prepareFolders()
         var report = SyncReport()
         _ = try applyPrivacy(report: &report)

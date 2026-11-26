@@ -3,7 +3,7 @@ import MemoCore
 @testable import Services
 import TestKit
 
-let runner = TestRunner("Services")
+let runner = TestRunner(CoreStorage.usesRust ? "Services (Rust)" : "Services (Swift)")
 
 /// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
 final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
@@ -1018,6 +1018,21 @@ runner.test("PKCE: 검증값 길이 · 문자, S256 challenge, 인증 주소 매
     t.expectEqual(items["state"], "st")
     t.expectEqual(items["code_challenge_method"], "S256")
     t.expectEqual(items["response_type"], "code")
+}
+
+// MainActor에서만 완료되는 API를 사용해 콜백 대기가 메인 실행기를 점유하지 않는지 확인한다.
+await runner.testAsync("Rust 드라이브 콜백은 MainActor 비동기 API를 기다려도 교착하지 않는다") { t in
+    let rig = try DriveRig()
+    defer { rig.cleanup() }
+    let sync = DriveMirrorSync(localRoot: rig.local, mirrorRoot: rig.mirror,
+        driveStateURL: rig.base.appendingPathComponent("drive-state.json"),
+        engineStateURL: rig.base.appendingPathComponent("engine-state.json"),
+        api: MainActorDrive(rig.drive), keychain: rig.keys)
+    let id = rig.store.createMemo().id
+    rig.store.saveBody(id: id, body: "메인 실행기가 응답한다")
+    _ = try await sync.sync()
+    t.expect(rig.drive.paths().contains("memos/\(id.rawValue)/memo.md"))
+    _ = try await sync.enforcePrivacy()
 }
 
 await runner.testAsync("드라이브 첫 동기화는 합치기만 한다: 양쪽 메모가 모두 남고 삭제는 0건") { t in

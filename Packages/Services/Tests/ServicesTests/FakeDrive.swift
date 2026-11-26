@@ -151,3 +151,16 @@ final class FakeDrive: DriveAPI, @unchecked Sendable {
     }
 
 }
+
+/// 기존 가짜 드라이브를 메인 실행기 뒤에 두어 동기 콜백의 교착을 드러낸다.
+@MainActor
+final class MainActorDrive: DriveAPI {
+    private let drive: FakeDrive
+    init(_ drive: FakeDrive) { self.drive = drive }
+    func list() async throws -> [DriveFile] { try await drive.list() }
+    func download(id: String) async throws -> Data { try await drive.download(id: id) }
+    func upload(name: String, parentID: String?, data: Data) async throws -> DriveFile { try await drive.upload(name: name, parentID: parentID, data: data) }
+    func update(id: String, data: Data) async throws -> DriveFile { try await drive.update(id: id, data: data) }
+    func createFolder(name: String, parentID: String?) async throws -> DriveFile { try await drive.createFolder(name: name, parentID: parentID) }
+    func delete(id: String) async throws { try await drive.delete(id: id) }
+}
