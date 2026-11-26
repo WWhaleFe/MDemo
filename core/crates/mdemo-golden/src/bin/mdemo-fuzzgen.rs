@@ -114,8 +114,63 @@ fn run() -> Result<(), Box<dyn Error>> {
         .map(|_| r.pick(&["한글", "a/b", "\n\\\"", "😀", "é", ""]))
         .collect();
     fs::write(root.join("groups.json"), serde_json::to_vec(&groups)?)?;
+    board_calculations(root, &mut r)?;
     Ok(())
 }
+/// v0.14 · v0.15 보드 계산용 무작위 입력: 재정렬 · 관계(ids · edges), 길찾기(routingCases), 엇갈림(crossingPaths).
+fn board_calculations(root: &Path, r: &mut Random) -> Result<(), Box<dyn Error>> {
+    const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let kinds = ["line", "flow", "both", "related", "dashto", "dashboth", "contain", "block", "oppose", "same"];
+    let id = |r: &mut Random| -> String {
+        let mut s = String::from("01ARZ3NDEKTSV4RRFFQ69G");
+        for _ in 0..4 { s.push(CROCKFORD[r.next() as usize % CROCKFORD.len()] as char); }
+        s
+    };
+    let edges_for = |ids: &[String], n: usize, r: &mut Random| -> Vec<serde_json::Value> {
+        (0..n).map(|_| {
+            let a = &ids[r.next() as usize % ids.len()];
+            // 가끔 자기 자신 · 같은 선 반복도 넣는다
+            let b = if r.next() % 15 == 0 { a } else { &ids[r.next() as usize % ids.len()] };
+            json!({"from": a, "to": b, "kind": kinds[r.next() as usize % kinds.len()]})
+        }).collect()
+    };
+    let n = (r.next() % 25 + 4) as usize;
+    let mut ids: Vec<String> = Vec::new();
+    while ids.len() < n { let v = id(r); if !ids.contains(&v) { ids.push(v); } }
+    let e = (r.next() % (n as u64 * 2)) as usize + 1;
+    let edges = edges_for(&ids, e, r);
+    let grid = |r: &mut Random, span: u64| -> f64 { ((r.next() % (span * 2 / 20)) as i64 * 20 - span as i64) as f64 };
+    let mut positions = serde_json::Map::new();
+    for i in ids.iter().take(6) { positions.insert(i.clone(), json!({"x": grid(r, 1200), "y": grid(r, 800)})); }
+    let mut cases = Vec::new();
+    for c in 0..3 {
+        let m = (r.next() % 12 + 2) as usize;
+        let cids: Vec<String> = ids.iter().take(m.min(ids.len())).cloned().collect();
+        let mut pos = serde_json::Map::new();
+        // 0번 사례는 280 · 200 칸에 맞춘 깔끔한 배치, 나머지는 20pt 격자 아무 곳(겹침 포함)
+        for (k, i) in cids.iter().enumerate() {
+            let (x, y) = if c == 0 { ((k % 4) as f64 * 280.0, (k / 4) as f64 * 200.0) } else { (grid(r, 1400), grid(r, 900)) };
+            pos.insert(i.clone(), json!({"x": x, "y": y}));
+        }
+        let ce = (r.next() % (cids.len() as u64 * 2 + 1)) as usize;
+        cases.push(json!({"name": format!("무작위 {c}"), "positions": pos, "edges": edges_for(&cids, ce, r)}));
+    }
+    let mut paths = Vec::new();
+    for _ in 0..(r.next() % 6 + 2) {
+        let mut pts = vec![[grid(r, 400), grid(r, 400)]];
+        for k in 0..(r.next() % 4 + 1) {
+            let last = *pts.last().unwrap();
+            let step = grid(r, 300);
+            pts.push(if k % 2 == 0 { [last[0] + step, last[1]] } else { [last[0], last[1] + step] });
+        }
+        paths.push(json!({"points": pts}));
+    }
+    fs::write(root.join("board-calculations.json"), serde_json::to_vec(&json!({
+        "ids": ids, "edges": edges, "positions": positions, "crossingPaths": paths, "routingCases": cases
+    }))?)?;
+    Ok(())
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("퍼즈 입력 생성 실패: {e}");

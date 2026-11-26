@@ -27,7 +27,7 @@ if ! (cd "$ROOT/core" && cargo test --locked --workspace); then
     FAILED=1
 fi
 for package in CoreBridge MemoCore MarkdownEngine EditorKit StickyWindow Services Features; do
-    if ! (cd "$ROOT/Packages/$package" && swift run --disable-sandbox --build-system native -c debug --scratch-path "$SCRATCH" "${package}Tests" 2>&1 \
+    if ! (cd "$ROOT/Packages/$package" && swift run -c debug --scratch-path "$SCRATCH" "${package}Tests" 2>&1 \
         | grep -vE "^\[|Compiling|Emitting|Build |Planning|Write |Linking|Building for"); then
         FAILED=1
     fi

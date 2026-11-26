@@ -16,5 +16,5 @@ trap 'rm -rf "$RUN_HOME"' EXIT
 export CFFIXED_USER_HOME="$RUN_HOME"
 export CLANG_MODULE_CACHE_PATH="$SCRATCH/ModuleCache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$CLANG_MODULE_CACHE_PATH"
-swift run --disable-sandbox --build-system native --package-path "$ROOT/Packages/Golden" --scratch-path "$SCRATCH" \
+swift run --package-path "$ROOT/Packages/Golden" --scratch-path "$SCRATCH" \
     -c debug mdemo-golden "$1" "$2"
