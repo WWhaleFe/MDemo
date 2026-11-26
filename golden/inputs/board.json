@@ -1,0 +1,26 @@
+{
+  "placements": {
+    "01ARZ3NDEKTSV4RRFFQ69G5F02": {
+      "y": -20.25,
+      "x": 580.125
+    },
+    "01ARZ3NDEKTSV4RRFFQ69G5F00": {
+      "y": 100,
+      "x": 40
+    }
+  },
+  "bentoSpans": {
+    "01ARZ3NDEKTSV4RRFFQ69G5F01": "wide"
+  },
+  "manualOrder": [
+    {
+      "rawValue": "01ARZ3NDEKTSV4RRFFQ69G5F02"
+    },
+    {
+      "rawValue": "01ARZ3NDEKTSV4RRFFQ69G5F00"
+    },
+    {
+      "rawValue": "01ARZ3NDEKTSV4RRFFQ69G5F02"
+    }
+  ]
+}

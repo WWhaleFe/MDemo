@@ -1,0 +1,15 @@
+{
+  "rootID": "fake-root",
+  "completedOnce": true,
+  "folders": {
+    "memos": "fake-folder"
+  },
+  "files": {
+    "memos/01ARZ3NDEKTSV4RRFFQ69G5F00/memo.md": {
+      "fileID": "fake-file",
+      "remoteMD5": "d41d8cd98f00b204e9800998ecf8427e",
+      "syncedMD5": "d41d8cd98f00b204e9800998ecf8427e",
+      "purge": false
+    }
+  }
+}

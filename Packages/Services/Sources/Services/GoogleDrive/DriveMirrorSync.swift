@@ -99,14 +99,15 @@ public struct DriveMirrorSync: Sendable {
         var completedOnce = false
     }
 
-    private func loadState() -> DriveState {
+    // 테스트와 골든이 실제 상태 읽기와 쓰기를 재사용하도록 모듈 내부에 연다.
+    func loadState() -> DriveState {
         guard let data = try? Data(contentsOf: stateURL), let state = try? JSONDecoder().decode(DriveState.self, from: data) else {
             return DriveState()
         }
         return state
     }
 
-    private func saveState(_ state: DriveState) {
+    func saveState(_ state: DriveState) {
         try? FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

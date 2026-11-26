@@ -13,6 +13,11 @@ source "$ROOT/Scripts/toolchain.sh"
 # 한 곳을 함께 쓰면 그런 어긋남이 생기지 않는다.
 SCRATCH="$ROOT/.build-shared"
 
+# Foundation 설정 저장도 실제 홈 대신 임시 홈에 둔다.
+TEST_HOME="$(mktemp -d "${TMPDIR:-/tmp}/mdemo-test-home.XXXXXX")"
+trap 'rm -rf "$TEST_HOME"' EXIT
+export CFFIXED_USER_HOME="$TEST_HOME"
+
 FAILED=0
 for package in MemoCore MarkdownEngine EditorKit StickyWindow Services Features; do
     if ! (cd "$ROOT/Packages/$package" && swift run -c debug --scratch-path "$SCRATCH" "${package}Tests" 2>&1 \
@@ -20,6 +25,11 @@ for package in MemoCore MarkdownEngine EditorKit StickyWindow Services Features;
         FAILED=1
     fi
 done
+
+# 한 패키지가 실패해도 골든 비교까지 실행해 차이를 함께 보고한다.
+if ! "$ROOT/Scripts/golden-check.sh" swift; then
+    FAILED=1
+fi
 
 if [ $FAILED -eq 0 ]; then
     echo "✓ 전체 테스트 통과"

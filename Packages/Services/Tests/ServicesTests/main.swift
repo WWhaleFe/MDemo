@@ -1,6 +1,6 @@
 import Foundation
 import MemoCore
-import Services
+@testable import Services
 import TestKit
 
 let runner = TestRunner("Services")
@@ -43,7 +43,8 @@ final class FakeDevice {
         self.sync = SyncService(
             localRoot: root,
             remoteRoot: cloud,
-            stateURL: root.appendingPathComponent("sync-state.json")
+            stateURL: root.appendingPathComponent("sync-state.json"),
+            keychain: testKeychain
         )
     }
 
@@ -248,7 +249,7 @@ runner.test("백업을 만들고 되돌리면 메모가 그대로 돌아온다 (
         let dataRoot = base.appendingPathComponent("Data", isDirectory: true)
         let repository = try FileMemoRepository(rootDirectory: dataRoot, keychain: testKeychain)
         let store = MemoStore(repository: repository, keychain: testKeychain)
-        let backup = BackupService(dataRoot: dataRoot)
+        let backup = BackupService(dataRoot: dataRoot, keychain: testKeychain)
 
         let meta = store.createMemo(group: "업무")
         store.saveBody(id: meta.id, body: "# 중요한 메모\n- [ ] 잃어버리면 안 됨")
@@ -279,7 +280,7 @@ runner.test("합치기로 복원하면 지금 메모가 지워지지 않는다 (
         let dataRoot = base.appendingPathComponent("Data", isDirectory: true)
         let repository = try FileMemoRepository(rootDirectory: dataRoot, keychain: testKeychain)
         let store = MemoStore(repository: repository, keychain: testKeychain)
-        let backup = BackupService(dataRoot: dataRoot)
+        let backup = BackupService(dataRoot: dataRoot, keychain: testKeychain)
 
         let old = store.createMemo()
         store.saveBody(id: old.id, body: "예전 메모")
@@ -304,7 +305,7 @@ runner.test("메모를 마크다운·HTML·텍스트로 내보낸다 (DAT-06)") 
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: base) }
 
-    let backup = BackupService(dataRoot: base)
+    let backup = BackupService(dataRoot: base, keychain: testKeychain)
     let document = MemoDocument(
         meta: MemoMeta(id: .generate()),
         body: "# 장보기\n- [ ] 우유\n**중요**한 것"
@@ -335,7 +336,7 @@ runner.test("마크다운 파일을 메모로 가져온다 (DAT-07)") { t in
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: base) }
 
-    let backup = BackupService(dataRoot: base)
+    let backup = BackupService(dataRoot: base, keychain: testKeychain)
 
     // 제목이 없는 파일은 파일 이름을 제목으로 삼는다
     let plain = base.appendingPathComponent("회의 준비.txt")
@@ -959,7 +960,7 @@ runner.test("장부의 손상 메모는 백업에서 제외한다") { t in
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     try Data("손상".utf8).write(to: folder.appendingPathComponent("memo.md"))
     let archive = base.appendingPathComponent("backup.zip")
-    t.expectEqual(try BackupService(dataRoot: root).exportBackup(to: archive), 3)
+    t.expectEqual(try BackupService(dataRoot: root, keychain: testKeychain).exportBackup(to: archive), 3)
     let restored = base.appendingPathComponent("restored")
     _ = try BackupService(dataRoot: restored, keychain: PrivacyTestKeychain()).importBackup(from: archive, replaceExisting: false)
     t.expectEqual(try FileMemoRepository(rootDirectory: restored, keychain: testKeychain).loadSummaries().count, 0)
@@ -1179,6 +1180,10 @@ await runner.testAsync("원격 변경은 내려받고 로컬 변경은 올리고
     rig.drive.put(path: path, data: Data(current.replacingOccurrences(of: "로컬 내용", with: "원격 둘째").utf8))
     let report = try await rig.sync.sync()
     t.expectEqual(report.conflicts, 1, "충돌 사본이 없다")
+    for copy in report.conflictCopies {
+        t.expect(rig.drive.paths().contains("memos/\(copy.rawValue)/memo.md"), "같은 회차에 충돌 사본을 올려야 한다")
+    }
+    t.expectEqual(report.conflictCopies.count, 1)
     rig.store.reloadSummaries()
     t.expectEqual(rig.store.summaries.filter { $0.meta.conflictOf != nil }.count, 1)
 }
@@ -1707,6 +1712,52 @@ runner.test("로그인 결과 페이지는 밖에서 아무것도 불러오지 �
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         try? ok.write(to: dir.appendingPathComponent("mdemo-login-ok.html"), atomically: true, encoding: .utf8)
         try? bad.write(to: dir.appendingPathComponent("mdemo-login-fail.html"), atomically: true, encoding: .utf8)
+    }
+}
+
+runner.test("동기화 시각 경계의 현재 동작: 외부 편집 이하와 같은 순간 미만") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let sync = SyncService(localRoot: root, remoteRoot: root, stateURL: root.appendingPathComponent("state.json"), keychain: testKeychain)
+    // epoch 변환 뒤의 Double 반올림도 현재 동작으로 고정한다.
+    let base = Date(timeIntervalSinceReferenceDate: 0)
+    let cases: [(Double, Bool, Bool)] = [
+        (-0.0006, true, false), (-0.0005, true, true), (-0.0004, true, true),
+        (0.0004, true, true), (0.0005, true, true), (0.0006, false, false)
+    ]
+    for (delta, external, same) in cases {
+        let date = base.addingTimeInterval(delta)
+        let entry = SyncService.Entry(modified: date, isInTrash: false, hash: "새 지문", fileModified: nil)
+        t.expectEqual(sync.isExternalEdit(entry, lastSynced: base, lastHashes: ["옛 지문"]), external)
+        t.expectEqual(sync.isSameMoment(base, date), same)
+    }
+    let boundary = base.timeIntervalSince1970 + 0.0005
+    for (value, expected) in [(boundary, true), (boundary.nextUp, false)] {
+        let entry = SyncService.Entry(modified: Date(timeIntervalSince1970: value), isInTrash: false, hash: "새 지문", fileModified: nil)
+        t.expectEqual(sync.isExternalEdit(entry, lastSynced: base, lastHashes: ["옛 지문"]), expected)
+        t.expect(!sync.isExternalEdit(entry, lastSynced: base, lastHashes: nil))
+    }
+    t.expect(!sync.isSameMoment(nil, base))
+}
+
+runner.test("동기화 상태 날짜는 2001 기준 Double이며 정확히 같아야 지문을 채택한다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("sync-state-google.json")
+    let hashesURL = root.appendingPathComponent("sync-state-google.hashes.json")
+    let sync = SyncService(localRoot: root, remoteRoot: root, stateURL: url, keychain: testKeychain)
+    let date = Date(timeIntervalSinceReferenceDate: 123.25)
+    var state = SyncService.SyncState()
+    state.record("가짜ID", date: date, hashes: ["a", "b", "a"])
+    sync.saveState(state)
+    t.expectEqual(try JSONDecoder().decode([String: Double].self, from: Data(contentsOf: url)), ["가짜ID": 123.25])
+    let record = try JSONDecoder().decode([String: SyncService.HashRecord].self, from: Data(contentsOf: hashesURL))
+    let rawHashes = try JSONSerialization.jsonObject(with: Data(contentsOf: hashesURL)) as! [String: [String: Any]]
+    t.expectEqual(rawHashes["가짜ID"]?["date"] as? Double, 123.25)
+    t.expectEqual(record["가짜ID"]?.date, date)
+    t.expectEqual(sync.loadState().hashes["가짜ID"], ["a", "b"])
+    for delta in [-0.0004, 0.0004, 0.0005, 0.0006] {
+        try JSONEncoder().encode(["가짜ID": date.addingTimeInterval(delta)]).write(to: url)
+        t.expect(sync.loadState().hashes.isEmpty, "거의 같아도 지문을 버려야 한다")
     }
 }
 

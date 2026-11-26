@@ -489,19 +489,23 @@ runner.test("이미 열린 메모를 다시 열림으로 기록해도 파일과 
         let meta = store.createMemo()
         let file = root.appendingPathComponent("memos/\(meta.id.rawValue)/memo.md")
         let before = try Data(contentsOf: file)
+        let beforeMtime = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
 
         // 앱을 켤 때 열린 창마다 부르는 경로. 바뀐 것이 없으면 쓰지 않아야 동기화가 헛돌지 않는다.
         Thread.sleep(forTimeInterval: 0.01)
         store.setOpen(id: meta.id, isOpen: true)
 
         t.expectEqual(try Data(contentsOf: file), before, "바뀐 것이 없는데 파일을 다시 썼다")
+        t.expectEqual(try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, beforeMtime)
 
         // 본문도 같다. 같은 내용을 다시 저장해도 쓰지 않는다.
         _ = store.saveBody(id: meta.id, body: "같은 내용")
         let saved = try Data(contentsOf: file)
+        let savedMtime = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         Thread.sleep(forTimeInterval: 0.01)
         t.expect(store.saveBody(id: meta.id, body: "같은 내용"), "같은 내용 저장은 성공으로 본다")
         t.expectEqual(try Data(contentsOf: file), saved, "같은 본문인데 파일을 다시 썼다")
+        t.expectEqual(try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, savedMtime)
     }
 }
 
@@ -646,7 +650,11 @@ runner.test("오래 고치지 않은 메모도 버린 날부터 보관 기간을
             try? FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: folder.path)
         }
 
+        let before = Date()
         store.moveToTrash(id: meta.id)
+        let after = Date()
+        let deleted = store.trashed.first!.deletedAt!
+        t.expect(deleted >= before && deleted <= after, "폴더 mtime이 삭제 시각이어야 한다")
         store.emptyTrash(olderThan: 30)
         t.expectEqual(store.trashed.count, 1, "방금 버린 오래된 메모가 바로 지워졌다")
     }
@@ -1586,6 +1594,83 @@ runner.test("묘비 기록 후 파기 실패에도 정리 콜백을 호출한다
     do { try store.destroyMemo(id: id); t.expect(false) } catch {}
     t.expect(called)
     t.expect((try MemoPrivacyLedger.read("destroyed", root: root)).contains(id.rawValue))
+}
+
+runner.test("프론트매터 주석과 콜론 없는 줄 및 가로 공백과 CR의 현재 동작") { t in
+    let base = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ncreated: 2001-01-01T00:00:00.000Z\nmodified: 2001-01-01T00:00:00.000Z\n\t title \t: \t가로 공백\t\n# 주석: 보존\n콜론 없는 줄\n\t\n---\n본문\r단독 CR\n"
+    let decoded = try FrontmatterCodec.decode(fileContents: base)
+    t.expectEqual(decoded.meta.title, "가로 공백")
+    t.expectEqual(decoded.unknownFrontmatterLines, ["# 주석: 보존", "콜론 없는 줄"])
+    t.expectEqual(decoded.body, "본문\r단독 CR\n")
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: base.replacingOccurrences(of: "\n", with: "\r\n")), decoded)
+    do {
+        _ = try FrontmatterCodec.decode(fileContents: base.replacingOccurrences(of: "\n", with: "\r"))
+        t.expect(false, "단독 CR 구분자는 현재 읽지 못한다")
+    } catch { t.expectEqual(error as? FrontmatterError, .missingOpeningDelimiter) }
+    let withNewline = base.replacingOccurrences(of: "가로 공백", with: "\u{2028}제목\u{2028}")
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: withNewline).meta.title, "\u{2028}제목\u{2028}")
+}
+
+runner.test("선 라벨은 확장 문자소 스무 개와 ASCII 밖 대문자 퍼센트 인코딩을 쓴다") { t in
+    let id = MemoID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    for glyph in ["👩‍💻", "e\u{301}", "한"] {
+        let link = MemoLink(to: id, kind: .flow, label: String(repeating: glyph, count: 21))
+        t.expectEqual(link.label, String(repeating: glyph, count: 20))
+        var changed = link
+        changed.label += glyph
+        t.expectEqual(changed.label, link.label)
+    }
+    let meta = MemoMeta(id: id, links: [.init(to: id, kind: .flow, label: "Az09-_.~ /한")])
+    let encoded = FrontmatterCodec.encode(.init(meta: meta, body: ""))
+    t.expect(encoded.contains("~Az09%2D%5F%2E%7E%20%2F%ED%95%9C"))
+    t.expectEqual(try FrontmatterCodec.decode(fileContents: encoded).meta.links, meta.links)
+}
+
+runner.test("알파 숫자 서식과 NaN의 현재 동작") { t in
+    let id = MemoID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    for (value, background, foreground) in [(1.0, "1.0", "1.0"), (0.95, "0.95", "0.95"), (0.333333333, "0.333333", "0.333333"), (0.00001, "0.15", "0.3")] {
+        let text = FrontmatterCodec.encode(.init(meta: MemoMeta(id: id, backgroundAlpha: value, textAlpha: value), body: ""))
+        t.expect(text.contains("bgAlpha: \(background)\ntextAlpha: \(foreground)\n"))
+    }
+    let meta = MemoMeta(id: id, backgroundAlpha: .nan, textAlpha: .nan)
+    t.expect(meta.backgroundAlpha.isNaN && meta.textAlpha.isNaN)
+    let text = FrontmatterCodec.encode(.init(meta: meta, body: ""))
+    t.expect(text.contains("bgAlpha: nan\ntextAlpha: nan\n"))
+    let decoded = try FrontmatterCodec.decode(fileContents: text)
+    t.expect(decoded.meta.backgroundAlpha.isNaN && decoded.meta.textAlpha.isNaN)
+    t.expectEqual(MemoMeta.clampBackgroundAlpha(-1), 0.15)
+    t.expectEqual(MemoMeta.clampTextAlpha(-1), 0.3)
+}
+
+runner.test("MemoID는 대문자만 유효하다") { t in
+    let raw = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    t.expect(MemoID(rawValue: raw).isValid)
+    t.expect(!MemoID(rawValue: raw.lowercased()).isValid)
+    for invalid in ["I", "L", "O", "U"] {
+        t.expect(!MemoID(rawValue: String(raw.dropLast()) + invalid).isValid)
+    }
+}
+
+runner.test("JSON 저장 서식의 현재 동작: 보드는 키 정렬하고 그룹 배열 순서는 보존한다") { t in
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = try FileMemoRepository(rootDirectory: root, keychain: testKeychain)
+    try repo.saveBoardLayout(.init(placements: ["Z/": .init(x: 2, y: 3), "A": .init(x: 1, y: 4)]))
+    let board = try String(contentsOf: root.appendingPathComponent("board.json"), encoding: .utf8)
+    t.expect(board.hasPrefix("{\n  \"bentoSpans\" : {"))
+    t.expect(board.contains("\"Z\\/\" : {"))
+    t.expect(board.range(of: "\"A\"")!.lowerBound < board.range(of: "\"Z\\/\"")!.lowerBound)
+    try repo.saveGroups(["Z/", "A"])
+    t.expectEqual(try String(contentsOf: root.appendingPathComponent("groups.json"), encoding: .utf8), "[\n  \"Z\\/\",\n  \"A\"\n]")
+    let file = root.appendingPathComponent("device-state.json")
+    let states = DeviceStateStore(fileURL: file)
+    states.setState(.init(frame: [1, 2, 300, 200]), for: .init(rawValue: "Z/"))
+    states.setState(.init(frame: [1, 2, 300, 200]), for: .init(rawValue: "A"))
+    states.flush()
+    let data = try Data(contentsOf: file)
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    t.expectEqual(data, try encoder.encode(JSONDecoder().decode([String: DeviceMemoState].self, from: data)))
+    t.expect(String(decoding: data, as: UTF8.self).contains("\"Z\\/\" : {"))
 }
 
 runner.finish()

@@ -294,7 +294,7 @@ public struct SyncService: Sendable {
     }
 
     /// 내용은 바뀌었는데 `modified`는 지난번 맞춘 시각에서 나아가지 않았다면 다른 앱에서 고친 것이다.
-    private func isExternalEdit(_ entry: Entry, lastSynced: Date?, lastHashes: [String]?) -> Bool {
+    func isExternalEdit(_ entry: Entry, lastSynced: Date?, lastHashes: [String]?) -> Bool {
         guard lastHashes != nil, let lastSynced else { return false }
         return entry.modified.timeIntervalSince1970 <= lastSynced.timeIntervalSince1970 + 0.0005
     }
@@ -507,7 +507,7 @@ public struct SyncService: Sendable {
 
     // MARK: - 파일 다루기
 
-    private struct Entry {
+    struct Entry {
         var modified: Date
         var isInTrash: Bool
         /// memo.md 바이트의 SHA-256 (16진수).
@@ -648,7 +648,7 @@ public struct SyncService: Sendable {
     /// 비교하는 두 값은 모두 파일에 적힌 밀리초 단위 시각에서 온다.
     /// 여기서 허용 오차를 넉넉히 잡으면 빠르게 이어진 수정을 "안 바뀐 것"으로 보아
     /// 변경이 조용히 묻힌다. 기록 중 생기는 소수점 오차만 흡수할 만큼만 둔다.
-    private func isSameMoment(_ left: Date?, _ right: Date?) -> Bool {
+    func isSameMoment(_ left: Date?, _ right: Date?) -> Bool {
         guard let left, let right else { return false }
         return abs(left.timeIntervalSince1970 - right.timeIntervalSince1970) < 0.0005
     }
@@ -680,7 +680,7 @@ public struct SyncService: Sendable {
     }
 
     /// 지문 파일의 항목. 어느 시각 기록과 짝인지 함께 적어, 시각만 따로 갱신된 경우를 걸러 낸다.
-    private struct HashRecord: Codable {
+    struct HashRecord: Codable {
         var date: Date
         var hashes: [String]
     }
@@ -689,7 +689,8 @@ public struct SyncService: Sendable {
         stateURL.deletingPathExtension().appendingPathExtension("hashes.json")
     }
 
-    private func loadState() -> SyncState {
+    // 테스트와 골든이 실제 상태 읽기와 쓰기를 재사용하도록 모듈 내부에 연다.
+    func loadState() -> SyncState {
         var state = SyncState()
         if let data = try? Data(contentsOf: stateURL),
            let dates = try? JSONDecoder().decode([String: Date].self, from: data) {
@@ -704,7 +705,7 @@ public struct SyncService: Sendable {
         return state
     }
 
-    private func saveState(_ state: SyncState) {
+    func saveState(_ state: SyncState) {
         try? FileManager.default.createDirectory(
             at: stateURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

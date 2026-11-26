@@ -1,0 +1,273 @@
+{
+  "ids": [
+    "01ARZ3NDEKTSV4RRFFQ69G5F00",
+    "01ARZ3NDEKTSV4RRFFQ69G5F01",
+    "01ARZ3NDEKTSV4RRFFQ69G5F02",
+    "01ARZ3NDEKTSV4RRFFQ69G5F03",
+    "01ARZ3NDEKTSV4RRFFQ69G5F04",
+    "01ARZ3NDEKTSV4RRFFQ69G5F05",
+    "01ARZ3NDEKTSV4RRFFQ69G5F06",
+    "01ARZ3NDEKTSV4RRFFQ69G5F07",
+    "01ARZ3NDEKTSV4RRFFQ69G5F08",
+    "01ARZ3NDEKTSV4RRFFQ69G5F09",
+    "01ARZ3NDEKTSV4RRFFQ69G5F10",
+    "01ARZ3NDEKTSV4RRFFQ69G5F11",
+    "01ARZ3NDEKTSV4RRFFQ69G5F12",
+    "01ARZ3NDEKTSV4RRFFQ69G5F13",
+    "01ARZ3NDEKTSV4RRFFQ69G5F14",
+    "01ARZ3NDEKTSV4RRFFQ69G5F15",
+    "01ARZ3NDEKTSV4RRFFQ69G5F16",
+    "01ARZ3NDEKTSV4RRFFQ69G5F17",
+    "01ARZ3NDEKTSV4RRFFQ69G5F18",
+    "01ARZ3NDEKTSV4RRFFQ69G5F19",
+    "01ARZ3NDEKTSV4RRFFQ69G5F20",
+    "01ARZ3NDEKTSV4RRFFQ69G5F21",
+    "01ARZ3NDEKTSV4RRFFQ69G5F22",
+    "01ARZ3NDEKTSV4RRFFQ69G5F23"
+  ],
+  "edges": [
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F00",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "kind": "flow"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F00",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F02",
+      "kind": "related"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F00",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "kind": "flow"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F03",
+      "kind": "related"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F04",
+      "kind": "dashto"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F05",
+      "kind": "dashboth"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F06",
+      "kind": "contain"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F07",
+      "kind": "block"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F08",
+      "kind": "oppose"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F09",
+      "kind": "same"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F10",
+      "kind": "line"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F11",
+      "kind": "flow"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F12",
+      "kind": "both"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F13",
+      "kind": "related"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F14",
+      "kind": "dashto"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F15",
+      "kind": "dashboth"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F16",
+      "kind": "contain"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F17",
+      "kind": "block"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F02",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F03",
+      "kind": "contain"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F18",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F19",
+      "kind": "flow"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F19",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F20",
+      "kind": "flow"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F20",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F18",
+      "kind": "flow"
+    },
+    {
+      "from": "01ARZ3NDEKTSV4RRFFQ69G5F04",
+      "to": "01ARZ3NDEKTSV4RRFFQ69G5F05",
+      "kind": "flow"
+    }
+  ],
+  "positions": {
+    "01ARZ3NDEKTSV4RRFFQ69G5F00": {
+      "x": 0,
+      "y": 200
+    },
+    "01ARZ3NDEKTSV4RRFFQ69G5F01": {
+      "x": 840,
+      "y": 0
+    },
+    "01ARZ3NDEKTSV4RRFFQ69G5F02": {
+      "x": 840,
+      "y": 400
+    },
+    "01ARZ3NDEKTSV4RRFFQ69G5F03": {
+      "x": 420,
+      "y": 200
+    },
+    "01ARZ3NDEKTSV4RRFFQ69G5F04": {
+      "x": 0,
+      "y": 0
+    },
+    "01ARZ3NDEKTSV4RRFFQ69G5F05": {
+      "x": 280,
+      "y": 0
+    }
+  },
+  "crossingPaths": [
+    {
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          0
+        ]
+      ]
+    },
+    {
+      "points": [
+        [
+          50,
+          -40
+        ],
+        [
+          50,
+          40
+        ]
+      ]
+    },
+    {
+      "points": [
+        [
+          100,
+          0
+        ],
+        [
+          100,
+          40
+        ]
+      ]
+    }
+  ],
+  "routingCases": [
+    {
+      "name": "나란한 카드와 한 변 여러 선",
+      "positions": {
+        "01ARZ3NDEKTSV4RRFFQ69G5F00": {
+          "x": 0,
+          "y": 0
+        },
+        "01ARZ3NDEKTSV4RRFFQ69G5F01": {
+          "x": 280,
+          "y": 0
+        },
+        "01ARZ3NDEKTSV4RRFFQ69G5F02": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      "edges": [
+        {
+          "from": "01ARZ3NDEKTSV4RRFFQ69G5F00",
+          "to": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+          "kind": "flow"
+        },
+        {
+          "from": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+          "to": "01ARZ3NDEKTSV4RRFFQ69G5F02",
+          "kind": "flow"
+        }
+      ]
+    },
+    {
+      "name": "장애물과 상대 위치 순서 포트",
+      "positions": {
+        "01ARZ3NDEKTSV4RRFFQ69G5F00": {
+          "x": 0,
+          "y": 200
+        },
+        "01ARZ3NDEKTSV4RRFFQ69G5F01": {
+          "x": 840,
+          "y": 0
+        },
+        "01ARZ3NDEKTSV4RRFFQ69G5F02": {
+          "x": 840,
+          "y": 400
+        },
+        "01ARZ3NDEKTSV4RRFFQ69G5F03": {
+          "x": 420,
+          "y": 200
+        }
+      },
+      "edges": [
+        {
+          "from": "01ARZ3NDEKTSV4RRFFQ69G5F00",
+          "to": "01ARZ3NDEKTSV4RRFFQ69G5F02",
+          "kind": "flow"
+        },
+        {
+          "from": "01ARZ3NDEKTSV4RRFFQ69G5F00",
+          "to": "01ARZ3NDEKTSV4RRFFQ69G5F01",
+          "kind": "flow"
+        }
+      ]
+    }
+  ]
+}

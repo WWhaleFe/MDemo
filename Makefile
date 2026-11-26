@@ -1,5 +1,5 @@
 # 개발 명령 모음. Xcode 없이 Command Line Tools만으로 동작한다.
-.PHONY: build run release dist test check clean mem help
+.PHONY: build run release dist test check golden clean mem help
 
 help:
 	@echo "make build    - 디버그 빌드 + .app 번들 생성"
@@ -7,6 +7,7 @@ help:
 	@echo "make release  - 유니버설(arm64+x86_64) 릴리스 번들"
 	@echo "make dist     - 테스트용 배포 파일(.dmg, .zip)을 build/dist에 만든다"
 	@echo "make test     - 전 패키지 테스트"
+	@echo "make golden   - Swift 고정 입력의 기준 출력 생성"
 	@echo "make check    - 계층 규칙 · 네트워크 코드 검사"
 	@echo "make mem      - 실행 중인 앱의 메모리 사용량 측정"
 	@echo "make clean    - 빌드 산출물 삭제"
@@ -29,6 +30,9 @@ dist:
 # Xcode 없이도 돌아가도록 swift test 대신 러너를 실행한다 (Packages/TestKit 참고)
 test:
 	@Scripts/test.sh
+
+golden:
+	@Scripts/golden.sh
 
 check:
 	@Scripts/check-layering.sh
