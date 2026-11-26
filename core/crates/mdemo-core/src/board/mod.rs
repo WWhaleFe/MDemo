@@ -316,6 +316,9 @@ pub fn midpoint(points: &[Point]) -> Point {
 /// 두 구간의 끝점을 제외한 교차를 입력 순서대로 반환한다.
 pub fn crossings(pipes: &[Pipe]) -> Vec<Crossing> {
     let mut r = Vec::new();
+    // 처음 나온 순서는 그대로 두고 중복만 집합으로 거른다(목록을 매번 훑으면 엇갈림이 많을 때 느려진다).
+    // 좌표 비교는 f64 `==`와 같게: +0.0을 더해 -0.0을 0.0으로 맞춘 비트로 센다.
+    let mut seen = std::collections::HashSet::new();
     for p in 0..pipes.len() {
         for q in p + 1..pipes.len() {
             for (i, ab) in pipes[p].points.windows(2).enumerate() {
@@ -337,7 +340,8 @@ pub fn crossings(pipes: &[Pipe]) -> Vec<Crossing> {
                             horizontal_pipe: if ph { p } else { q },
                             segment: if ph { i } else { j },
                         };
-                        if !r.contains(&c) {
+                        let key = ((c.point.x + 0.0).to_bits(), (c.point.y + 0.0).to_bits(), c.horizontal_pipe, c.segment);
+                        if seen.insert(key) {
                             r.push(c)
                         }
                     }

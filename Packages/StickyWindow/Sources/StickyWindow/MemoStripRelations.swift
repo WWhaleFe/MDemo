@@ -32,6 +32,12 @@ public struct MemoStripRelations: Equatable, Sendable {
 
     /// 입력 순서를 보존하고 같은 두 단계 목적지는 처음 발견한 경로로만 보여 준다.
     public static func calculate(current: MemoID, flow: MemoFlow?, edges: [MemoEdge], depth: Int, showRelations: Bool = true) -> Self {
+        if let backend = BoardEngineBackend.current {
+            let value = backend.relations(current: current, edges: edges, depth: depth, showRelations: showRelations)
+            return Self(flow: flow,
+                        direct: value.direct.map { Direct(kind: $0.kind, outgoing: $0.outgoing, other: $0.other) },
+                        indirect: value.indirect.map { Indirect(via: $0.via, kind: $0.kind, outgoing: $0.outgoing, other: $0.other) })
+        }
         let edges = edges.filter { $0.from != $0.to && (showRelations || $0.kind == .flow) }
         func neighbors(_ id: MemoID) -> [Direct] {
             var seen = Set<Direct>()

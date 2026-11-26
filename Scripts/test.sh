@@ -28,7 +28,7 @@ if ! (cd "$ROOT/core" && cargo test --locked --workspace); then
 fi
 for package in CoreBridge MemoCore MarkdownEngine EditorKit StickyWindow Services Features; do
     STORAGE_MODES=(swift)
-    if [ "$package" = MemoCore ] || [ "$package" = Services ] || [ "$package" = EditorKit ]; then STORAGE_MODES=(swift rust); fi
+    if [ "$package" = MemoCore ] || [ "$package" = Services ] || [ "$package" = EditorKit ] || [ "$package" = StickyWindow ] || [ "$package" = Features ]; then STORAGE_MODES=(swift rust); fi
     for storage in "${STORAGE_MODES[@]}"; do
         STORAGE_ARGS=()
         if [ "$storage" = rust ]; then STORAGE_ARGS=(--rust-storage); fi

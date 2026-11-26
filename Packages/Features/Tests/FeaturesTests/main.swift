@@ -10,7 +10,8 @@ import TestKit
 // 리스트 창이 "무엇을 보여 줄지" 정하는 규칙을 확인한다.
 // 화면 없이 시험할 수 있게 계산을 모델로 빼 둔 덕에 여기서 다 잡힌다.
 
-let runner = TestRunner("Features")
+RustBoardBackend.installIfRequested()
+let runner = TestRunner(CoreStorage.usesRust ? "Features (Rust)" : "Features")
 
 /// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
 final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {
@@ -1089,6 +1090,44 @@ runner.test("큰 보드의 150개 메모와 200개 선 길찾기 시간을 출�
     let pipes = PipeGeometry.make(edges: edges, positions: positions)
     print("  큰 보드 길찾기: \(Int(Date().timeIntervalSince(start) * 1000)) ms (메모 150, 선 200, 범위 약 6000×4000)")
     t.expectEqual(pipes.count, 200)
+}
+
+// 보드 계산 성능(P7 2-e). MDEMO_MEASURE=1일 때만 돌린다. 릴리스로 Swift 기본과 --rust-storage를 따로 잰다.
+if ProcessInfo.processInfo.environment["MDEMO_MEASURE"] == "1" {
+    runner.test("보드 계산 성능을 잰다") { t in
+        try MainActor.assumeIsolated {
+            let (model, root) = try makeModel()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let memos = (0..<150).map { _ in model.store.createMemo().id }
+            for i in 0..<200 {
+                let from = memos[i % 150], to = memos[(i % 150 + (i < 150 ? 37 : 90)) % 150]
+                do { model.link(from: from, to: to, kind: i % 2 == 0 ? .flow : .related) }
+            }
+            let summaries = memos.compactMap { id in model.store.summaries.first { $0.id == id } }
+            let edges = model.linkIndex.edges
+            let positions = Dictionary(uniqueKeysWithValues: memos.enumerated().map { i, id in
+                (id, BoardLayout.Placement(x: Double(i % 15) * 400, y: Double(i / 15) * 400))
+            })
+            func mean(_ runs: Int, _ body: () -> Void) -> Double {
+                body()
+                let start = DispatchTime.now().uptimeNanoseconds
+                for _ in 0..<runs { body() }
+                return Double(DispatchTime.now().uptimeNanoseconds - start) / Double(runs) / 1_000_000
+            }
+            let all = PipeGeometry.make(edges: edges, positions: positions)
+            let movingID = memos[0]
+            var moved = positions
+            moved[movingID] = .init(x: 1234, y: 567)
+            let fixed = all.filter { $0.edge.from != movingID && $0.edge.to != movingID }
+            let touching = edges.filter { $0.from == movingID || $0.to == movingID }
+            let full = mean(5) { _ = PipeGeometry.make(edges: edges, positions: positions) }
+            let drag = mean(20) { _ = fixed + PipeGeometry.make(edges: touching, positions: moved, avoiding: fixed) }
+            let cross = mean(20) { _ = PipeGeometry.crossings(in: all) }
+            let arrange = mean(50) { _ = model.autoArrangedPlacements(for: summaries) }
+            print("MEASURE \(CoreStorage.usesRust ? "Rust" : "Swift") 전체길찾기 \(String(format: "%.2f", full)) ms, 끄는중 \(String(format: "%.2f", drag)) ms (선 \(touching.count)개), 엇갈림 \(String(format: "%.2f", cross)) ms, 재정렬 \(String(format: "%.2f", arrange)) ms (선 \(edges.count)개)")
+            t.expectEqual(all.count, edges.count)
+        }
+    }
 }
 
 runner.finish()

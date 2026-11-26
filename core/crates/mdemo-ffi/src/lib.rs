@@ -66,3 +66,5 @@ pub use repository::*;
 mod sync;
 
 mod markdown;
+
+mod board;

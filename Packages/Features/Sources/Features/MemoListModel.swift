@@ -616,6 +616,11 @@ public final class MemoListModel {
         let groupGap = 80.0, maxRowWidth = 1400.0, origin = (x: 40.0, y: 100.0)
         let order = memos.map(\.id)
         let included = Set(order)
+        if let backend = BoardEngineBackend.current {
+            var placed: [MemoID: BoardLayout.Placement] = [:]
+            for item in backend.arrange(ids: order, edges: linkIndex.edges) { placed[item.id] = .init(x: item.x, y: item.y) }
+            return placed
+        }
         let edges = linkIndex.edges.filter { included.contains($0.from) && included.contains($0.to) && $0.from != $0.to }
 
         // 이어진 무리 찾기 (합집합-찾기).

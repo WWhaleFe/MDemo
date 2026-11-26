@@ -543,6 +543,11 @@ struct PipeGeometry {
     static func make(edges: [MemoEdge], positions: [MemoID: BoardLayout.Placement], avoiding: [PipeGeometry] = []) -> [PipeGeometry] {
         let valid = edges.filter { positions[$0.from] != nil && positions[$0.to] != nil }
         guard !valid.isEmpty else { return [] }
+        // 뒷단이 설치돼 있으면 길찾기를 맡기고, 점열만 받아 기존 도형 타입으로 감싼다.
+        if let backend = BoardEngineBackend.current {
+            let paths = backend.route(edges: valid, positions: positions, avoiding: avoiding.map(\.points))
+            if paths.count == valid.count { return zip(valid, paths).map { PipeGeometry(edge: $0, points: $1) } }
+        }
         let router = Router(edges: valid, positions: positions)
         router.markUsed(avoiding)
         return router.route()
@@ -877,6 +882,9 @@ struct PipeGeometry {
         var segment: Int
     }
     static func crossings(in pipes: [PipeGeometry]) -> [Crossing] {
+        if let backend = BoardEngineBackend.current {
+            return backend.crossings(paths: pipes.map(\.points)).map { Crossing(point: $0.point, horizontalPipe: $0.horizontalPipe, segment: $0.segment) }
+        }
         var result: [Crossing] = []
         for p in pipes.indices {
             for q in pipes.indices where q > p {

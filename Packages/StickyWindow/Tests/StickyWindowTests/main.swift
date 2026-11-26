@@ -9,7 +9,8 @@ import TestKit
 // 창 동작은 눈으로만 확인하기 쉬운데, 그러면 고칠 때마다 놓치는 곳이 생긴다.
 // 창을 실제로 만들어 크기·접기·투명도가 값으로 어떻게 남는지 확인한다.
 
-let runner = TestRunner("StickyWindow")
+RustBoardBackend.installIfRequested()
+let runner = TestRunner(CoreStorage.usesRust ? "StickyWindow (Rust)" : "StickyWindow")
 
 /// 테스트가 이 맥의 실제 키체인을 건드리지 않게, 저장소는 모두 메모리 키체인을 쓴다.
 final class TestMemoKeychain: MemoKeychain, @unchecked Sendable {

@@ -12,6 +12,7 @@ public enum CoreStorage {
 
     public static func make(root: URL, keychain: any MemoKeychain = DeviceMemoKeychain()) throws -> any MemoRepository {
         RustMarkdownBackend.installIfRequested()
+        RustBoardBackend.installIfRequested()
         if usesRust {
             return try RustMemoRepository(rootDirectory: root, keychain: keychain)
         }
